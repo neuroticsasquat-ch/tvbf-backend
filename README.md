@@ -8,7 +8,7 @@ Stack: Python 3.13, FastAPI, SQLAlchemy 2 (async) + asyncpg, Alembic, Pydantic v
 
 - Docker.
 - [`go-task`](https://taskfile.dev).
-- The shared localdev infra at `../tbc-localdev-infra/` (Postgres 17, Traefik with TLS for `*.localhost`, Mailpit) running on the external `proxy` Docker network.
+- The shared `tbc-localdev-infra` stack (Postgres 17, Traefik with TLS for `*.localhost`, Mailpit) running on the external `proxy` Docker network.
 
 ## Quick start
 
@@ -93,7 +93,3 @@ pipx install pre-commit
 pre-commit install
 ```
 
-## Documentation
-
-- Design spec: `../docs/superpowers/specs/2026-04-19-tvmaze-ingestion-design.md`
-- Implementation plan: `../docs/superpowers/plans/2026-04-19-tvmaze-ingestion.md`
