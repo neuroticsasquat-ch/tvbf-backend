@@ -59,7 +59,5 @@ async def test_ingest_accepts_and_returns_run_id(admin_client):
 
 async def test_ingest_status_404_for_unknown_run(admin_client):
     fake = uuid.uuid4()
-    r = await admin_client.get(
-        f"/admin/ingest/{fake}", headers={"Authorization": "Bearer shh"}
-    )
+    r = await admin_client.get(f"/admin/ingest/{fake}", headers={"Authorization": "Bearer shh"})
     assert r.status_code == 404
