@@ -1,0 +1,35 @@
+services:
+  tvbf-backend:
+    build: .
+    container_name: tvbf_backend
+    volumes:
+      - ./src:/app/src
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./tests:/app/tests
+      - ./htmlcov:/app/htmlcov
+    environment:
+      DATABASE_URL: "postgresql+asyncpg://root:root@tbc_postgresql_db:5432/tvbf"
+      TEST_DATABASE_URL: "postgresql+asyncpg://root:root@tbc_postgresql_db:5432/tvbf_test"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-dev-secret-change-me}"
+      TVMAZE_BASE_URL: "https://api.tvmaze.com"
+      TVMAZE_RATE_LIMIT_REQUESTS: "18"
+      TVMAZE_RATE_LIMIT_WINDOW_SECONDS: "10"
+      TVMAZE_RETRY_MAX_ATTEMPTS: "5"
+      INGEST_CONSECUTIVE_FAILURE_THRESHOLD: "10"
+      INGEST_STALE_RUN_MINUTES: "15"
+      LOG_LEVEL: "INFO"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.http.routers.tvbf-backend.rule=Host(`tvbf-backend.localhost`)"
+      - "traefik.http.routers.tvbf-backend.tls=true"
+      - "traefik.http.routers.tvbf-backend.entrypoints=websecure"
+      - "traefik.http.services.tvbf-backend.loadbalancer.server.port=8000"
+    command: ["uvicorn", "tvbf.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
