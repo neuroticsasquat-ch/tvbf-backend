@@ -246,6 +246,28 @@ async def test_upsert_episodes_resolves_season_id(session):
     assert by_id[4].season_id is None
 
 
+async def test_upsert_episodes_batches_large_shows(session):
+    """Regression: shows with >2730 episodes (12 params/row × 2730 = 32760) used to
+    blow the Postgres 32767 bind-parameter cap. Batching keeps each statement safe."""
+    session.add(m.Show(id=500, name="S", tvmaze_updated=1))
+    await session.flush()
+    session.add(m.Season(id=5000, show_id=500, number=1))
+    await session.commit()
+
+    # 3000 episodes × 12 params = 36000 params — would exceed the limit unbatched.
+    eps = [
+        TVMazeEpisode.model_validate({"id": 100000 + i, "season": 1, "number": i, "name": f"E{i}"})
+        for i in range(3000)
+    ]
+    await upsert_episodes(session, show_id=500, episodes=eps)
+    await session.commit()
+
+    result = await session.execute(select(m.Episode).where(m.Episode.show_id == 500))
+    rows = result.scalars().all()
+    assert len(rows) == 3000
+    assert all(e.season_id == 5000 for e in rows)
+
+
 async def test_upsert_episodes_is_idempotent_and_updates(session):
     session.add(m.Show(id=301, name="S", tvmaze_updated=1))
     await session.flush()

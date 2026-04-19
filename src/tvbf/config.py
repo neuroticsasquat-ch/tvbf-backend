@@ -25,6 +25,14 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
+    cors_allowed_origins_raw: str = Field(
+        default="https://tvbf.localhost", alias="CORS_ALLOWED_ORIGINS"
+    )
+
+    @property
+    def cors_allowed_origins(self) -> list[str]:
+        return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
+
 
 @lru_cache
 def get_settings() -> Settings:

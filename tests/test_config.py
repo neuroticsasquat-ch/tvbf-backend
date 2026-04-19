@@ -23,6 +23,15 @@ def test_settings_has_sensible_defaults(monkeypatch):
     assert s.ingest_consecutive_failure_threshold == 10
     assert s.ingest_stale_run_minutes == 15
     assert s.log_level == "INFO"
+    assert s.cors_allowed_origins == ["https://tvbf.localhost"]
+
+
+def test_settings_parses_cors_origins_from_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("CORS_ALLOWED_ORIGINS", "https://a.example.com,https://b.example.com")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.cors_allowed_origins == ["https://a.example.com", "https://b.example.com"]
 
 
 def test_settings_requires_admin_token(monkeypatch):

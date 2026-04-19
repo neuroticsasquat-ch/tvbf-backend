@@ -3,11 +3,12 @@ from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
-from tvbf.routers import admin, health
+from tvbf.routers import admin, browse, health
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
 
 
@@ -38,8 +39,15 @@ def create_app() -> FastAPI:
     settings = get_settings()
     _configure_logging(settings.log_level)
     app = FastAPI(title="tvbf-backend", lifespan=lifespan)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_allowed_origins,
+        allow_methods=["GET"],
+        allow_headers=["Content-Type"],
+    )
     app.include_router(health.router)
     app.include_router(admin.router)
+    app.include_router(browse.router)
     return app
 
 

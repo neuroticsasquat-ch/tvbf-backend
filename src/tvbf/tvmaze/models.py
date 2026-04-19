@@ -89,10 +89,9 @@ class Show(Base):
 
 class Season(Base):
     __tablename__ = "season"
-    __table_args__ = (
-        UniqueConstraint("show_id", "number", name="uq_season_show_number"),
-        {"schema": SCHEMA},
-    )
+    __table_args__ = {"schema": SCHEMA}
+    # No UNIQUE(show_id, number): TV Maze occasionally returns multiple seasons
+    # with the same number for one show (data quirk on long-running programs).
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
     show_id: Mapped[int] = mapped_column(

@@ -20,6 +20,7 @@ services:
       INGEST_CONSECUTIVE_FAILURE_THRESHOLD: "10"
       INGEST_STALE_RUN_MINUTES: "15"
       LOG_LEVEL: "INFO"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://tvbf.localhost}"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tvbf-backend.rule=Host(`tvbf-backend.localhost`)"

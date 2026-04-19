@@ -148,6 +148,12 @@ async def upsert_show(session: AsyncSession, show: TVMazeShow) -> int:
     return show.id
 
 
+# Postgres caps bind parameters per query at 32767. Episode has 12 bound columns,
+# so we batch at 1000 rows (12000 params) to stay well under the limit. Shows
+# with >2730 episodes (soaps, daily talk shows, news) would otherwise fail.
+_EPISODE_BATCH_SIZE = 1000
+
+
 async def upsert_episodes(
     session: AsyncSession, show_id: int, episodes: list[TVMazeEpisode]
 ) -> None:
@@ -178,10 +184,13 @@ async def upsert_episodes(
         }
         for ep in episodes
     ]
-    stmt = insert(m.Episode).values(values_list)
-    update_cols = {c: getattr(stmt.excluded, c) for c in values_list[0] if c != "id"}
-    stmt = stmt.on_conflict_do_update(index_elements=[m.Episode.id], set_=update_cols)
-    await session.execute(stmt)
+
+    for start in range(0, len(values_list), _EPISODE_BATCH_SIZE):
+        chunk = values_list[start : start + _EPISODE_BATCH_SIZE]
+        stmt = insert(m.Episode).values(chunk)
+        update_cols = {c: getattr(stmt.excluded, c) for c in chunk[0] if c != "id"}
+        stmt = stmt.on_conflict_do_update(index_elements=[m.Episode.id], set_=update_cols)
+        await session.execute(stmt)
 
 
 async def upsert_show_payload(session: AsyncSession, show: TVMazeShow) -> int:
