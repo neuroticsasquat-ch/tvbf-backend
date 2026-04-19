@@ -29,16 +29,9 @@ SessionFactory = Callable[[], AsyncSession]
 
 @asynccontextmanager
 async def _owned_session(session_factory: SessionFactory) -> AsyncIterator[AsyncSession]:
-    """Yield a session. Tests pass an already-open session via the factory; we don't close it."""
-    produced = session_factory()
-    if hasattr(produced, "__aenter__"):
-        async with produced as s:
-            yield s
-    else:
-        try:
-            yield produced
-        finally:
-            pass  # caller (test) owns lifecycle
+    """Yield a session via the factory's async context manager."""
+    async with session_factory() as s:
+        yield s
 
 
 async def run_initial_ingest(

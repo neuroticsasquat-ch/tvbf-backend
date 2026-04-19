@@ -4,9 +4,11 @@ import httpx
 import pytest
 import respx
 from httpx import ASGITransport
+from sqlalchemy import select
 
 from tests.fixtures.tvmaze.show_factory import make_show
 from tvbf.main import app
+from tvbf.tvmaze import models as m
 
 
 @pytest.fixture
@@ -61,3 +63,29 @@ async def test_ingest_status_404_for_unknown_run(admin_client):
     fake = uuid.uuid4()
     r = await admin_client.get(f"/admin/ingest/{fake}", headers={"Authorization": "Bearer shh"})
     assert r.status_code == 404
+
+
+async def test_background_ingest_marks_run_failed_on_crash(session, monkeypatch):
+    from tvbf.config import get_settings
+    from tvbf.routers.admin import _background_ingest
+    from tvbf.tvmaze.runs import create_run
+
+    async def boom(**kwargs):
+        raise RuntimeError("simulated background crash")
+
+    monkeypatch.setattr("tvbf.routers.admin.run_initial_ingest", boom)
+
+    run_id = await create_run(session, kind="initial")
+    await session.commit()
+
+    await _background_ingest(run_id, get_settings())
+
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "failed"
+    assert row.error is not None
+    assert "simulated background crash" in row.error
