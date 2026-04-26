@@ -1,0 +1,109 @@
+from datetime import datetime
+from uuid import UUID
+
+from sqlalchemy import and_, func, select
+from sqlalchemy import delete as sa_delete
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from tvbf.app.models import UserEpisodeWatch
+from tvbf.tvmaze.models import Episode
+
+
+async def mark(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    episode_id: int,
+    watched_at: datetime,
+) -> datetime:
+    """Upsert ON CONFLICT DO NOTHING; returns the actual stored watched_at
+    (handles the "already exists" case)."""
+    stmt = pg_insert(UserEpisodeWatch).values(
+        user_id=user_id, episode_id=episode_id, watched_at=watched_at
+    )
+    stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "episode_id"])
+    await db.execute(stmt)
+    existing = await db.get(
+        UserEpisodeWatch,
+        (user_id, episode_id),
+        populate_existing=True,
+    )
+    return existing.watched_at if existing else watched_at
+
+
+async def unmark(db: AsyncSession, *, user_id: UUID, episode_id: int) -> None:
+    await db.execute(
+        sa_delete(UserEpisodeWatch).where(
+            and_(
+                UserEpisodeWatch.user_id == user_id,
+                UserEpisodeWatch.episode_id == episode_id,
+            )
+        )
+    )
+
+
+async def list_episode_ids_for_show(db: AsyncSession, *, user_id: UUID, show_id: int) -> list[int]:
+    rows = (
+        (
+            await db.execute(
+                select(UserEpisodeWatch.episode_id)
+                .join(Episode, Episode.id == UserEpisodeWatch.episode_id)
+                .where(
+                    UserEpisodeWatch.user_id == user_id,
+                    Episode.show_id == show_id,
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
+async def count_watched_per_show(
+    db: AsyncSession, *, user_id: UUID, show_ids: list[int]
+) -> dict[int, int]:
+    rows = (
+        await db.execute(
+            select(Episode.show_id, func.count(UserEpisodeWatch.episode_id))
+            .join(UserEpisodeWatch, UserEpisodeWatch.episode_id == Episode.id)
+            .where(
+                Episode.show_id.in_(show_ids),
+                UserEpisodeWatch.user_id == user_id,
+            )
+            .group_by(Episode.show_id)
+        )
+    ).all()
+    return {sid: c for sid, c in rows}
+
+
+async def bulk_mark(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    episode_ids: list[int],
+    watched_at: datetime,
+) -> None:
+    rows = [
+        {"user_id": user_id, "episode_id": ep_id, "watched_at": watched_at} for ep_id in episode_ids
+    ]
+    stmt = pg_insert(UserEpisodeWatch).values(rows)
+    stmt = stmt.on_conflict_do_nothing(index_elements=["user_id", "episode_id"])
+    await db.execute(stmt)
+
+
+async def bulk_unmark(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    episode_ids: list[int],
+) -> None:
+    await db.execute(
+        sa_delete(UserEpisodeWatch).where(
+            and_(
+                UserEpisodeWatch.user_id == user_id,
+                UserEpisodeWatch.episode_id.in_(episode_ids),
+            )
+        )
+    )

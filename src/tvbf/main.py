@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
-from tvbf.routers import admin, browse, health
+from tvbf.routers import admin, auth, browse, health, me
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
 
 
@@ -42,12 +42,15 @@ def create_app() -> FastAPI:
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
-        allow_methods=["GET"],
-        allow_headers=["Content-Type"],
+        allow_credentials=True,
+        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_headers=["Content-Type", "X-CSRF-Token"],
     )
     app.include_router(health.router)
     app.include_router(admin.router)
     app.include_router(browse.router)
+    app.include_router(auth.router)
+    app.include_router(me.router)
     return app
 
 

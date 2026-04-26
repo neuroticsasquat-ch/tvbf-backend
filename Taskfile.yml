@@ -65,6 +65,16 @@ tasks:
     cmds:
       - "{{.EXEC}} pytest {{.CLI_ARGS}}"
 
+  test:unit:
+    desc: Run only the unit tests (fast, no DB, no network)
+    cmds:
+      - "{{.EXEC}} pytest tests/unit {{.CLI_ARGS}}"
+
+  test:integration:
+    desc: Run only the integration tests (real test DB)
+    cmds:
+      - "{{.EXEC}} pytest tests/integration {{.CLI_ARGS}}"
+
   lint:
     desc: Run ruff check
     cmds:

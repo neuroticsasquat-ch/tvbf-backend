@@ -2,13 +2,21 @@ import os
 
 os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
 
-from collections.abc import AsyncIterator
+pytest_plugins = ["tests.fixtures.users"]
 
-import pytest
-from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+from collections.abc import AsyncIterator  # noqa: E402
 
-from tvbf.db import Base
+import pytest  # noqa: E402
+from sqlalchemy import text  # noqa: E402
+from sqlalchemy.ext.asyncio import (  # noqa: E402
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
+
+from tvbf.app import models as _app_models  # noqa: F401, E402 -- register tables
+from tvbf.db import Base  # noqa: E402
+from tvbf.tvmaze import models as _tvmaze_models  # noqa: F401, E402 -- register tables
 
 
 @pytest.fixture(scope="session")
@@ -20,6 +28,8 @@ async def test_engine():
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
         await conn.execute(text("CREATE SCHEMA tvmaze"))
         await conn.execute(text("CREATE SCHEMA app"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         await conn.run_sync(Base.metadata.create_all)
     yield engine
     async with engine.begin() as conn:

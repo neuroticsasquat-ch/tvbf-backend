@@ -29,6 +29,12 @@ class Settings(BaseSettings):
         default="https://tvbf.localhost", alias="CORS_ALLOWED_ORIGINS"
     )
 
+    session_cookie_name: str = Field(default="tvbf_session", alias="SESSION_COOKIE_NAME")
+    csrf_cookie_name: str = Field(default="csrf_token", alias="CSRF_COOKIE_NAME")
+    session_ttl_days: int = Field(default=30, alias="SESSION_TTL_DAYS")
+    cookie_secure: bool = Field(default=True, alias="COOKIE_SECURE")
+    cookie_samesite: str = Field(default="none", alias="COOKIE_SAMESITE")
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]

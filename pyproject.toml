@@ -12,6 +12,8 @@ dependencies = [
     "pydantic>=2.10",
     "pydantic-settings>=2.7",
     "httpx>=0.28",
+    "argon2-cffi>=23.1.0",
+    "email-validator>=2.0.0",
 ]
 
 [project.optional-dependencies]
@@ -45,3 +47,17 @@ asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "session"
 asyncio_default_test_loop_scope = "session"
 testpaths = ["tests"]
+
+[tool.coverage.run]
+# `concurrency = ["thread", "greenlet"]` lets coverage follow code that
+# runs inside httpx's ASGITransport — without it, every async function
+# called via the test client appears uncovered even though the tests
+# pass through it.
+source = ["src/tvbf"]
+concurrency = ["thread", "greenlet"]
+omit = []
+[tool.coverage.report]
+exclude_also = [
+    "if __name__ == .__main__.:",
+    "raise NotImplementedError",
+]
