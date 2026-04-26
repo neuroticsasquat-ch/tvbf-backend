@@ -1,0 +1,170 @@
+#file: noinspection UndefinedAction
+name: Release
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: "ad-hoc tofu plan or apply (deploy is skipped on dispatch)"
+        type: choice
+        options: [plan, apply]
+        default: plan
+
+permissions:
+  id-token: write
+  contents: read
+  packages: write
+
+concurrency:
+  group: release-backend
+  cancel-in-progress: false
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+  WEB_APP_NAME: tvbf-backend
+  RESOURCE_GROUP: sasquatch-shared-rg
+  TF_IN_AUTOMATION: "true"
+  ARM_USE_OIDC: "true"
+  ARM_USE_AZUREAD: "true"
+  ARM_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+  ARM_TENANT_ID: ${{ secrets.AZURE_TENANT_ID }}
+  ARM_SUBSCRIPTION_ID: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_subscription_id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+  TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
+  TF_VAR_tvbf_db_password: ${{ secrets.TVBF_DB_PASSWORD }}
+  TF_VAR_admin_token: ${{ secrets.TVBF_ADMIN_TOKEN }}
+  TF_VAR_container_image: ghcr.io/${{ github.repository_owner }}/tvbf-backend:main
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: root
+          POSTGRES_PASSWORD: root
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U root"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql+asyncpg://root:root@localhost:5432/tvbf
+      TEST_DATABASE_URL: postgresql+asyncpg://root:root@localhost:5432/tvbf_test
+      ADMIN_TOKEN: test-admin-token
+      CORS_ALLOWED_ORIGINS: https://app.tvbf.localhost
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install uv
+      - run: uv pip install --system ".[dev]"
+      - name: Create databases + schemas
+        env:
+          PGPASSWORD: root
+        run: |
+          psql -h localhost -U root -d postgres -c "CREATE DATABASE tvbf;"
+          psql -h localhost -U root -d postgres -c "CREATE DATABASE tvbf_test;"
+          for db in tvbf tvbf_test; do
+            psql -h localhost -U root -d "$db" -c "CREATE SCHEMA IF NOT EXISTS tvmaze;"
+            psql -h localhost -U root -d "$db" -c "CREATE SCHEMA IF NOT EXISTS app;"
+          done
+      - run: alembic upgrade head
+      - run: ruff check src tests
+      - run: ruff format --check src tests
+      - run: pyright src tests
+      - run: pytest
+
+  tofu:
+    needs: test
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: opentofu/setup-opentofu@v1
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+      - run: tofu init
+      - run: tofu fmt -check
+      - run: tofu validate
+      - name: Plan or apply
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.action }}" = "plan" ]; then
+            tofu plan -input=false -no-color
+          else
+            tofu apply -auto-approve -input=false
+          fi
+
+  deploy:
+    needs: tofu
+    if: github.event_name == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build and push image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          target: prod
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:${{ github.sha }}
+            ${{ env.IMAGE }}:main
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Set Web App container image
+        run: |
+          az webapp config container set \
+            --name "$WEB_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP" \
+            --container-image-name "${IMAGE}:${{ github.sha }}" \
+            --container-registry-url "https://ghcr.io"
+
+      - name: Restart Web App
+        run: |
+          az webapp restart \
+            --name "$WEB_APP_NAME" \
+            --resource-group "$RESOURCE_GROUP"
+
+      - name: Wait for healthz
+        run: |
+          for i in $(seq 1 30); do
+            code=$(curl -s -o /dev/null -w "%{http_code}" "https://${WEB_APP_NAME}.azurewebsites.net/healthz" || echo 000)
+            echo "attempt $i: $code"
+            if [ "$code" = "200" ]; then exit 0; fi
+            sleep 10
+          done
+          echo "Web App did not become healthy within 5 minutes"
+          exit 1

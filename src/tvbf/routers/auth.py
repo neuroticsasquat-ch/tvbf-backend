@@ -7,7 +7,7 @@ from tvbf.app.dto import (
     PasswordChangeRequest,
     SignupRequest,
 )
-from tvbf.app.errors import EmailInUse, InvalidCredentials
+from tvbf.app.errors import EmailInUse, InvalidCredentials, InvalidInvite
 from tvbf.app.models import User
 from tvbf.app.services import account_service
 from tvbf.config import Settings, get_settings
@@ -72,10 +72,13 @@ async def signup(
             email=str(payload.email),
             password=payload.password,
             display_name=payload.display_name,
+            invite_code=payload.invite_code,
             ttl_days=settings.session_ttl_days,
             user_agent=request.headers.get("user-agent"),
             ip=request.client.host if request.client else None,
         )
+    except InvalidInvite as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid_invite") from err
     except EmailInUse as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email_in_use") from err
     _set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)

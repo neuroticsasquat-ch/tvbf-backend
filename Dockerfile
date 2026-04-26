@@ -1,4 +1,4 @@
-FROM python:3.13-slim
+FROM python:3.13-slim AS base
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
@@ -13,6 +13,10 @@ RUN pip install --no-cache-dir uv
 WORKDIR /app
 
 COPY pyproject.toml ./
+
+
+FROM base AS dev
+
 RUN uv pip install --system --no-cache ".[dev]"
 
 COPY src/ src/
@@ -22,3 +26,17 @@ COPY migrations/ migrations/
 EXPOSE 8000
 
 CMD ["uvicorn", "tvbf.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+
+FROM base AS prod
+
+RUN uv pip install --system --no-cache .
+
+COPY src/ src/
+COPY alembic.ini alembic.ini
+COPY migrations/ migrations/
+
+EXPOSE 8000
+
+# Run migrations on startup, then exec uvicorn so signals reach the server.
+CMD ["sh", "-c", "alembic upgrade head && exec uvicorn tvbf.main:app --host 0.0.0.0 --port 8000"]

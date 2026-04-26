@@ -15,3 +15,9 @@ class InvalidCredentials(DomainError):
 
 class NotFound(DomainError):
     pass
+
+
+class InvalidInvite(DomainError):
+    """Invite code is unknown, already consumed, or doesn't match the signup email."""
+
+    pass

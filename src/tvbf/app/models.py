@@ -123,3 +123,20 @@ class LoginAttempt(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     ip: Mapped[str | None] = mapped_column(INET, nullable=True)
+
+
+class Invite(Base):
+    __tablename__ = "invite"
+    __table_args__ = {"schema": "app"}
+
+    code: Mapped[str] = mapped_column(Text, primary_key=True)
+    email_hint: Mapped[str | None] = mapped_column(CITEXT(), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    consumed_by_user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="SET NULL"),
+        nullable=True,
+    )

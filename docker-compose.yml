@@ -1,6 +1,8 @@
 services:
   tvbf-backend:
-    build: .
+    build:
+      context: .
+      target: dev
     container_name: tvbf_backend
     volumes:
       - ./src:/app/src

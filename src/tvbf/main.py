@@ -8,7 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
-from tvbf.routers import admin, auth, browse, health, me
+from tvbf.routers import admin, auth, browse, health, invites_admin, me
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
 
 
@@ -48,6 +48,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(admin.router)
+    app.include_router(invites_admin.router)
     app.include_router(browse.router)
     app.include_router(auth.router)
     app.include_router(me.router)

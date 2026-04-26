@@ -7,8 +7,21 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app import passwords, tokens
 from tvbf.app.models import User
-from tvbf.app.repos import session_repo
+from tvbf.app.repos import invite_repo, session_repo
 from tvbf.main import app
+
+
+@pytest.fixture
+async def make_invite(session: AsyncSession):
+    """Factory that creates an invite row and returns the code string."""
+
+    async def _make(*, email_hint: str | None = None) -> str:
+        code = tokens.new_session_id()  # any URL-safe random; piggybacks on existing helper
+        await invite_repo.create(session, code=code, email_hint=email_hint)
+        await session.commit()
+        return code
+
+    return _make
 
 
 @pytest.fixture

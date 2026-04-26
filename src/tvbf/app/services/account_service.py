@@ -3,10 +3,10 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import EmailInUse, InvalidCredentials
+from tvbf.app.errors import EmailInUse, InvalidCredentials, InvalidInvite
 from tvbf.app.models import User
 from tvbf.app.passwords import hash_password, verify_password
-from tvbf.app.repos import login_attempt_repo, session_repo, user_repo
+from tvbf.app.repos import invite_repo, login_attempt_repo, session_repo, user_repo
 from tvbf.app.tokens import new_csrf_token, new_session_id
 
 
@@ -16,12 +16,22 @@ async def signup(
     email: str,
     password: str,
     display_name: str,
+    invite_code: str,
     ttl_days: int,
     user_agent: str | None,
     ip: str | None,
 ) -> tuple[User, str, str]:
     """Create a new user, open a session, and return (user, session_id, csrf_token).
+    Requires a valid unconsumed invite code; raises InvalidInvite otherwise.
     Raises EmailInUse on duplicate email."""
+    invite = await invite_repo.get(db, invite_code)
+    if invite is None or invite.consumed_at is not None:
+        # Don't differentiate between "unknown" and "consumed" — keeps the
+        # signup endpoint from leaking which codes were ever issued.
+        raise InvalidInvite()
+    if invite.email_hint is not None and invite.email_hint.lower() != email.lower():
+        raise InvalidInvite()
+
     password_hash = hash_password(password)
     try:
         user = await user_repo.create(
@@ -30,6 +40,8 @@ async def signup(
     except IntegrityError as err:
         await db.rollback()
         raise EmailInUse() from err
+
+    await invite_repo.consume(db, invite=invite, user_id=user.id, consumed_at=datetime.now(UTC))
 
     sess_id = new_session_id()
     csrf = new_csrf_token()

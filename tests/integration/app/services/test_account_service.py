@@ -23,12 +23,14 @@ from tvbf.app.services import account_service
 
 
 @pytest.mark.asyncio
-async def test_signup_creates_user_session_and_csrf(session):
+async def test_signup_creates_user_session_and_csrf(session, make_invite):
+    invite = await make_invite()
     user, sess_id, csrf = await account_service.signup(
         session,
         email="alice@example.com",
         password="hunter2hunter2",
         display_name="Alice",
+        invite_code=invite,
         ttl_days=30,
         user_agent="ua",
         ip="1.2.3.4",
@@ -47,12 +49,15 @@ async def test_signup_creates_user_session_and_csrf(session):
 
 
 @pytest.mark.asyncio
-async def test_signup_raises_email_in_use_for_duplicate(session):
+async def test_signup_raises_email_in_use_for_duplicate(session, make_invite):
+    invite1 = await make_invite()
+    invite2 = await make_invite()
     await account_service.signup(
         session,
         email="bob@example.com",
         password="hunter2hunter2",
         display_name="Bob",
+        invite_code=invite1,
         ttl_days=30,
         user_agent=None,
         ip=None,
@@ -63,6 +68,7 @@ async def test_signup_raises_email_in_use_for_duplicate(session):
             email="bob@example.com",
             password="anotherpassword",
             display_name="Bob2",
+            invite_code=invite2,
             ttl_days=30,
             user_agent=None,
             ip=None,
@@ -70,13 +76,16 @@ async def test_signup_raises_email_in_use_for_duplicate(session):
 
 
 @pytest.mark.asyncio
-async def test_signup_email_match_is_case_insensitive(session):
+async def test_signup_email_match_is_case_insensitive(session, make_invite):
     """citext column → BOB@... collides with bob@..."""
+    invite1 = await make_invite()
+    invite2 = await make_invite()
     await account_service.signup(
         session,
         email="case@example.com",
         password="hunter2hunter2",
         display_name="Case",
+        invite_code=invite1,
         ttl_days=30,
         user_agent=None,
         ip=None,
@@ -87,10 +96,116 @@ async def test_signup_email_match_is_case_insensitive(session):
             email="CASE@example.com",
             password="hunter2hunter2",
             display_name="Case2",
+            invite_code=invite2,
             ttl_days=30,
             user_agent=None,
             ip=None,
         )
+
+
+# ---------------------------------------------------------------------------
+# signup invite gating
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_signup_raises_invalid_invite_for_unknown_code(session):
+    from tvbf.app.errors import InvalidInvite
+
+    with pytest.raises(InvalidInvite):
+        await account_service.signup(
+            session,
+            email="x@example.com",
+            password="hunter2hunter2",
+            display_name="X",
+            invite_code="totally-not-a-real-code",
+            ttl_days=30,
+            user_agent=None,
+            ip=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_signup_raises_invalid_invite_for_consumed_code(session, make_invite):
+    from tvbf.app.errors import InvalidInvite
+
+    invite = await make_invite()
+    await account_service.signup(
+        session,
+        email="first@example.com",
+        password="hunter2hunter2",
+        display_name="First",
+        invite_code=invite,
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+    )
+    with pytest.raises(InvalidInvite):
+        await account_service.signup(
+            session,
+            email="second@example.com",
+            password="hunter2hunter2",
+            display_name="Second",
+            invite_code=invite,
+            ttl_days=30,
+            user_agent=None,
+            ip=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_signup_raises_invalid_invite_when_email_hint_mismatches(session, make_invite):
+    from tvbf.app.errors import InvalidInvite
+
+    invite = await make_invite(email_hint="alice@example.com")
+    with pytest.raises(InvalidInvite):
+        await account_service.signup(
+            session,
+            email="bob@example.com",
+            password="hunter2hunter2",
+            display_name="Bob",
+            invite_code=invite,
+            ttl_days=30,
+            user_agent=None,
+            ip=None,
+        )
+
+
+@pytest.mark.asyncio
+async def test_signup_succeeds_when_email_hint_matches(session, make_invite):
+    invite = await make_invite(email_hint="alice@example.com")
+    user, _, _ = await account_service.signup(
+        session,
+        email="ALICE@example.com",  # case-insensitive match via citext
+        password="hunter2hunter2",
+        display_name="Alice",
+        invite_code=invite,
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+    )
+    assert user.email == "ALICE@example.com"
+
+
+@pytest.mark.asyncio
+async def test_signup_marks_invite_consumed(session, make_invite):
+    from tvbf.app.repos import invite_repo
+
+    invite_code = await make_invite()
+    user, _, _ = await account_service.signup(
+        session,
+        email="consume@example.com",
+        password="hunter2hunter2",
+        display_name="Consumer",
+        invite_code=invite_code,
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+    )
+    invite = await invite_repo.get(session, invite_code)
+    assert invite is not None
+    assert invite.consumed_at is not None
+    assert invite.consumed_by_user_id == user.id
 
 
 # ---------------------------------------------------------------------------

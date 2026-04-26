@@ -34,13 +34,15 @@ async def client(session):
 
 
 @pytest.mark.asyncio
-async def test_signup_creates_user_and_sets_cookies(client):
+async def test_signup_creates_user_and_sets_cookies(client, make_invite):
+    invite = await make_invite()
     r = await client.post(
         "/auth/signup",
         json={
             "email": "Alice@example.com",
             "password": "hunter2hunter2",
             "display_name": "Alice",
+            "invite_code": invite,
         },
     )
     assert r.status_code == 201
@@ -54,10 +56,17 @@ async def test_signup_creates_user_and_sets_cookies(client):
 
 
 @pytest.mark.asyncio
-async def test_signup_rejects_duplicate_email_case_insensitive(client):
+async def test_signup_rejects_duplicate_email_case_insensitive(client, make_invite):
+    invite1 = await make_invite()
+    invite2 = await make_invite()
     r1 = await client.post(
         "/auth/signup",
-        json={"email": "bob@example.com", "password": "hunter2hunter2", "display_name": "Bob"},
+        json={
+            "email": "bob@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "Bob",
+            "invite_code": invite1,
+        },
     )
     assert r1.status_code == 201
     async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as c2:
@@ -67,6 +76,7 @@ async def test_signup_rejects_duplicate_email_case_insensitive(client):
                 "email": "BOB@example.com",
                 "password": "hunter2hunter2",
                 "display_name": "Bob2",
+                "invite_code": invite2,
             },
         )
     assert r2.status_code == 409
@@ -77,7 +87,12 @@ async def test_signup_rejects_duplicate_email_case_insensitive(client):
 async def test_signup_rejects_short_password(client):
     r = await client.post(
         "/auth/signup",
-        json={"email": "c@example.com", "password": "short", "display_name": "C"},
+        json={
+            "email": "c@example.com",
+            "password": "short",
+            "display_name": "C",
+            "invite_code": "anything",
+        },
     )
     assert r.status_code == 422
 
@@ -86,16 +101,85 @@ async def test_signup_rejects_short_password(client):
 async def test_signup_rejects_invalid_email(client):
     r = await client.post(
         "/auth/signup",
-        json={"email": "not-an-email", "password": "hunter2hunter2", "display_name": "X"},
+        json={
+            "email": "not-an-email",
+            "password": "hunter2hunter2",
+            "display_name": "X",
+            "invite_code": "anything",
+        },
     )
     assert r.status_code == 422
 
 
 @pytest.mark.asyncio
-async def test_login_succeeds_with_correct_credentials(client):
+async def test_signup_rejects_invalid_invite(client):
+    r = await client.post(
+        "/auth/signup",
+        json={
+            "email": "noinvite@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "NoInvite",
+            "invite_code": "this-code-does-not-exist",
+        },
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"] == "invalid_invite"
+
+
+@pytest.mark.asyncio
+async def test_signup_rejects_consumed_invite(client, make_invite):
+    invite = await make_invite()
+    r1 = await client.post(
+        "/auth/signup",
+        json={
+            "email": "first@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "First",
+            "invite_code": invite,
+        },
+    )
+    assert r1.status_code == 201
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as c2:
+        r2 = await c2.post(
+            "/auth/signup",
+            json={
+                "email": "second@example.com",
+                "password": "hunter2hunter2",
+                "display_name": "Second",
+                "invite_code": invite,
+            },
+        )
+    assert r2.status_code == 403
+    assert r2.json()["detail"] == "invalid_invite"
+
+
+@pytest.mark.asyncio
+async def test_signup_rejects_email_hint_mismatch(client, make_invite):
+    invite = await make_invite(email_hint="alice@example.com")
+    r = await client.post(
+        "/auth/signup",
+        json={
+            "email": "bob@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "Bob",
+            "invite_code": invite,
+        },
+    )
+    assert r.status_code == 403
+    assert r.json()["detail"] == "invalid_invite"
+
+
+@pytest.mark.asyncio
+async def test_login_succeeds_with_correct_credentials(client, make_invite):
+    invite = await make_invite()
     await client.post(
         "/auth/signup",
-        json={"email": "lo@example.com", "password": "hunter2hunter2", "display_name": "Lo"},
+        json={
+            "email": "lo@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "Lo",
+            "invite_code": invite,
+        },
     )
     csrf = client.cookies["csrf_token"]
     await client.post("/auth/logout", headers={"X-CSRF-Token": csrf})
@@ -111,10 +195,16 @@ async def test_login_succeeds_with_correct_credentials(client):
 
 
 @pytest.mark.asyncio
-async def test_login_rejects_wrong_password(client):
+async def test_login_rejects_wrong_password(client, make_invite):
+    invite = await make_invite()
     await client.post(
         "/auth/signup",
-        json={"email": "wp@example.com", "password": "hunter2hunter2", "display_name": "WP"},
+        json={
+            "email": "wp@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "WP",
+            "invite_code": invite,
+        },
     )
     async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as c2:
         r = await c2.post(
@@ -136,10 +226,16 @@ async def test_login_rejects_unknown_email(client):
 
 
 @pytest.mark.asyncio
-async def test_logout_clears_cookies_and_invalidates_session(client):
+async def test_logout_clears_cookies_and_invalidates_session(client, make_invite):
+    invite = await make_invite()
     await client.post(
         "/auth/signup",
-        json={"email": "out@example.com", "password": "hunter2hunter2", "display_name": "Out"},
+        json={
+            "email": "out@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "Out",
+            "invite_code": invite,
+        },
     )
     csrf = client.cookies["csrf_token"]
     r = await client.post("/auth/logout", headers={"X-CSRF-Token": csrf})
@@ -149,20 +245,32 @@ async def test_logout_clears_cookies_and_invalidates_session(client):
 
 
 @pytest.mark.asyncio
-async def test_logout_requires_csrf(client):
+async def test_logout_requires_csrf(client, make_invite):
+    invite = await make_invite()
     await client.post(
         "/auth/signup",
-        json={"email": "cs@example.com", "password": "hunter2hunter2", "display_name": "CS"},
+        json={
+            "email": "cs@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "CS",
+            "invite_code": invite,
+        },
     )
     r = await client.post("/auth/logout")
     assert r.status_code == 403
 
 
 @pytest.mark.asyncio
-async def test_change_password_requires_correct_current_password(client):
+async def test_change_password_requires_correct_current_password(client, make_invite):
+    invite = await make_invite()
     await client.post(
         "/auth/signup",
-        json={"email": "pc@example.com", "password": "hunter2hunter2", "display_name": "PC"},
+        json={
+            "email": "pc@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "PC",
+            "invite_code": invite,
+        },
     )
     csrf = client.cookies["csrf_token"]
     r = await client.post(
@@ -174,10 +282,16 @@ async def test_change_password_requires_correct_current_password(client):
 
 
 @pytest.mark.asyncio
-async def test_change_password_rotates_session(client):
+async def test_change_password_rotates_session(client, make_invite):
+    invite = await make_invite()
     await client.post(
         "/auth/signup",
-        json={"email": "rot@example.com", "password": "hunter2hunter2", "display_name": "Rot"},
+        json={
+            "email": "rot@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "Rot",
+            "invite_code": invite,
+        },
     )
     old_session = client.cookies["tvbf_session"]
     csrf = client.cookies["csrf_token"]
@@ -225,7 +339,8 @@ def _request(*, cookies: dict[str, str] | None = None) -> Request:
 
 
 @pytest.mark.asyncio
-async def test_signup_route_returns_authed_user_and_sets_cookies(session):
+async def test_signup_route_returns_authed_user_and_sets_cookies(session, make_invite):
+    invite = await make_invite()
     request = _request()
     response = Response()
     settings = get_settings()
@@ -233,6 +348,7 @@ async def test_signup_route_returns_authed_user_and_sets_cookies(session):
         email="signup@example.com",
         password="hunter2hunter2",
         display_name="Sign",
+        invite_code=invite,
     )
     result = await auth_router.signup(payload, request, response, db=session, settings=settings)
     assert result.email == "signup@example.com"
@@ -243,8 +359,9 @@ async def test_signup_route_returns_authed_user_and_sets_cookies(session):
 
 
 @pytest.mark.asyncio
-async def test_signup_route_raises_409_on_duplicate_email(session, make_user):
+async def test_signup_route_raises_409_on_duplicate_email(session, make_user, make_invite):
     await make_user(email="dup@example.com")
+    invite = await make_invite()
     request = _request()
     response = Response()
     settings = get_settings()
@@ -252,6 +369,7 @@ async def test_signup_route_raises_409_on_duplicate_email(session, make_user):
         email="dup@example.com",
         password="hunter2hunter2",
         display_name="Dup",
+        invite_code=invite,
     )
     with pytest.raises(HTTPException) as ei:
         await auth_router.signup(payload, request, response, db=session, settings=settings)

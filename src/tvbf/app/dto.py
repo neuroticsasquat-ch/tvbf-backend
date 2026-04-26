@@ -15,6 +15,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     display_name: str = Field(min_length=1, max_length=100)
+    invite_code: str = Field(min_length=1, max_length=128)
 
 
 class LoginRequest(BaseModel):
@@ -67,3 +68,15 @@ class EpisodeWatchOut(BaseModel):
 
 class BulkSeasonResult(BaseModel):
     marked: int
+
+
+class InviteCreateRequest(BaseModel):
+    email_hint: EmailStr | None = None
+
+
+class InviteOut(BaseModel):
+    code: str
+    email_hint: str | None
+    created_at: datetime
+    consumed_at: datetime | None
+    consumed_by_user_id: UUID | None
