@@ -110,7 +110,12 @@ async def list_shows(
 
     base = select(m.Show)
     if filters.search:
-        base = base.where(m.Show.name.ilike(f"%{filters.search}%"))
+        # Token-based AND match: every whitespace-separated token must appear
+        # as a substring (case-insensitive) of the show name. Lets "alien earth"
+        # match "Alien: Earth" and "the office us" match "The Office (US)" —
+        # punctuation between tokens stops mattering.
+        for token in filters.search.split():
+            base = base.where(m.Show.name.ilike(f"%{token}%"))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:

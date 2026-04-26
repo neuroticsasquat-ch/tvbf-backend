@@ -107,6 +107,43 @@ async def test_list_shows_search_substring_case_insensitive(session):
     assert total == len(rows)
 
 
+async def test_list_shows_search_tokens_match_across_punctuation(session):
+    """Each whitespace-separated token must appear as a substring of the name.
+    'alien earth' must match 'Alien: Earth' even though the colon prevents a
+    single-substring match."""
+    from tvbf.tvmaze import models as m
+
+    session.add(m.Show(id=99001, name="Alien: Earth", tvmaze_updated=1))
+    session.add(m.Show(id=99002, name="Alien Nation", tvmaze_updated=1))
+    session.add(m.Show(id=99003, name="Earthbound", tvmaze_updated=1))
+    await session.commit()
+
+    rows, _ = await list_shows(
+        session, ShowFilters(search="alien earth"), sort="name", page=1, per_page=100
+    )
+    names = {r.name for r in rows}
+    assert "Alien: Earth" in names
+    assert "Alien Nation" not in names  # has 'alien' but not 'earth'
+    assert "Earthbound" not in names  # has 'earth' but not 'alien'
+
+
+async def test_list_shows_search_collapses_extra_whitespace(session):
+    """Multiple spaces and surrounding whitespace are absorbed by split()."""
+    from tvbf.tvmaze import models as m
+
+    session.add(m.Show(id=99010, name="The Office", tvmaze_updated=1))
+    await session.commit()
+
+    rows, _ = await list_shows(
+        session,
+        ShowFilters(search="  the   office  "),
+        sort="name",
+        page=1,
+        per_page=100,
+    )
+    assert {r.name for r in rows} == {"The Office"}
+
+
 async def test_list_shows_status_filter(session):
     await seed(session)
     rows, _ = await list_shows(
