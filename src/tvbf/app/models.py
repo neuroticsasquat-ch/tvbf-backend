@@ -2,6 +2,7 @@ from datetime import datetime
 from uuid import UUID
 
 from sqlalchemy import (  # noqa: I001
+    BigInteger,
     DateTime,
     ForeignKey,
     Index,
@@ -107,3 +108,18 @@ class UserEpisodeWatch(Base):
     watched_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+
+
+class LoginAttempt(Base):
+    __tablename__ = "login_attempt"
+    __table_args__ = (
+        Index("ix_login_attempt_email_at", "email", "attempted_at"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    email: Mapped[str] = mapped_column(CITEXT(), nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    ip: Mapped[str | None] = mapped_column(INET, nullable=True)

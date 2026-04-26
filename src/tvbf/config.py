@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     cookie_secure: bool = Field(default=True, alias="COOKIE_SECURE")
     cookie_samesite: str = Field(default="none", alias="COOKIE_SAMESITE")
 
+    login_lockout_threshold: int = Field(default=5, alias="LOGIN_LOCKOUT_THRESHOLD")
+    login_lockout_window_minutes: int = Field(default=15, alias="LOGIN_LOCKOUT_WINDOW_MINUTES")
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]

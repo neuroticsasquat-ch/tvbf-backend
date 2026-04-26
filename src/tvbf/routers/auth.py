@@ -101,6 +101,8 @@ async def login(
             ttl_days=settings.session_ttl_days,
             user_agent=request.headers.get("user-agent"),
             ip=request.client.host if request.client else None,
+            lockout_threshold=settings.login_lockout_threshold,
+            lockout_window_minutes=settings.login_lockout_window_minutes,
         )
     except InvalidCredentials as err:
         raise HTTPException(

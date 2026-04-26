@@ -144,6 +144,143 @@ async def test_authenticate_unknown_email_raises(session):
 
 
 # ---------------------------------------------------------------------------
+# brute-force lockout
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_authenticate_locks_out_after_threshold_failures(session, make_user):
+    await make_user(email="brute@example.com", password="hunter2hunter2")
+
+    for _ in range(3):
+        with pytest.raises(InvalidCredentials):
+            await account_service.authenticate(
+                session,
+                email="brute@example.com",
+                password="wrong",
+                ttl_days=30,
+                user_agent=None,
+                ip="1.2.3.4",
+                lockout_threshold=3,
+                lockout_window_minutes=15,
+            )
+
+    # 4th attempt — even with the CORRECT password — must fail because the
+    # account is locked.
+    with pytest.raises(InvalidCredentials):
+        await account_service.authenticate(
+            session,
+            email="brute@example.com",
+            password="hunter2hunter2",
+            ttl_days=30,
+            user_agent=None,
+            ip="1.2.3.4",
+            lockout_threshold=3,
+            lockout_window_minutes=15,
+        )
+
+
+@pytest.mark.asyncio
+async def test_authenticate_records_failure_for_unknown_email(session):
+    """Recording a failure even for non-existent emails prevents account
+    enumeration: an attacker can't tell from response timing whether the
+    account exists. Also limits brute-forcing 'is this a member?'."""
+    from datetime import UTC, datetime, timedelta
+
+    from tvbf.app.repos import login_attempt_repo
+
+    with pytest.raises(InvalidCredentials):
+        await account_service.authenticate(
+            session,
+            email="nobody@example.com",
+            password="anything",
+            ttl_days=30,
+            user_agent=None,
+            ip=None,
+        )
+    count = await login_attempt_repo.count_since(
+        session,
+        email="nobody@example.com",
+        since=datetime.now(UTC) - timedelta(hours=1),
+    )
+    assert count == 1
+
+
+@pytest.mark.asyncio
+async def test_successful_login_clears_failure_counter(session, make_user):
+    """A correct password resets the failure count so subsequent typos don't
+    accumulate from before the success."""
+    from datetime import UTC, datetime, timedelta
+
+    from tvbf.app.repos import login_attempt_repo
+
+    await make_user(email="reset@example.com", password="hunter2hunter2")
+    # Two failures.
+    for _ in range(2):
+        with pytest.raises(InvalidCredentials):
+            await account_service.authenticate(
+                session,
+                email="reset@example.com",
+                password="wrong",
+                ttl_days=30,
+                user_agent=None,
+                ip=None,
+            )
+
+    # Successful login.
+    await account_service.authenticate(
+        session,
+        email="reset@example.com",
+        password="hunter2hunter2",
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+    )
+
+    count = await login_attempt_repo.count_since(
+        session,
+        email="reset@example.com",
+        since=datetime.now(UTC) - timedelta(hours=1),
+    )
+    assert count == 0
+
+
+@pytest.mark.asyncio
+async def test_lockout_only_counts_failures_inside_window(session, make_user):
+    """Old failures outside the window don't contribute to the lockout. We
+    invoke authenticate with a tiny window so the previous test's failures
+    don't matter — but we also cement the contract."""
+    from datetime import UTC, datetime, timedelta
+
+    from tvbf.app.models import LoginAttempt
+
+    user = await make_user(email="window@example.com", password="hunter2hunter2")
+    # Insert an old failure (1 hour ago).
+    session.add(
+        LoginAttempt(
+            email="window@example.com",
+            attempted_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+    )
+    await session.commit()
+
+    # With a 15-minute window and threshold=1, the old failure is outside the
+    # window — login should succeed.
+    out_user, sess_id, _ = await account_service.authenticate(
+        session,
+        email="window@example.com",
+        password="hunter2hunter2",
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+        lockout_threshold=1,
+        lockout_window_minutes=15,
+    )
+    assert out_user.id == user.id
+    assert sess_id
+
+
+# ---------------------------------------------------------------------------
 # logout
 # ---------------------------------------------------------------------------
 

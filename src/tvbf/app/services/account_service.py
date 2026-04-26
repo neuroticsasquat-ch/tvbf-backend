@@ -1,10 +1,12 @@
+from datetime import UTC, datetime, timedelta
+
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import EmailInUse, InvalidCredentials
 from tvbf.app.models import User
 from tvbf.app.passwords import hash_password, verify_password
-from tvbf.app.repos import session_repo, user_repo
+from tvbf.app.repos import login_attempt_repo, session_repo, user_repo
 from tvbf.app.tokens import new_csrf_token, new_session_id
 
 
@@ -52,12 +54,26 @@ async def authenticate(
     ttl_days: int,
     user_agent: str | None,
     ip: str | None,
+    lockout_threshold: int = 5,
+    lockout_window_minutes: int = 15,
 ) -> tuple[User, str, str]:
     """Verify credentials, open a new session, return (user, session_id, csrf_token).
-    Raises InvalidCredentials on bad email or password."""
+    Raises InvalidCredentials on bad email/password OR when the email has hit
+    the brute-force threshold (we deliberately return the same error so attackers
+    can't tell whether they're locked out)."""
+    since = datetime.now(UTC) - timedelta(minutes=lockout_window_minutes)
+    failures = await login_attempt_repo.count_since(db, email=email, since=since)
+    if failures >= lockout_threshold:
+        raise InvalidCredentials()
+
     user = await user_repo.get_by_email(db, email)
     if user is None or not verify_password(password, user.password_hash):
+        await login_attempt_repo.record(db, email=email, ip=ip)
+        await db.commit()
         raise InvalidCredentials()
+
+    # Successful login — wipe the slate clean.
+    await login_attempt_repo.clear_for_email(db, email=email)
 
     sess_id = new_session_id()
     csrf = new_csrf_token()
