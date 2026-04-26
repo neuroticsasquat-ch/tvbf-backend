@@ -149,6 +149,28 @@ def test_sort_my_shows_recent_activity_falls_back_to_epoch_when_show_has_no_aire
     assert [e.show.id for e in out] == [1, 2]
 
 
+def test_sort_my_shows_strips_leading_articles_for_alpha_sort():
+    """The/A/An at the start of a title don't count toward alphabetical order:
+    'The Office' sorts under O, 'A Team' under T, 'An Awkward Show' under A."""
+    entries = [
+        _my_show(id=1, name="The Office"),
+        _my_show(id=2, name="Lost"),
+        _my_show(id=3, name="A Team"),
+        _my_show(id=4, name="An Awkward Show"),
+    ]
+    out = sort_my_shows(entries, "name_asc", latest_aired={})
+    # Stripped keys: "awkward show", "lost", "office", "team"
+    assert [e.show.id for e in out] == [4, 2, 1, 3]
+
+
+def test_sort_my_shows_does_not_strip_articles_without_following_space():
+    """'Aliens' starts with 'A' but isn't an article — must not be stripped."""
+    entries = [_my_show(id=1, name="Aliens"), _my_show(id=2, name="The Wire")]
+    out = sort_my_shows(entries, "name_asc", latest_aired={})
+    # "aliens" < "wire" → Aliens before The Wire.
+    assert [e.show.id for e in out] == [1, 2]
+
+
 # ---------------------------------------------------------------------------
 # sort_watch_next
 # ---------------------------------------------------------------------------

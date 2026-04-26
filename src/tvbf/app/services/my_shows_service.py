@@ -14,6 +14,7 @@ from tvbf.app.dto import (
 )
 from tvbf.app.errors import NotFound
 from tvbf.app.repos import episode_repo, episode_watch_repo, show_membership_repo, show_repo
+from tvbf.sorting import show_name_sort_key
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
 from tvbf.tvmaze.dto import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
 from tvbf.tvmaze.models import Show
@@ -68,15 +69,15 @@ def sort_my_shows(
     `added` — by `added_at` desc.
     """
     if sort == "name_asc":
-        return sorted(entries, key=lambda e: e.show.name.lower())
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
-        return sorted(entries, key=lambda e: e.show.name.lower(), reverse=True)
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
     if sort == "added":
         return sorted(entries, key=lambda e: e.added_at, reverse=True)
     # recent_activity (default)
     return sorted(
         entries,
-        key=lambda e: (latest_aired.get(e.show.id) or _EPOCH, e.show.name.lower()),
+        key=lambda e: (latest_aired.get(e.show.id) or _EPOCH, show_name_sort_key(e.show.name)),
         reverse=True,
     )
 
@@ -85,15 +86,17 @@ def sort_watch_next(entries: list[WatchNextEntry], sort: WatchNextSort) -> list[
     """Order Watch Next entries. Default `airdate_desc` (most recently aired first).
     Episodes with airdate=None fall to the bottom (date.min fallback)."""
     if sort == "airdate_asc":
-        return sorted(entries, key=lambda e: (e.episode.airdate or date.min, e.show.name.lower()))
+        return sorted(
+            entries, key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name))
+        )
     if sort == "name_asc":
-        return sorted(entries, key=lambda e: e.show.name.lower())
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
-        return sorted(entries, key=lambda e: e.show.name.lower(), reverse=True)
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
     # airdate_desc (default)
     return sorted(
         entries,
-        key=lambda e: (e.episode.airdate or date.min, e.show.name.lower()),
+        key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name)),
         reverse=True,
     )
 
@@ -103,15 +106,17 @@ def sort_upcoming(entries: list[UpcomingEntry], sort: UpcomingSort) -> list[Upco
     if sort == "airdate_desc":
         return sorted(
             entries,
-            key=lambda e: (e.episode.airdate or date.min, e.show.name.lower()),
+            key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name)),
             reverse=True,
         )
     if sort == "name_asc":
-        return sorted(entries, key=lambda e: e.show.name.lower())
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
-        return sorted(entries, key=lambda e: e.show.name.lower(), reverse=True)
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
     # airdate_asc (default)
-    return sorted(entries, key=lambda e: (e.episode.airdate or date.min, e.show.name.lower()))
+    return sorted(
+        entries, key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name))
+    )
 
 
 async def add(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:

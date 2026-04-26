@@ -1,12 +1,16 @@
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.sorting import SQL_LEADING_ARTICLE_PATTERN
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.dto import ALLOWED_SORT_KEYS, ShowFilters
 
+# Strip leading articles for natural alphabetical sort: "The Office" → "office".
+_NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTICLE_PATTERN, "")
+
 _SORT_EXPRS = {
-    "name": m.Show.name.asc(),
-    "-name": m.Show.name.desc(),
+    "name": _NORMALIZED_NAME.asc(),
+    "-name": _NORMALIZED_NAME.desc(),
     "premiered": m.Show.premiered.asc().nulls_last(),
     "-premiered": m.Show.premiered.desc().nulls_last(),
     "tvmaze_updated": m.Show.tvmaze_updated.asc(),
