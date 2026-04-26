@@ -15,6 +15,16 @@ def test_settings_reads_database_url_from_env(monkeypatch):
 def test_settings_has_sensible_defaults(monkeypatch):
     monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
     monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    # Clear env-driven overrides so we observe the actual code defaults rather
+    # than whatever the deployed container's env happens to set.
+    for key in (
+        "CORS_ALLOWED_ORIGINS",
+        "COOKIE_SAMESITE",
+        "COOKIE_SECURE",
+        "COOKIE_DOMAIN",
+        "SESSION_TTL_DAYS",
+    ):
+        monkeypatch.delenv(key, raising=False)
     s = Settings()  # type: ignore[call-arg]
     assert s.tvmaze_base_url == "https://api.tvmaze.com"
     assert s.tvmaze_rate_limit_requests == 18
@@ -23,12 +33,13 @@ def test_settings_has_sensible_defaults(monkeypatch):
     assert s.ingest_consecutive_failure_threshold == 10
     assert s.ingest_stale_run_minutes == 15
     assert s.log_level == "INFO"
-    assert s.cors_allowed_origins == ["https://tvbf.localhost"]
+    assert s.cors_allowed_origins == ["https://app.tvbf.localhost"]
     assert s.session_cookie_name == "tvbf_session"
     assert s.csrf_cookie_name == "csrf_token"
     assert s.session_ttl_days == 30
     assert s.cookie_secure is True
-    assert s.cookie_samesite == "none"
+    assert s.cookie_samesite == "lax"
+    assert s.cookie_domain is None
 
 
 def test_settings_parses_cors_origins_from_env(monkeypatch):

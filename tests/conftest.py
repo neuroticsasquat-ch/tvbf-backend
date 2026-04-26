@@ -1,6 +1,11 @@
 import os
 
 os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+# Tests use ASGITransport with a synthetic base_url ("https://test"), which
+# means a parent-domain cookie like ".tvbf.localhost" is silently dropped by
+# httpx's cookie jar as not applicable. Force host-only cookies during the
+# test run regardless of what the dev container exports.
+os.environ.pop("COOKIE_DOMAIN", None)
 
 pytest_plugins = ["tests.fixtures.users"]
 

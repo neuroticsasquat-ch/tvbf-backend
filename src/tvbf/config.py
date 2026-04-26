@@ -26,14 +26,18 @@ class Settings(BaseSettings):
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     cors_allowed_origins_raw: str = Field(
-        default="https://tvbf.localhost", alias="CORS_ALLOWED_ORIGINS"
+        default="https://app.tvbf.localhost", alias="CORS_ALLOWED_ORIGINS"
     )
 
     session_cookie_name: str = Field(default="tvbf_session", alias="SESSION_COOKIE_NAME")
     csrf_cookie_name: str = Field(default="csrf_token", alias="CSRF_COOKIE_NAME")
     session_ttl_days: int = Field(default=30, alias="SESSION_TTL_DAYS")
     cookie_secure: bool = Field(default=True, alias="COOKIE_SECURE")
-    cookie_samesite: str = Field(default="none", alias="COOKIE_SAMESITE")
+    cookie_samesite: str = Field(default="lax", alias="COOKIE_SAMESITE")
+    # Set this to the parent domain (e.g. ".tvbingefriend.com" in prod or
+    # ".tvbf.localhost" in dev) so session+csrf cookies are shared between
+    # the SPA and the API on different subdomains. Leave None for host-only.
+    cookie_domain: str | None = Field(default=None, alias="COOKIE_DOMAIN")
 
     login_lockout_threshold: int = Field(default=5, alias="LOGIN_LOCKOUT_THRESHOLD")
     login_lockout_window_minutes: int = Field(default=15, alias="LOGIN_LOCKOUT_WINDOW_MINUTES")

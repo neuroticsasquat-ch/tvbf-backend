@@ -176,12 +176,12 @@ async def test_cors_allows_configured_origin():
         r = await c.options(
             "/healthz",
             headers={
-                "Origin": "https://tvbf.localhost",
+                "Origin": "https://app.tvbf.localhost",
                 "Access-Control-Request-Method": "GET",
             },
         )
     assert r.status_code in (200, 204)
-    assert r.headers.get("access-control-allow-origin") == "https://tvbf.localhost"
+    assert r.headers.get("access-control-allow-origin") == "https://app.tvbf.localhost"
 
 
 async def test_cors_blocks_unknown_origin():

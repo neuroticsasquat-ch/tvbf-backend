@@ -99,21 +99,21 @@ tasks:
     desc: POST /admin/ingest
     cmds:
       - >
-        curl -sk -X POST https://tvbf-backend.localhost/admin/ingest
+        curl -sk -X POST https://api.tvbf.localhost/admin/ingest
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   update:
     desc: POST /admin/update
     cmds:
       - >
-        curl -sk -X POST https://tvbf-backend.localhost/admin/update
+        curl -sk -X POST https://api.tvbf.localhost/admin/update
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   ingest:status:
     desc: 'GET /admin/ingest/<id> — task ingest:status -- <uuid>'
     cmds:
       - >
-        curl -sk https://tvbf-backend.localhost/admin/ingest/{{.CLI_ARGS}}
+        curl -sk https://api.tvbf.localhost/admin/ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   deps:add:

@@ -32,6 +32,7 @@ def _set_auth_cookies(
         secure=settings.cookie_secure,
         samesite=settings.cookie_samesite,  # type: ignore[arg-type]
         path="/",
+        domain=settings.cookie_domain,
     )
     response.set_cookie(
         key=settings.csrf_cookie_name,
@@ -41,6 +42,7 @@ def _set_auth_cookies(
         secure=settings.cookie_secure,
         samesite=settings.cookie_samesite,  # type: ignore[arg-type]
         path="/",
+        domain=settings.cookie_domain,
     )
 
 
@@ -52,6 +54,7 @@ def _clear_auth_cookies(response: Response, settings: Settings) -> None:
             secure=settings.cookie_secure,
             samesite=settings.cookie_samesite,  # type: ignore[arg-type]
             httponly=name == settings.session_cookie_name,
+            domain=settings.cookie_domain,
         )
 
 
