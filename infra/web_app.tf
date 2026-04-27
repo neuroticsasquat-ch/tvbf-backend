@@ -27,7 +27,8 @@ resource "azurerm_linux_web_app" "tvbf_backend" {
       docker_registry_url = "https://ghcr.io"
     }
 
-    health_check_path = "/healthz"
+    health_check_path                 = "/healthz"
+    health_check_eviction_time_in_min = 5
   }
 
   app_settings = {
@@ -51,7 +52,6 @@ resource "azurerm_linux_web_app" "tvbf_backend" {
     LOG_LEVEL = "INFO"
 
     WEBSITES_PORT                       = "8000"
-    DOCKER_REGISTRY_SERVER_URL          = "https://ghcr.io"
     WEBSITES_ENABLE_APP_SERVICE_STORAGE = "false"
   }
 
@@ -101,8 +101,7 @@ resource "azurerm_monitor_diagnostic_setting" "tvbf_backend" {
     category = "AppServicePlatformLogs"
   }
 
-  metric {
+  enabled_metric {
     category = "AllMetrics"
-    enabled  = true
   }
 }
