@@ -67,7 +67,7 @@ variable "web_app_name" {
 variable "container_image" {
   description = "Initial GHCR image to deploy. CI passes ghcr.io/<owner>/tvbf-backend:main via TF_VAR_container_image; deploy.yml updates the running image out-of-band, and lifecycle.ignore_changes keeps tofu from fighting it back. Override locally via tfvars if you need to apply from your laptop."
   type        = string
-  default     = "ghcr.io/REPLACE_ME/tvbf-backend:main"
+  default     = "REPLACE_ME/tvbf-backend:main"
 }
 
 variable "admin_token" {

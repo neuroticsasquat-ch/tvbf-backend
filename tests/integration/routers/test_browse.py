@@ -6,7 +6,7 @@ and the browse handler tests from tests/test_route_handlers_browse_admin.py.
 
 import httpx
 import pytest
-from fastapi import HTTPException, Response
+from fastapi import HTTPException
 from httpx import ASGITransport
 
 from tests.fixtures.browse.seed import GENRES, seed
@@ -15,11 +15,10 @@ from tvbf.routers import browse as browse_router
 
 
 @pytest.fixture
-async def client(session):
-    """ASGI client whose test DB is the one `session` manages."""
+async def client(authed_client, session):
+    """Authed ASGI client with the browse seed loaded."""
     await seed(session)
-    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
-        yield c
+    yield authed_client
 
 
 @pytest.fixture
@@ -196,11 +195,10 @@ async def test_cors_blocks_unknown_origin():
     assert "access-control-allow-origin" not in {k.lower() for k in r.headers.keys()}
 
 
-async def test_browse_response_has_cache_control_header():
+async def test_browse_requires_auth():
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get("/genres")
-    assert r.status_code == 200
-    assert r.headers.get("cache-control") == "public, max-age=300"
+    assert r.status_code == 401
 
 
 # ---------------------------------------------------------------------------
@@ -210,24 +208,20 @@ async def test_browse_response_has_cache_control_header():
 
 @pytest.mark.asyncio
 async def test_list_genres_route(seeded):
-    response = Response()
-    out = await browse_router.list_genres(response=response, session=seeded)
+    out = await browse_router.list_genres(session=seeded)
     assert isinstance(out, list)
     assert len(out) >= 1
 
 
 @pytest.mark.asyncio
 async def test_list_networks_route(seeded):
-    response = Response()
-    out = await browse_router.list_networks(response=response, session=seeded)
+    out = await browse_router.list_networks(session=seeded)
     assert isinstance(out, list)
 
 
 @pytest.mark.asyncio
 async def test_list_shows_route_returns_page(seeded):
-    response = Response()
     out = await browse_router.list_shows_route(
-        response=response,
         session=seeded,
         genre=[],
         network=[],
@@ -240,10 +234,8 @@ async def test_list_shows_route_returns_page(seeded):
 
 @pytest.mark.asyncio
 async def test_list_shows_route_raises_422_for_invalid_sort(seeded):
-    response = Response()
     with pytest.raises(HTTPException) as ei:
         await browse_router.list_shows_route(
-            response=response,
             session=seeded,
             genre=[],
             network=[],
@@ -256,49 +248,39 @@ async def test_list_shows_route_raises_422_for_invalid_sort(seeded):
 
 @pytest.mark.asyncio
 async def test_get_show_route_returns_detail_for_known_id(seeded):
-    response = Response()
-    out = await browse_router.get_show(show_id=9, response=response, session=seeded)
+    out = await browse_router.get_show(show_id=9, session=seeded)
     assert out.id == 9
     assert out.name
 
 
 @pytest.mark.asyncio
 async def test_get_show_route_raises_404_for_unknown_id(seeded):
-    response = Response()
     with pytest.raises(HTTPException) as ei:
-        await browse_router.get_show(show_id=99999, response=response, session=seeded)
+        await browse_router.get_show(show_id=99999, session=seeded)
     assert ei.value.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_get_show_seasons_route_returns_seasons(seeded):
-    response = Response()
-    out = await browse_router.get_show_seasons_route(show_id=9, response=response, session=seeded)
+    out = await browse_router.get_show_seasons_route(show_id=9, session=seeded)
     assert isinstance(out, list)
 
 
 @pytest.mark.asyncio
 async def test_get_show_seasons_route_raises_404_for_unknown_id(seeded):
-    response = Response()
     with pytest.raises(HTTPException) as ei:
-        await browse_router.get_show_seasons_route(show_id=99999, response=response, session=seeded)
+        await browse_router.get_show_seasons_route(show_id=99999, session=seeded)
     assert ei.value.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_get_show_episodes_route_returns_episodes(seeded):
-    response = Response()
-    out = await browse_router.get_show_episodes_route(
-        show_id=9, season=None, response=response, session=seeded
-    )
+    out = await browse_router.get_show_episodes_route(show_id=9, season=None, session=seeded)
     assert isinstance(out, list)
 
 
 @pytest.mark.asyncio
 async def test_get_show_episodes_route_raises_404_for_unknown_id(seeded):
-    response = Response()
     with pytest.raises(HTTPException) as ei:
-        await browse_router.get_show_episodes_route(
-            show_id=99999, season=None, response=response, session=seeded
-        )
+        await browse_router.get_show_episodes_route(show_id=99999, season=None, session=seeded)
     assert ei.value.status_code == 404

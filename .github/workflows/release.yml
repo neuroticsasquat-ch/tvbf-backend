@@ -22,7 +22,11 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  # Full reference (includes registry host) for `docker push` / build tags.
   IMAGE: ghcr.io/${{ github.repository }}
+  # Path-only reference (no host) for App Service `--container-image-name`,
+  # which expects host-less when `--container-registry-url` is supplied.
+  IMAGE_PATH: ${{ github.repository }}
   WEB_APP_NAME: tvbf-backend
   RESOURCE_GROUP: sasquatch-shared-rg
   TF_IN_AUTOMATION: "true"
@@ -35,7 +39,7 @@ env:
   TF_VAR_postgres_admin_password: ${{ secrets.POSTGRES_ADMIN_PASSWORD }}
   TF_VAR_tvbf_db_password: ${{ secrets.TVBF_DB_PASSWORD }}
   TF_VAR_admin_token: ${{ secrets.TVBF_ADMIN_TOKEN }}
-  TF_VAR_container_image: ghcr.io/${{ github.repository_owner }}/tvbf-backend:main
+  TF_VAR_container_image: ${{ github.repository_owner }}/tvbf-backend:main
 
 jobs:
   test:
@@ -149,7 +153,7 @@ jobs:
           az webapp config container set \
             --name "$WEB_APP_NAME" \
             --resource-group "$RESOURCE_GROUP" \
-            --container-image-name "${IMAGE}:${{ github.sha }}" \
+            --container-image-name "${IMAGE_PATH}:${{ github.sha }}" \
             --container-registry-url "https://ghcr.io"
 
       - name: Restart Web App
