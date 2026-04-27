@@ -23,8 +23,7 @@ resource "azurerm_linux_web_app" "tvbf_backend" {
     minimum_tls_version = "1.2"
 
     application_stack {
-      docker_image_name   = var.container_image
-      docker_registry_url = "https://ghcr.io"
+      docker_image_name = var.container_image
     }
 
     health_check_path                 = "/healthz"
