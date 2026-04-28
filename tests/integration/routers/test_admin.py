@@ -12,7 +12,6 @@ import respx
 from httpx import ASGITransport
 from sqlalchemy import select
 
-from tests.fixtures.tvmaze.show_factory import make_show
 from tvbf.config import get_settings
 from tvbf.main import app
 from tvbf.routers import admin as admin_router
@@ -42,19 +41,50 @@ async def test_ingest_rejects_unauth(admin_client):
     assert r.status_code == 401
 
 
-@respx.mock
-async def test_update_runs_synchronously(admin_client):
-    respx.get("https://api.tvmaze.com/updates/shows").mock(
-        return_value=httpx.Response(200, json={"1": 10})
-    )
-    respx.get("https://api.tvmaze.com/shows/1").mock(
-        return_value=httpx.Response(200, json=make_show(1, 10))
-    )
-    r = await admin_client.post("/admin/update", headers={"Authorization": "Bearer shh"})
-    assert r.status_code == 200, r.text
-    body = r.json()
-    assert body["shows_processed"] == 1
-    assert body["last_update_cursor"] == 10
+@pytest.mark.asyncio
+async def test_trigger_update_route_creates_run_and_returns_id(session, monkeypatch):
+    """trigger_update spawns a background task. Patch asyncio.create_task to
+    a no-op so the test doesn't actually run the update against TV Maze."""
+    import tvbf.routers.admin as admin_module
+
+    spawned = []
+
+    def _capture(coro):
+        spawned.append(coro)
+        coro.close()
+        return None
+
+    monkeypatch.setattr(admin_module.asyncio, "create_task", _capture)
+
+    settings = get_settings()
+    out = await admin_router.trigger_update(settings=settings, session=session)
+    assert "run_id" in out
+    assert spawned, "trigger_update must spawn the background task"
+
+
+async def test_background_update_marks_run_failed_on_crash(session, monkeypatch):
+    from tvbf.routers.admin import _background_update
+    from tvbf.tvmaze.runs import create_run
+
+    async def boom(**kwargs):
+        raise RuntimeError("simulated background crash")
+
+    monkeypatch.setattr("tvbf.routers.admin.run_update", boom)
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+
+    await _background_update(run_id, get_settings())
+
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "failed"
+    assert row.error is not None
+    assert "simulated background crash" in row.error
 
 
 @respx.mock
