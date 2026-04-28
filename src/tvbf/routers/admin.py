@@ -44,6 +44,27 @@ async def _background_ingest(run_id: UUID, settings: Settings) -> None:
             await s.commit()
 
 
+async def _background_update(run_id: UUID, settings: Settings) -> None:
+    try:
+        async with TVMazeClient(
+            base_url=settings.tvmaze_base_url,
+            rate_calls=settings.tvmaze_rate_limit_requests,
+            rate_window=settings.tvmaze_rate_limit_window_seconds,
+            retry_max_attempts=settings.tvmaze_retry_max_attempts,
+        ) as client:
+            await run_update(
+                session_factory=_session_factory,
+                client=client,
+                run_id=run_id,
+                failure_threshold=settings.ingest_consecutive_failure_threshold,
+            )
+    except Exception as e:
+        log.exception("background update crashed")
+        async with SessionLocal() as s:
+            await finalize_run(s, run_id, status="failed", error=str(e))
+            await s.commit()
+
+
 @router.post("/ingest", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_ingest(
     settings: Settings = Depends(get_settings),
@@ -55,32 +76,15 @@ async def trigger_ingest(
     return {"run_id": str(run_id)}
 
 
-@router.post("/update")
+@router.post("/update", status_code=status.HTTP_202_ACCEPTED)
 async def trigger_update(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
-) -> dict:
+) -> dict[str, str]:
     run_id = await create_run(session, kind="update")
     await session.commit()
-
-    async with TVMazeClient(
-        base_url=settings.tvmaze_base_url,
-        rate_calls=settings.tvmaze_rate_limit_requests,
-        rate_window=settings.tvmaze_rate_limit_window_seconds,
-        retry_max_attempts=settings.tvmaze_retry_max_attempts,
-    ) as client:
-        result = await run_update(
-            session_factory=_session_factory,
-            client=client,
-            run_id=run_id,
-            failure_threshold=settings.ingest_consecutive_failure_threshold,
-        )
-    return {
-        "run_id": str(run_id),
-        "shows_processed": result.shows_processed,
-        "shows_failed": result.shows_failed,
-        "last_update_cursor": result.last_update_cursor,
-    }
+    asyncio.create_task(_background_update(run_id, settings))
+    return {"run_id": str(run_id)}
 
 
 @router.get("/ingest/{run_id}")
