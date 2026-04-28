@@ -1,0 +1,18 @@
+name: Daily TV Maze update
+
+on:
+  schedule:
+    - cron: '0 9 * * *'  # 09:00 UTC daily
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Hit /admin/update
+        run: |
+          curl -fsS -X POST \
+            -H "Authorization: Bearer $ADMIN_TOKEN" \
+            https://api.tvbingefriend.com/admin/update
+        env:
+          ADMIN_TOKEN: ${{ secrets.TVBF_ADMIN_TOKEN }}
