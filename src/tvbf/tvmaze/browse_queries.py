@@ -87,6 +87,11 @@ async def show_exists(session: AsyncSession, show_id: int) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+async def get_episode(session: AsyncSession, episode_id: int) -> m.Episode | None:
+    result = await session.execute(select(m.Episode).where(m.Episode.id == episode_id))
+    return result.scalar_one_or_none()
+
+
 async def get_show_episodes(
     session: AsyncSession, show_id: int, season: int | None
 ) -> list[m.Episode]:

@@ -110,6 +110,17 @@ async def get_show_seasons_route(
     return await browse_queries.get_show_seasons(session, show_id)
 
 
+@router.get("/episodes/{episode_id}", response_model=EpisodeOut)
+async def get_episode_route(
+    episode_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> EpisodeOut:
+    ep = await browse_queries.get_episode(session, episode_id)
+    if ep is None:
+        raise HTTPException(status_code=404, detail="episode not found")
+    return EpisodeOut.model_validate(ep)
+
+
 @router.get("/shows/{show_id}/episodes", response_model=list[EpisodeOut])
 async def get_show_episodes_route(
     show_id: int,
