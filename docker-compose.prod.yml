@@ -17,7 +17,7 @@ services:
       COOKIE_DOMAIN: ".tvbingefriend.com"
       COOKIE_SAMESITE: "lax"
       ENVIRONMENT: "production"
-      SENTRY_DSN: "${SENTRY_DSN}"
+      SENTRY_DSN: "${SENTRY_DSN:-}"
     healthcheck:
       test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status == 200 else 1)"]
       interval: 10s
