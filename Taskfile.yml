@@ -42,12 +42,13 @@ tasks:
       - "{{.COMPOSE}} ps"
 
   db:init:
-    desc: Create the tvbf and tvbf_test databases in the shared Postgres (idempotent)
+    desc: Create the tvbf and tvbf_test databases and required schemas in the shared Postgres (idempotent)
     cmds:
       - |
         for db in tvbf tvbf_test; do
           docker exec tbc_postgresql_db psql -U root -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
             || docker exec tbc_postgresql_db psql -U root -d postgres -c "CREATE DATABASE $db"
+          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS tvmaze;"
         done
 
   migrate:
