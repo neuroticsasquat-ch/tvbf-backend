@@ -130,8 +130,3 @@ async def get_show_episodes_route(
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return await browse_queries.get_show_episodes(session, show_id, season)
-
-
-@router.get("/debug-sentry")
-async def trigger():
-    1 / 0  # ZeroDivisionError
