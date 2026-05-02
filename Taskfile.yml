@@ -121,3 +121,15 @@ tasks:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
       - echo "Edit pyproject.toml to add {{.CLI_ARGS}}, then run task build."
+
+  changelog:
+    desc: 'Update CHANGELOG.md (task changelog -- --tag v2026.05). Runs git-cliff on the host.'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds:
+      - git-cliff {{.CLI_ARGS}} -o CHANGELOG.md
+
+  changelog:preview:
+    desc: 'Preview unreleased changelog entries since the last tag (no file write)'
+    dir: '{{.USER_WORKING_DIR}}'
+    cmds:
+      - git-cliff --unreleased
