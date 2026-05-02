@@ -88,6 +88,9 @@ def _watch_next(
     return WatchNextEntry(
         show=_show_summary(id=id, name=name),
         episode=_episode_out(id=id * 100, show_id=id, number=ep_number, airdate=airdate),
+        watched_episode_count=0,
+        aired_episode_count=0,
+        upcoming_episode_count=0,
     )
 
 
@@ -95,6 +98,9 @@ def _upcoming(*, id: int, name: str, airdate: date | None = None) -> UpcomingEnt
     return UpcomingEntry(
         show=_show_summary(id=id, name=name),
         episode=_episode_out(id=id * 100, show_id=id, airdate=airdate),
+        watched_episode_count=0,
+        aired_episode_count=0,
+        upcoming_episode_count=0,
     )
 
 

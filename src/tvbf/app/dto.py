@@ -56,11 +56,17 @@ class WatchNextEntry(BaseModel):
     episode: EpisodeOut
     last_watched_at: datetime | None = None
     last_aired: date | None = None
+    watched_episode_count: int
+    aired_episode_count: int
+    upcoming_episode_count: int
 
 
 class UpcomingEntry(BaseModel):
     show: ShowSummary
     episode: EpisodeOut
+    watched_episode_count: int
+    aired_episode_count: int
+    upcoming_episode_count: int
 
 
 class EpisodeWatchOut(BaseModel):

@@ -36,6 +36,24 @@ async def count_per_show(db: AsyncSession, show_ids: list[int]) -> dict[int, int
     return {sid: c for sid, c in rows}
 
 
+async def count_aired_per_show(
+    db: AsyncSession, show_ids: list[int], today: date
+) -> dict[int, int]:
+    """Return aired episode count per show_id (airdate not null and <= today)."""
+    rows = (
+        await db.execute(
+            select(Episode.show_id, func.count(Episode.id))
+            .where(
+                Episode.show_id.in_(show_ids),
+                Episode.airdate.is_not(None),
+                Episode.airdate <= today,
+            )
+            .group_by(Episode.show_id)
+        )
+    ).all()
+    return {sid: c for sid, c in rows}
+
+
 async def latest_aired_per_show(
     db: AsyncSession, show_ids: list[int], today: date
 ) -> dict[int, date]:
