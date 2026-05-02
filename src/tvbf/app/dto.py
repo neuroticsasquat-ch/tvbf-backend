@@ -8,7 +8,7 @@ from tvbf.tvmaze.dto import EpisodeOut, ShowSummary
 
 MyShowsSort = Literal["recent_activity", "name_asc", "name_desc", "added"]
 WatchNextSort = Literal["airdate_desc", "airdate_asc", "name_asc", "name_desc"]
-UpcomingSort = Literal["airdate_asc", "airdate_desc", "name_asc", "name_desc"]
+UpcomingSort = Literal["airdate_asc", "airdate_desc", "added_desc", "name_asc", "name_desc"]
 
 
 class SignupRequest(BaseModel):
@@ -47,6 +47,10 @@ class MyShowEntry(BaseModel):
     show: ShowSummary
     watched_episode_count: int
     total_episode_count: int
+    aired_episode_count: int = 0
+    upcoming_episode_count: int = 0
+    last_aired: date | None = None
+    last_watched_at: datetime | None = None
     next_episode: EpisodeOut | None = None
     added_at: datetime
 
@@ -59,6 +63,7 @@ class WatchNextEntry(BaseModel):
     watched_episode_count: int
     aired_episode_count: int
     upcoming_episode_count: int
+    added_at: datetime | None = None
 
 
 class UpcomingEntry(BaseModel):
@@ -67,6 +72,7 @@ class UpcomingEntry(BaseModel):
     watched_episode_count: int
     aired_episode_count: int
     upcoming_episode_count: int
+    added_at: datetime | None = None
 
 
 class EpisodeWatchOut(BaseModel):

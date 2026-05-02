@@ -348,3 +348,17 @@ async def test_upcoming_skips_episodes_with_null_airdate(session, make_user):
     await session.commit()
 
     assert await my_shows_service.list_upcoming(session, user_id=user.id) == []
+
+
+@pytest.mark.asyncio
+async def test_list_my_shows_includes_last_watched_at(session, make_user):
+    user = await make_user()
+    show = await _seed_show(session, show_id=910090, name="LW", episodes=3)
+    await session.commit()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=910090 * 100 + 1))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].last_watched_at is not None
