@@ -1,4 +1,4 @@
-name: Rebase dependency branch
+name: Merge main into dependency branch
 
 on:
   schedule:
@@ -9,17 +9,17 @@ permissions:
   contents: write
 
 jobs:
-  rebase:
+  merge:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
-      - name: Rebase updates/dependencies from main
+      - name: Merge main into updates/dependencies
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git checkout updates/dependencies || git checkout -b updates/dependencies
-          git rebase origin/main
-          git push --force-with-lease origin updates/dependencies
+          git checkout updates/dependencies || git checkout -b updates/dependencies origin/main
+          git merge --no-edit origin/main
+          git push origin updates/dependencies
