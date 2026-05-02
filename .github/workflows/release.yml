@@ -99,7 +99,7 @@ jobs:
         working-directory: infra
     steps:
       - uses: actions/checkout@v6
-      - uses: opentofu/setup-opentofu@v1
+      - uses: opentofu/setup-opentofu@v2
       - uses: azure/login@v2
         with:
           client-id: ${{ secrets.AZURE_CLIENT_ID }}
