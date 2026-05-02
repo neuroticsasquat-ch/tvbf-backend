@@ -203,6 +203,10 @@ async def list_watch_next(
 
     shows = list(shows_by_id.values())
     genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    last_watched = await episode_watch_repo.latest_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    last_aired = await episode_repo.latest_aired_per_show(db, show_ids, today)
 
     entries: list[WatchNextEntry] = []
     for ep in episodes:
@@ -218,6 +222,8 @@ async def list_watch_next(
                     wcs_by_id=wcs_by_id,
                 ),
                 episode=_episode_to_out(ep),
+                last_watched_at=last_watched.get(ep.show_id),
+                last_aired=last_aired.get(ep.show_id),
             )
         )
 
