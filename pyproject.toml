@@ -5,7 +5,7 @@ description = "TV Binge Friend backend"
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.136.1",
-    "uvicorn[standard]>=0.32",
+    "uvicorn[standard]>=0.46.0",
     "sqlalchemy[asyncio]>=2.0.36",
     "asyncpg>=0.30",
     "alembic>=1.18.4",
