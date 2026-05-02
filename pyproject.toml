@@ -59,6 +59,6 @@ concurrency = ["thread", "greenlet"]
 omit = []
 [tool.coverage.report]
 exclude_also = [
-    "if __name__ == .__main__.:",
+    'if __name__ == "__main__":',
     "raise NotImplementedError",
 ]
