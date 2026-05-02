@@ -6,11 +6,10 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import async_engine_from_config
 
+import tvbf.app.models  # noqa: F401
+import tvbf.tvmaze.models  # noqa: F401  -- register models with Base.metadata
 from tvbf.config import get_settings
 from tvbf.db import Base
-
-import tvbf.tvmaze.models  # noqa: F401  -- register models with Base.metadata
-import tvbf.app.models     # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:

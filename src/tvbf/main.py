@@ -6,15 +6,14 @@ from contextlib import asynccontextmanager
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sqlalchemy.ext.asyncio import AsyncSession
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.routers import admin, auth, browse, health, invites_admin, me
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
-
 
 if dsn := os.environ.get("SENTRY_DSN"):
     sentry_sdk.init(
@@ -23,7 +22,7 @@ if dsn := os.environ.get("SENTRY_DSN"):
             FastApiIntegration(),
             SqlalchemyIntegration(),
         ],
-        traces_sample_rate=0.1, # 10% of requests get perf traces
+        traces_sample_rate=0.1,  # 10% of requests get perf traces
         environment=os.environ.get("ENVIRONMENT", "development"),
         release=os.environ.get("GIT_SHA", "unknown"),
     )
