@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
@@ -54,6 +54,8 @@ class MyShowEntry(BaseModel):
 class WatchNextEntry(BaseModel):
     show: ShowSummary
     episode: EpisodeOut
+    last_watched_at: datetime | None = None
+    last_aired: date | None = None
 
 
 class UpcomingEntry(BaseModel):

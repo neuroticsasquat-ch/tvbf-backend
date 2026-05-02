@@ -78,6 +78,24 @@ async def count_watched_per_show(
     return {sid: c for sid, c in rows}
 
 
+async def latest_watched_per_show(
+    db: AsyncSession, *, user_id: UUID, show_ids: list[int]
+) -> dict[int, datetime]:
+    """Return max(watched_at) per show for the user, restricted to show_ids."""
+    rows = (
+        await db.execute(
+            select(Episode.show_id, func.max(UserEpisodeWatch.watched_at))
+            .join(UserEpisodeWatch, UserEpisodeWatch.episode_id == Episode.id)
+            .where(
+                Episode.show_id.in_(show_ids),
+                UserEpisodeWatch.user_id == user_id,
+            )
+            .group_by(Episode.show_id)
+        )
+    ).all()
+    return {sid: ts for sid, ts in rows}
+
+
 async def bulk_mark(
     db: AsyncSession,
     *,
