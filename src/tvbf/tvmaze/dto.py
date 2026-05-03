@@ -10,6 +10,8 @@ ALLOWED_SORT_KEYS = {
     "-premiered",
     "tvmaze_updated",
     "-tvmaze_updated",
+    "last_aired",
+    "-last_aired",
 }
 
 

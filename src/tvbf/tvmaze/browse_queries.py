@@ -8,6 +8,16 @@ from tvbf.tvmaze.dto import ALLOWED_SORT_KEYS, ShowFilters
 # Strip leading articles for natural alphabetical sort: "The Office" → "office".
 _NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTICLE_PATTERN, "")
 
+# Most recent already-aired episode airdate per show. Correlated subquery so it can
+# participate in ORDER BY without a join that would multiply rows.
+_LAST_AIRED = (
+    select(func.max(m.Episode.airdate))
+    .where(m.Episode.show_id == m.Show.id)
+    .where(m.Episode.airdate <= func.current_date())
+    .correlate(m.Show)
+    .scalar_subquery()
+)
+
 _SORT_EXPRS = {
     "name": _NORMALIZED_NAME.asc(),
     "-name": _NORMALIZED_NAME.desc(),
@@ -15,6 +25,8 @@ _SORT_EXPRS = {
     "-premiered": m.Show.premiered.desc().nulls_last(),
     "tvmaze_updated": m.Show.tvmaze_updated.asc(),
     "-tvmaze_updated": m.Show.tvmaze_updated.desc(),
+    "last_aired": _LAST_AIRED.asc().nulls_last(),
+    "-last_aired": _LAST_AIRED.desc().nulls_last(),
 }
 
 
