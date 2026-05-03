@@ -1,0 +1,16 @@
+# Changelog
+
+All notable changes to this project will be documented in this file.
+
+## [2026-05-03] - 2026-05-03
+
+### Features
+
+- Match shows by TVMaze AKA titles (#38)
+- Add show-level bulk watch and per-season progress endpoints (#37)
+- Add last_aired sort key to /shows (#36)
+- Expose aired counts, last-watched, and added_at on list entries (#35)
+- Add aired and upcoming episode counts per entry (#34)
+- Expose last_watched_at and last_aired per entry (#28)
+
+
