@@ -35,6 +35,22 @@ class TVMazeNetwork(BaseModel):
         return (self.country or {}).get("timezone")
 
 
+class TVMazeAka(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    name: str
+    country: dict | None = None
+    language: str | None = None
+
+    @property
+    def country_code(self) -> str | None:
+        return (self.country or {}).get("code")
+
+    @property
+    def country_name(self) -> str | None:
+        return (self.country or {}).get("name")
+
+
 class TVMazeImage(BaseModel):
     model_config = ConfigDict(extra="ignore")
 

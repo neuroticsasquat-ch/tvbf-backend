@@ -5,6 +5,7 @@ that aren't naturally exercised by happy-path tests.
 """
 
 import asyncio
+import re
 
 import httpx
 import pytest
@@ -18,6 +19,13 @@ from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.runs import create_run
 from tvbf.tvmaze.update import run_update
 from tvbf.tvmaze.upsert import upsert_episodes
+
+_AKAS_URL_RE = re.compile(r"https://api\.tvmaze\.com/shows/\d+/akas")
+
+
+def _mock_akas_default_empty() -> None:
+    respx.get(url__regex=_AKAS_URL_RE).mock(return_value=httpx.Response(200, json=[]))
+
 
 # ---------------------------------------------------------------------------
 # Empty-input early returns
@@ -82,6 +90,7 @@ async def test_initial_ingest_aborts_after_threshold_unexpected_failures(session
         side_effect=Exception("boom")  # not an HTTPStatusError
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -112,6 +121,7 @@ async def test_initial_ingest_aborts_after_threshold_http_failures(session):
     )
     respx.get("https://api.tvmaze.com/shows/1").mock(return_value=httpx.Response(500, json={}))
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -150,6 +160,7 @@ async def test_initial_ingest_aborts_after_threshold_upsert_failures(session):
         return_value=httpx.Response(200, json={"name": "no-id"})
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -180,6 +191,7 @@ async def test_run_update_aborts_after_threshold_upsert_failures(session):
         return_value=httpx.Response(200, json={"name": "no-id"})
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
