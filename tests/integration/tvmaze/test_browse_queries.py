@@ -242,6 +242,34 @@ async def test_list_shows_sort_tvmaze_updated_asc(session):
     assert [r.id for r in rows] == list(range(1, 11))
 
 
+async def test_list_shows_sort_last_aired_desc(session):
+    """`-last_aired` sorts by the most recent already-aired episode airdate.
+    Shows with no aired episodes sort last (NULLS LAST)."""
+    from datetime import date
+
+    from tvbf.tvmaze import models as m
+
+    session.add(m.Show(id=88001, name="Old Show", tvmaze_updated=1))
+    session.add(m.Show(id=88002, name="Recent Show", tvmaze_updated=1))
+    session.add(m.Show(id=88003, name="No Episodes Show", tvmaze_updated=1))
+    await session.flush()
+    session.add(m.Episode(id=88001001, show_id=88001, season=1, number=1, airdate=date(2020, 1, 1)))
+    session.add(m.Episode(id=88002001, show_id=88002, season=1, number=1, airdate=date(2024, 6, 1)))
+    # Future episode shouldn't count as "last aired".
+    session.add(m.Episode(id=88002002, show_id=88002, season=1, number=2, airdate=date(2099, 1, 1)))
+    await session.commit()
+
+    rows, _ = await list_shows(
+        session,
+        ShowFilters(search="Show"),
+        sort="-last_aired",
+        page=1,
+        per_page=100,
+    )
+    ids = [r.id for r in rows if r.id in {88001, 88002, 88003}]
+    assert ids == [88002, 88001, 88003]
+
+
 async def test_list_shows_invalid_sort_raises(session):
     await seed(session)
     try:

@@ -24,12 +24,61 @@ async def list_episode_ids_for_season(
     return list(result.scalars().all())
 
 
+async def aired_count_per_season(db: AsyncSession, show_id: int, today: date) -> dict[int, int]:
+    rows = (
+        await db.execute(
+            select(Episode.season, func.count(Episode.id))
+            .where(
+                Episode.show_id == show_id,
+                Episode.airdate.is_not(None),
+                Episode.airdate <= today,
+            )
+            .group_by(Episode.season)
+        )
+    ).all()
+    return {season: count for season, count in rows}
+
+
+async def list_aired_episode_ids_for_show(db: AsyncSession, show_id: int, today: date) -> list[int]:
+    result = await db.execute(
+        select(Episode.id).where(
+            Episode.show_id == show_id,
+            Episode.airdate.is_not(None),
+            Episode.airdate <= today,
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def list_episode_ids_for_show(db: AsyncSession, show_id: int) -> list[int]:
+    result = await db.execute(select(Episode.id).where(Episode.show_id == show_id))
+    return list(result.scalars().all())
+
+
 async def count_per_show(db: AsyncSession, show_ids: list[int]) -> dict[int, int]:
     """Return total episode count per show_id."""
     rows = (
         await db.execute(
             select(Episode.show_id, func.count(Episode.id))
             .where(Episode.show_id.in_(show_ids))
+            .group_by(Episode.show_id)
+        )
+    ).all()
+    return {sid: c for sid, c in rows}
+
+
+async def count_aired_per_show(
+    db: AsyncSession, show_ids: list[int], today: date
+) -> dict[int, int]:
+    """Return aired episode count per show_id (airdate not null and <= today)."""
+    rows = (
+        await db.execute(
+            select(Episode.show_id, func.count(Episode.id))
+            .where(
+                Episode.show_id.in_(show_ids),
+                Episode.airdate.is_not(None),
+                Episode.airdate <= today,
+            )
             .group_by(Episode.show_id)
         )
     ).all()

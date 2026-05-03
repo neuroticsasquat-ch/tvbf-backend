@@ -1,4 +1,4 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.sorting import SQL_LEADING_ARTICLE_PATTERN
@@ -8,6 +8,16 @@ from tvbf.tvmaze.dto import ALLOWED_SORT_KEYS, ShowFilters
 # Strip leading articles for natural alphabetical sort: "The Office" → "office".
 _NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTICLE_PATTERN, "")
 
+# Most recent already-aired episode airdate per show. Correlated subquery so it can
+# participate in ORDER BY without a join that would multiply rows.
+_LAST_AIRED = (
+    select(func.max(m.Episode.airdate))
+    .where(m.Episode.show_id == m.Show.id)
+    .where(m.Episode.airdate <= func.current_date())
+    .correlate(m.Show)
+    .scalar_subquery()
+)
+
 _SORT_EXPRS = {
     "name": _NORMALIZED_NAME.asc(),
     "-name": _NORMALIZED_NAME.desc(),
@@ -15,6 +25,8 @@ _SORT_EXPRS = {
     "-premiered": m.Show.premiered.desc().nulls_last(),
     "tvmaze_updated": m.Show.tvmaze_updated.asc(),
     "-tvmaze_updated": m.Show.tvmaze_updated.desc(),
+    "last_aired": _LAST_AIRED.asc().nulls_last(),
+    "-last_aired": _LAST_AIRED.desc().nulls_last(),
 }
 
 
@@ -116,11 +128,14 @@ async def list_shows(
     base = select(m.Show)
     if filters.search:
         # Token-based AND match: every whitespace-separated token must appear
-        # as a substring (case-insensitive) of the show name. Lets "alien earth"
-        # match "Alien: Earth" and "the office us" match "The Office (US)" —
-        # punctuation between tokens stops mattering.
+        # as a substring (case-insensitive) of the show name OR any of its AKAs.
+        # Lets "alien earth" match "Alien: Earth", "the office us" match
+        # "The Office (US)", and "tokyo revengers" match a Japanese-titled show
+        # whose English AKA is "Tokyo Revengers".
         for token in filters.search.split():
-            base = base.where(m.Show.name.ilike(f"%{token}%"))
+            needle = f"%{token}%"
+            aka_subq = select(m.ShowAka.show_id).where(m.ShowAka.name.ilike(needle))
+            base = base.where(or_(m.Show.name.ilike(needle), m.Show.id.in_(aka_subq)))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:

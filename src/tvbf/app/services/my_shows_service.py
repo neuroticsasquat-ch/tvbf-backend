@@ -54,6 +54,7 @@ def build_show_summary_from_refs(
 # ---------------------------------------------------------------------------
 
 _EPOCH = datetime.fromtimestamp(0, tz=UTC).date()
+_EPOCH_DT = datetime.fromtimestamp(0, tz=UTC)
 
 
 def sort_my_shows(
@@ -109,6 +110,12 @@ def sort_upcoming(entries: list[UpcomingEntry], sort: UpcomingSort) -> list[Upco
             key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name)),
             reverse=True,
         )
+    if sort == "added_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.added_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
     if sort == "name_asc":
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
@@ -156,10 +163,16 @@ async def list_my_shows(
     )
     today = date.today()
     latest_aired = await episode_repo.latest_aired_per_show(db, show_ids, today)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today)
+    last_watched = await episode_watch_repo.latest_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
 
     entries: list[MyShowEntry] = []
     for show in shows:
         next_ep = await episode_repo.next_unwatched(db, user_id=user_id, show_id=show.id)
+        total = total_counts.get(show.id, 0)
+        aired = aired_counts.get(show.id, 0)
         entries.append(
             MyShowEntry(
                 show=build_show_summary_from_refs(
@@ -169,7 +182,11 @@ async def list_my_shows(
                     wcs_by_id=wcs_by_id,
                 ),
                 watched_episode_count=watched_counts.get(show.id, 0),
-                total_episode_count=total_counts.get(show.id, 0),
+                total_episode_count=total,
+                aired_episode_count=aired,
+                upcoming_episode_count=total - aired,
+                last_aired=latest_aired.get(show.id),
+                last_watched_at=last_watched.get(show.id),
                 next_episode=_episode_to_out(next_ep) if next_ep is not None else None,
                 added_at=added_at_by_show[show.id],
             )
@@ -200,9 +217,21 @@ async def list_watch_next(
         show = await show_repo.get_by_id(db, sid)
         if show is not None:
             shows_by_id[sid] = show
+    added_at_by_show = {
+        show.id: added for show, added in await show_membership_repo.list_with_added_at(db, user_id)
+    }
 
     shows = list(shows_by_id.values())
     genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    last_watched = await episode_watch_repo.latest_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    last_aired = await episode_repo.latest_aired_per_show(db, show_ids, today)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today)
+    total_counts = await episode_repo.count_per_show(db, show_ids)
+    watched_counts = await episode_watch_repo.count_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
 
     entries: list[WatchNextEntry] = []
     for ep in episodes:
@@ -218,6 +247,14 @@ async def list_watch_next(
                     wcs_by_id=wcs_by_id,
                 ),
                 episode=_episode_to_out(ep),
+                last_watched_at=last_watched.get(ep.show_id),
+                last_aired=last_aired.get(ep.show_id),
+                watched_episode_count=watched_counts.get(ep.show_id, 0),
+                aired_episode_count=aired_counts.get(ep.show_id, 0),
+                upcoming_episode_count=(
+                    total_counts.get(ep.show_id, 0) - aired_counts.get(ep.show_id, 0)
+                ),
+                added_at=added_at_by_show.get(ep.show_id),
             )
         )
 
@@ -246,6 +283,14 @@ async def list_upcoming(
 
     shows = list(shows_by_id.values())
     genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today)
+    total_counts = await episode_repo.count_per_show(db, show_ids)
+    watched_counts = await episode_watch_repo.count_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    added_at_by_show = {
+        show.id: added for show, added in await show_membership_repo.list_with_added_at(db, user_id)
+    }
 
     entries: list[UpcomingEntry] = []
     for ep in episodes:
@@ -261,6 +306,12 @@ async def list_upcoming(
                     wcs_by_id=wcs_by_id,
                 ),
                 episode=_episode_to_out(ep),
+                watched_episode_count=watched_counts.get(ep.show_id, 0),
+                aired_episode_count=aired_counts.get(ep.show_id, 0),
+                upcoming_episode_count=(
+                    total_counts.get(ep.show_id, 0) - aired_counts.get(ep.show_id, 0)
+                ),
+                added_at=added_at_by_show.get(ep.show_id),
             )
         )
 

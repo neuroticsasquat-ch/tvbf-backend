@@ -92,3 +92,43 @@ async def test_client_does_not_retry_on_404():
     ) as c:
         with pytest.raises(httpx.HTTPStatusError):
             await c.get_show(9999)
+
+
+@respx.mock
+async def test_get_akas_returns_list_of_dicts():
+    route = respx.get("https://api.tvmaze.com/shows/123/akas").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "Tokyo Revengers",
+                    "country": {"code": "US", "name": "United States"},
+                    "language": "en",
+                },
+                {
+                    "name": "東京リベンジャーズ",
+                    "country": {"code": "JP", "name": "Japan"},
+                    "language": "ja",
+                },
+            ],
+        )
+    )
+    async with TVMazeClient(
+        base_url="https://api.tvmaze.com", rate_calls=18, rate_window=10.0
+    ) as c:
+        akas = await c.get_akas(123)
+    assert route.called
+    assert len(akas) == 2
+    assert akas[0]["name"] == "Tokyo Revengers"
+
+
+@respx.mock
+async def test_get_akas_empty_list_for_shows_with_no_akas():
+    respx.get("https://api.tvmaze.com/shows/999/akas").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    async with TVMazeClient(
+        base_url="https://api.tvmaze.com", rate_calls=18, rate_window=10.0
+    ) as c:
+        akas = await c.get_akas(999)
+    assert akas == []
