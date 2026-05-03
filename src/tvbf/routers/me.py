@@ -10,6 +10,7 @@ from tvbf.app.dto import (
     EpisodeWatchOut,
     MyShowEntry,
     MyShowsSort,
+    SeasonProgress,
     UpcomingEntry,
     UpcomingSort,
     WatchNextEntry,
@@ -212,4 +213,54 @@ async def bulk_unmark_season(
     await episode_service.bulk_unmark_season(
         db, user_id=user.id, show_id=show_id, season_number=season_number
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/me/shows/{show_id}/seasons/progress",
+    response_model=list[SeasonProgress],
+)
+async def list_season_progress(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[SeasonProgress]:
+    rows = await episode_service.list_season_progress(db, user_id=user.id, show_id=show_id)
+    return [SeasonProgress(**r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Bulk show mark/unmark
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/me/shows/{show_id}/watched",
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSeasonResult,
+    dependencies=[Depends(require_csrf)],
+)
+async def bulk_mark_show(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> BulkSeasonResult:
+    try:
+        count = await episode_service.bulk_mark_show(db, user_id=user.id, show_id=show_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    return BulkSeasonResult(marked=count)
+
+
+@router.delete(
+    "/me/shows/{show_id}/watched",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def bulk_unmark_show(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await episode_service.bulk_unmark_show(db, user_id=user.id, show_id=show_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

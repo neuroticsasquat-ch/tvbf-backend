@@ -84,6 +84,12 @@ class BulkSeasonResult(BaseModel):
     marked: int
 
 
+class SeasonProgress(BaseModel):
+    season: int
+    aired: int
+    watched: int
+
+
 class InviteCreateRequest(BaseModel):
     email_hint: EmailStr | None = None
 
