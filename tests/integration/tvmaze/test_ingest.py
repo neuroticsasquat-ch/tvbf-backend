@@ -1,3 +1,5 @@
+import re
+
 import httpx
 import respx
 from sqlalchemy import select
@@ -7,6 +9,13 @@ from tvbf.tvmaze import models as m
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.runs import create_run
+
+_AKAS_URL_RE = re.compile(r"https://api\.tvmaze\.com/shows/\d+/akas")
+
+
+def _mock_akas_default_empty() -> None:
+    """Default-mock /akas endpoints to return an empty list for any show id."""
+    respx.get(url__regex=_AKAS_URL_RE).mock(return_value=httpx.Response(200, json=[]))
 
 
 @respx.mock
@@ -21,6 +30,7 @@ async def test_initial_ingest_inserts_all_shows(session):
         return_value=httpx.Response(200, json=make_show(2, 200))
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -51,6 +61,7 @@ async def test_initial_ingest_skips_already_present_shows(session):
         return_value=httpx.Response(200, json=make_show(1, 100))
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -77,6 +88,7 @@ async def test_initial_ingest_continues_past_per_show_failures(session):
         return_value=httpx.Response(200, json=make_show(3, 300))
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -104,6 +116,7 @@ async def test_initial_ingest_aborts_after_consecutive_http_failures(session):
     respx.get("https://api.tvmaze.com/shows/2").mock(return_value=httpx.Response(404))
     respx.get("https://api.tvmaze.com/shows/3").mock(return_value=httpx.Response(404))
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -144,6 +157,7 @@ async def test_initial_ingest_catches_non_http_errors_and_continues(session):
         return_value=httpx.Response(200, json=make_show(2, 200))
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -185,6 +199,7 @@ async def test_initial_ingest_catches_upsert_errors_and_continues(session, monke
 
     monkeypatch.setattr("tvbf.tvmaze.ingest.upsert_show_payload", broken_then_real)
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="initial")
     await session.commit()
 
@@ -199,3 +214,90 @@ async def test_initial_ingest_catches_upsert_errors_and_continues(session, monke
 
     assert result.shows_processed == 1
     assert result.shows_failed == 1
+
+
+@respx.mock
+async def test_initial_ingest_persists_akas_for_each_show(session):
+    """When TVMaze returns AKA entries for a show, the ingest path stores them
+    in tvmaze.show_aka and stamps tvmaze.show.akas_synced_at."""
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 100})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 100))
+    )
+    respx.get("https://api.tvmaze.com/shows/1/akas").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {
+                    "name": "Alt Name DE",
+                    "country": {"name": "Germany", "code": "DE", "timezone": "Europe/Berlin"},
+                    "language": "de",
+                },
+                {"name": "Alt Name (no country)", "country": None, "language": None},
+            ],
+        )
+    )
+
+    run_id = await create_run(session, kind="initial")
+    await session.commit()
+
+    async with TVMazeClient(
+        "https://api.tvmaze.com", rate_calls=50, rate_window=1, retry_base_delay=0.01
+    ) as c:
+        result = await run_initial_ingest(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    assert result.shows_failed == 0
+
+    akas = (await session.execute(select(m.ShowAka).where(m.ShowAka.show_id == 1))).scalars().all()
+    assert {a.name for a in akas} == {"Alt Name DE", "Alt Name (no country)"}
+
+    show = (
+        await session.execute(
+            select(m.Show).where(m.Show.id == 1),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert show.akas_synced_at is not None
+
+
+@respx.mock
+async def test_initial_ingest_soft_fails_on_akas_error(session):
+    """When the AKAs endpoint returns 500, the show still persists but
+    akas_synced_at stays NULL and shows_failed does not increment — the
+    backfill orchestrator picks the show up later."""
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 100})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 100))
+    )
+    respx.get("https://api.tvmaze.com/shows/1/akas").mock(return_value=httpx.Response(500))
+
+    run_id = await create_run(session, kind="initial")
+    await session.commit()
+
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_initial_ingest(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    assert result.shows_failed == 0
+
+    show = (
+        await session.execute(
+            select(m.Show).where(m.Show.id == 1),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert show.akas_synced_at is None
+
+    akas = (await session.execute(select(m.ShowAka).where(m.ShowAka.show_id == 1))).scalars().all()
+    assert akas == []

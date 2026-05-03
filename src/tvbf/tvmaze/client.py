@@ -95,3 +95,8 @@ class TVMazeClient:
         url = f"{self._base_url}/updates/shows"
         resp = await self._request("GET", url)
         return {int(k): int(v) for k, v in resp.json().items()}
+
+    async def get_akas(self, show_id: int) -> list[dict]:
+        url = f"{self._base_url}/shows/{show_id}/akas"
+        resp = await self._request("GET", url)
+        return resp.json()

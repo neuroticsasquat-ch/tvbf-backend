@@ -85,6 +85,22 @@ class Show(Base):
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    akas_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ShowAka(Base):
+    __tablename__ = "show_aka"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[str | None] = mapped_column(Text)
+    country_name: Mapped[str | None] = mapped_column(Text)
+    language: Mapped[str | None] = mapped_column(Text)
 
 
 class Season(Base):
@@ -147,7 +163,10 @@ class ShowGenre(Base):
 class IngestRun(Base):
     __tablename__ = "ingest_run"
     __table_args__ = (
-        CheckConstraint("kind IN ('initial', 'update')", name="ck_ingest_run_kind"),
+        CheckConstraint(
+            "kind IN ('initial', 'update', 'akas_backfill')",
+            name="ck_ingest_run_kind",
+        ),
         CheckConstraint(
             "status IN ('running', 'succeeded', 'failed', 'cancelled')",
             name="ck_ingest_run_status",

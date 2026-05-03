@@ -1,3 +1,5 @@
+import re
+
 import httpx
 import respx
 from sqlalchemy import select
@@ -7,6 +9,12 @@ from tvbf.tvmaze import models as m
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.runs import create_run, finalize_run
 from tvbf.tvmaze.update import run_update
+
+_AKAS_URL_RE = re.compile(r"https://api\.tvmaze\.com/shows/\d+/akas")
+
+
+def _mock_akas_default_empty() -> None:
+    respx.get(url__regex=_AKAS_URL_RE).mock(return_value=httpx.Response(200, json=[]))
 
 
 @respx.mock
@@ -30,6 +38,7 @@ async def test_update_only_fetches_shows_past_cursor(session):
         return_value=httpx.Response(200, json=make_show(3, 200))
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -54,6 +63,7 @@ async def test_update_with_no_prior_run_treats_cursor_as_zero(session):
         return_value=httpx.Response(200, json=make_show(1, 10))
     )
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -75,6 +85,7 @@ async def test_update_aborts_after_consecutive_http_failures(session):
     respx.get("https://api.tvmaze.com/shows/2").mock(return_value=httpx.Response(500))
     respx.get("https://api.tvmaze.com/shows/3").mock(return_value=httpx.Response(500))
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -128,6 +139,7 @@ async def test_update_catches_upsert_errors_and_continues(session, monkeypatch):
 
     monkeypatch.setattr("tvbf.tvmaze.update.upsert_show_payload", broken_then_real)
 
+    _mock_akas_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
