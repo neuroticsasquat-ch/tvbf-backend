@@ -107,6 +107,7 @@ class ShowSummary(BaseModel):
     network: NetworkRef | None = None
     web_channel: NetworkRef | None = None
     genres: list[str] = []
+    matched_aka: str | None = None
 
 
 class ShowDetail(ShowSummary):
@@ -127,7 +128,11 @@ class ShowListPage(BaseModel):
 
 
 def build_show_summary(
-    show, genre_names: list[str], network: NetworkRef | None, web_channel: NetworkRef | None
+    show,
+    genre_names: list[str],
+    network: NetworkRef | None,
+    web_channel: NetworkRef | None,
+    matched_aka: str | None = None,
 ) -> ShowSummary:
     return ShowSummary(
         id=show.id,
@@ -142,6 +147,7 @@ def build_show_summary(
         network=network,
         web_channel=web_channel,
         genres=sorted(genre_names),
+        matched_aka=matched_aka,
     )
 
 
