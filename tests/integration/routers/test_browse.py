@@ -135,6 +135,42 @@ async def test_get_shows_search_substring(client):
     assert "Running Comedy" not in names
 
 
+async def test_get_shows_search_includes_matched_aka_when_only_aka_matches(authed_client, session):
+    """Search response surfaces the matched AKA when the show name didn't match."""
+    from sqlalchemy import insert
+
+    from tvbf.tvmaze import models as m
+
+    session.add(m.Show(id=501, name="東京リベンジャーズ", tvmaze_updated=1))
+    await session.flush()
+    await session.execute(
+        insert(m.ShowAka).values(
+            [{"show_id": 501, "name": "Tokyo Revengers", "country_code": "US"}]
+        )
+    )
+    await session.commit()
+
+    r = await authed_client.get("/shows?search=tokyo+revengers")
+    body = r.json()
+    items = {i["id"]: i for i in body["items"]}
+    assert 501 in items
+    assert items[501]["matched_aka"] == "Tokyo Revengers"
+
+
+async def test_get_shows_search_omits_matched_aka_when_show_name_matches(client):
+    """When the show's own name matches the search, matched_aka is null."""
+    r = await client.get("/shows?search=running+drama")
+    items = r.json()["items"]
+    assert items, "expected at least one match"
+    assert all(i["matched_aka"] is None for i in items)
+
+
+async def test_get_shows_no_search_has_null_matched_aka(client):
+    r = await client.get("/shows")
+    items = r.json()["items"]
+    assert all(i["matched_aka"] is None for i in items)
+
+
 async def test_get_shows_status_filter(client):
     r = await client.get("/shows?status=Ended")
     assert {i["name"] for i in r.json()["items"]} == {"Ancient Show", "Ended Drama"}
