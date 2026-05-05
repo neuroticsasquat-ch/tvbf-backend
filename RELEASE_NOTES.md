@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-05-05] - 2026-05-05
+
+### Features
+
+- Redefine airdate_desc as last-aired, add unwatched_airdate_desc (#44)
+
 ## [2026-05-04] - 2026-05-05
 
 ### Features
