@@ -65,6 +65,7 @@ async def list_shows_route(
     genres_by_show, networks_by_id, wcs_by_id = await browse_queries.hydrate_show_refs(
         session, rows
     )
+    matched_aka_by_show = await browse_queries.hydrate_matched_aka(session, rows, search)
 
     items: list[ShowSummary] = []
     for show in rows:
@@ -76,6 +77,7 @@ async def list_shows_route(
                 genre_names=genres_by_show.get(show.id, []),
                 network=NetworkRef(id=net.id, name=net.name) if net else None,
                 web_channel=NetworkRef(id=wc.id, name=wc.name) if wc else None,
+                matched_aka=matched_aka_by_show.get(show.id),
             )
         )
 

@@ -165,6 +165,49 @@ async def list_shows(
     return rows, total
 
 
+async def hydrate_matched_aka(
+    session: AsyncSession, shows: list[m.Show], search: str | None
+) -> dict[int, str | None]:
+    """Per-show: which AKA (if any) matched the search?
+
+    Returns a dict mapping show_id → matched_aka (or None when the show's own
+    name carries the match, or when there's no search term). Empty dict when
+    `shows` is empty or `search` is falsy. Used by the browse list route to
+    surface match context to the frontend so users see why a foreign-titled
+    show came back for an English query.
+
+    Picks the shortest matching AKA per show — heuristic for "most canonical".
+    """
+    if not search or not shows:
+        return {}
+
+    tokens = search.split()
+    if not tokens:
+        return {}
+
+    show_ids = [s.id for s in shows]
+
+    aka_query = select(m.ShowAka.show_id, m.ShowAka.name).where(m.ShowAka.show_id.in_(show_ids))
+    for token in tokens:
+        aka_query = aka_query.where(m.ShowAka.name.ilike(f"%{token}%"))
+
+    aka_rows = (await session.execute(aka_query)).all()
+    best_by_show: dict[int, str] = {}
+    for sid, aname in aka_rows:
+        if sid not in best_by_show or len(aname) < len(best_by_show[sid]):
+            best_by_show[sid] = aname
+
+    result: dict[int, str | None] = {}
+    lower_tokens = [t.lower() for t in tokens]
+    for show in shows:
+        name_lower = (show.name or "").lower()
+        if all(t in name_lower for t in lower_tokens):
+            result[show.id] = None
+        else:
+            result[show.id] = best_by_show.get(show.id)
+    return result
+
+
 async def hydrate_show_refs(
     session: AsyncSession, shows: list[m.Show]
 ) -> tuple[dict[int, list[str]], dict[int, m.Network], dict[int, m.WebChannel]]:
