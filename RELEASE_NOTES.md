@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-05-04] - 2026-05-05
+
+### Features
+
+- Include matched_aka in search responses (#41)
+
 ## [2026-05-03] - 2026-05-03
 
 ### Features
