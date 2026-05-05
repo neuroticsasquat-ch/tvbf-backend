@@ -7,7 +7,9 @@ from pydantic import BaseModel, EmailStr, Field
 from tvbf.tvmaze.dto import EpisodeOut, ShowSummary
 
 MyShowsSort = Literal["recent_activity", "name_asc", "name_desc", "added"]
-WatchNextSort = Literal["airdate_desc", "airdate_asc", "name_asc", "name_desc"]
+WatchNextSort = Literal[
+    "airdate_desc", "unwatched_airdate_desc", "airdate_asc", "name_asc", "name_desc"
+]
 UpcomingSort = Literal["airdate_asc", "airdate_desc", "added_desc", "name_asc", "name_desc"]
 
 

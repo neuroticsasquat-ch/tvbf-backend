@@ -84,20 +84,28 @@ def sort_my_shows(
 
 
 def sort_watch_next(entries: list[WatchNextEntry], sort: WatchNextSort) -> list[WatchNextEntry]:
-    """Order Watch Next entries. Default `airdate_desc` (most recently aired first).
-    Episodes with airdate=None fall to the bottom (date.min fallback)."""
+    """Order Watch Next entries. Default `airdate_desc` orders by the show's
+    most recent aired episode (`entry.last_aired`). `unwatched_airdate_desc`
+    orders by the unwatched episode's airdate. Entries with a None date fall
+    to the bottom (date.min fallback)."""
     if sort == "airdate_asc":
         return sorted(
             entries, key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name))
+        )
+    if sort == "unwatched_airdate_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name)),
+            reverse=True,
         )
     if sort == "name_asc":
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
-    # airdate_desc (default)
+    # airdate_desc (default): show's most recent aired episode
     return sorted(
         entries,
-        key=lambda e: (e.episode.airdate or date.min, show_name_sort_key(e.show.name)),
+        key=lambda e: (e.last_aired or date.min, show_name_sort_key(e.show.name)),
         reverse=True,
     )
 
