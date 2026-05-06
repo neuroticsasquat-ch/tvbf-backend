@@ -3,7 +3,7 @@ from sqlalchemy import insert
 
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.browse_queries import hydrate_matched_aka, list_shows
-from tvbf.tvmaze.dto import ShowFilters
+from tvbf.tvmaze.schemas import ShowFilters
 
 
 @pytest.fixture

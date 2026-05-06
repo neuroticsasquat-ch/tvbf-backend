@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.deps import get_current_user, get_session
 from tvbf.tvmaze import browse_queries
-from tvbf.tvmaze.dto import (
+from tvbf.tvmaze.schemas import (
     ALLOWED_SORT_KEYS,
     EpisodeOut,
     GenreOut,

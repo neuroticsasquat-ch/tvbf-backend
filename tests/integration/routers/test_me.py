@@ -9,8 +9,8 @@ from fastapi import HTTPException, Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
-from tvbf.app.dto import AccountDeleteRequest
 from tvbf.app.models import User
+from tvbf.app.schemas import AccountDeleteRequest
 from tvbf.app.services import my_shows_service  # noqa: F401 — used implicitly
 from tvbf.config import get_settings
 from tvbf.main import app

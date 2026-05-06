@@ -4,7 +4,9 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.dto import (
+from tvbf.app.errors import NotFound
+from tvbf.app.repos import episode_repo, episode_watch_repo, show_membership_repo, show_repo
+from tvbf.app.schemas import (
     MyShowEntry,
     MyShowsSort,
     UpcomingEntry,
@@ -12,12 +14,10 @@ from tvbf.app.dto import (
     WatchNextEntry,
     WatchNextSort,
 )
-from tvbf.app.errors import NotFound
-from tvbf.app.repos import episode_repo, episode_watch_repo, show_membership_repo, show_repo
 from tvbf.sorting import show_name_sort_key
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
-from tvbf.tvmaze.dto import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
 from tvbf.tvmaze.models import Show
+from tvbf.tvmaze.schemas import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
 
 
 def _episode_to_out(ep: object) -> EpisodeOut:
