@@ -1,7 +1,7 @@
 from sqlalchemy import select
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.schemas import TVMazeEpisode, TVMazeNetwork, TVMazeSeason, TVMazeShow
+from tvbf.tvmaze.api_payloads import TVMazeEpisode, TVMazeNetwork, TVMazeSeason, TVMazeShow
 from tvbf.tvmaze.upsert import (
     upsert_episodes,
     upsert_genre_by_name,

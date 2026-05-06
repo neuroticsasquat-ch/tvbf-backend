@@ -7,7 +7,7 @@ from tvbf.tvmaze.browse_queries import (
     list_networks,
     list_shows,
 )
-from tvbf.tvmaze.dto import ShowFilters
+from tvbf.tvmaze.schemas import ShowFilters
 
 
 async def test_list_genres_returns_all_in_name_order(session):

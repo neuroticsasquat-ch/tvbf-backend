@@ -1,9 +1,12 @@
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.dto import (
+from tvbf.app.errors import InvalidCredentials, NotFound
+from tvbf.app.models import User
+from tvbf.app.schemas import (
     AccountDeleteRequest,
     AuthedUserOut,
     BulkSeasonResult,
@@ -16,8 +19,6 @@ from tvbf.app.dto import (
     WatchNextEntry,
     WatchNextSort,
 )
-from tvbf.app.errors import InvalidCredentials, NotFound
-from tvbf.app.models import User
 from tvbf.app.services import account_service, episode_service, my_shows_service
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf
@@ -68,10 +69,11 @@ async def delete_me(
 @router.get("/me/shows", response_model=list[MyShowEntry])
 async def list_my_shows_route(
     sort: Annotated[MyShowsSort, Query()] = "recent_activity",
+    today: Annotated[date | None, Query()] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[MyShowEntry]:
-    return await my_shows_service.list_my_shows(db, user_id=user.id, sort=sort)
+    return await my_shows_service.list_my_shows(db, user_id=user.id, sort=sort, today=today)
 
 
 @router.put(
@@ -113,19 +115,21 @@ async def remove_show_route(
 @router.get("/me/watch-next", response_model=list[WatchNextEntry])
 async def watch_next_route(
     sort: Annotated[WatchNextSort, Query()] = "airdate_desc",
+    today: Annotated[date | None, Query()] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[WatchNextEntry]:
-    return await my_shows_service.list_watch_next(db, user_id=user.id, sort=sort)
+    return await my_shows_service.list_watch_next(db, user_id=user.id, sort=sort, today=today)
 
 
 @router.get("/me/upcoming", response_model=list[UpcomingEntry])
 async def upcoming_route(
     sort: Annotated[UpcomingSort, Query()] = "airdate_asc",
+    today: Annotated[date | None, Query()] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[UpcomingEntry]:
-    return await my_shows_service.list_upcoming(db, user_id=user.id, sort=sort)
+    return await my_shows_service.list_upcoming(db, user_id=user.id, sort=sort, today=today)
 
 
 # ---------------------------------------------------------------------------

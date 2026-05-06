@@ -4,7 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from tvbf.tvmaze.dto import EpisodeOut, ShowSummary
+from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
 
 MyShowsSort = Literal["recent_activity", "name_asc", "name_desc", "added"]
 WatchNextSort = Literal[

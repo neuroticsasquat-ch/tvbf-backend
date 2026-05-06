@@ -5,7 +5,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.schemas import TVMazeAka, TVMazeEpisode, TVMazeNetwork, TVMazeSeason, TVMazeShow
+from tvbf.tvmaze.api_payloads import (
+    TVMazeAka,
+    TVMazeEpisode,
+    TVMazeNetwork,
+    TVMazeSeason,
+    TVMazeShow,
+)
 
 
 async def upsert_network(session: AsyncSession, net: TVMazeNetwork | None) -> int | None:

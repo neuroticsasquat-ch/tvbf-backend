@@ -8,14 +8,14 @@ ref-resolution logic in build_show_summary_from_refs.
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
-from tvbf.app.dto import MyShowEntry, UpcomingEntry, WatchNextEntry
+from tvbf.app.schemas import MyShowEntry, UpcomingEntry, WatchNextEntry
 from tvbf.app.services.my_shows_service import (
     build_show_summary_from_refs,
     sort_my_shows,
     sort_upcoming,
     sort_watch_next,
 )
-from tvbf.tvmaze.dto import EpisodeOut, ShowSummary
+from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
 
 # ---------------------------------------------------------------------------
 # Fixtures (factories — pure construction, no fixtures decorator)

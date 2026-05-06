@@ -9,9 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
+from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.runs import finalize_run, record_progress
-from tvbf.tvmaze.schemas import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.upsert import mark_akas_synced, upsert_akas, upsert_show_payload
 
 log = logging.getLogger(__name__)
