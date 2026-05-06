@@ -400,3 +400,42 @@ async def test_bulk_unmark_season_route_returns_204(session, make_user):
         show_id=show.id, season_number=1, user=user, db=session
     )
     assert out.status_code == 204
+
+
+@pytest.mark.asyncio
+async def test_watch_next_route_accepts_today_param(session, make_user):
+    """Router accepts an explicit `today` and forwards to service."""
+    from datetime import date as _date
+
+    user = await make_user(email="wn-rt-today@example.com")
+    show = Show(id=940500, name="Router Today Show", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    session.add(
+        Episode(
+            id=940501,
+            show_id=show.id,
+            season=1,
+            number=1,
+            airdate=_date(2026, 5, 6),
+        )
+    )
+    await session.flush()
+    await me_router.add_show_route(show_id=show.id, user=user, db=session)
+
+    rows = await me_router.watch_next_route(
+        sort="airdate_desc", today=_date(2026, 5, 5), user=user, db=session
+    )
+    assert rows == []
+
+    rows = await me_router.watch_next_route(
+        sort="airdate_desc", today=_date(2026, 5, 6), user=user, db=session
+    )
+    assert [e.episode.id for e in rows] == [940501]
+
+
+@pytest.mark.asyncio
+async def test_watch_next_route_invalid_today_returns_422(authed_client):
+    """`?today=garbage` is rejected by FastAPI's date validator."""
+    resp = await authed_client.get("/me/watch-next?today=not-a-date")
+    assert resp.status_code == 422

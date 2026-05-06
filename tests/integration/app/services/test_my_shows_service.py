@@ -362,3 +362,45 @@ async def test_list_my_shows_includes_last_watched_at(session, make_user):
     rows = await my_shows_service.list_my_shows(session, user_id=user.id)
     assert len(rows) == 1
     assert rows[0].last_watched_at is not None
+
+
+@pytest.mark.asyncio
+async def test_list_watch_next_uses_supplied_today_as_upper_bound(session, make_user):
+    """An episode airing on the supplied `today` is included; airing the next day is not."""
+    user = await make_user(email="wn-today@example.com")
+    show = await _seed_show(
+        session,
+        show_id=950100,
+        name="Today Show",
+        episodes=2,
+        airdates=[date(2026, 5, 6), date(2026, 5, 7)],
+    )
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_watch_next(session, user_id=user.id, today=date(2026, 5, 6))
+    assert [e.episode.id for e in rows] == [show.id * 100 + 1]
+
+    rows = await my_shows_service.list_watch_next(session, user_id=user.id, today=date(2026, 5, 5))
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_uses_supplied_today_as_lower_bound(session, make_user):
+    """Episode airing on `today` is NOT upcoming; airing the next day IS."""
+    user = await make_user(email="up-today@example.com")
+    show = await _seed_show(
+        session,
+        show_id=950110,
+        name="Upcoming Today",
+        episodes=2,
+        airdates=[date(2026, 5, 6), date(2026, 5, 7)],
+    )
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date(2026, 5, 6))
+    assert [e.episode.id for e in rows] == [show.id * 100 + 2]
+
+    rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date(2026, 5, 7))
+    assert rows == []
