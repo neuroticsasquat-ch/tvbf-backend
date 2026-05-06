@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [2026-05-06] - 2026-05-06
+
+### Bug Fixes
+
+- Accept client-supplied today for watch-next/upcoming bucketing (#48)
+
+### Refactor
+
+- Rename dto modules to schemas (FastAPI convention) (#49)
+
 ## [2026-05-05] - 2026-05-05
 
 ### Features
