@@ -155,6 +155,7 @@ async def list_my_shows(
     *,
     user_id: UUID,
     sort: MyShowsSort = "recent_activity",
+    today: date | None = None,
 ) -> list[MyShowEntry]:
     pairs = await show_membership_repo.list_with_added_at(db, user_id)
     if not pairs:
@@ -169,9 +170,9 @@ async def list_my_shows(
     watched_counts = await episode_watch_repo.count_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
-    today = date.today()
-    latest_aired = await episode_repo.latest_aired_per_show(db, show_ids, today)
-    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today)
+    today_d = today if today is not None else date.today()
+    latest_aired = await episode_repo.latest_aired_per_show(db, show_ids, today_d)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
     last_watched = await episode_watch_repo.latest_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
@@ -208,12 +209,13 @@ async def list_watch_next(
     *,
     user_id: UUID,
     sort: WatchNextSort = "airdate_desc",
+    today: date | None = None,
 ) -> list[WatchNextEntry]:
     """Per show in My Shows, the earliest unwatched episode whose airdate has
     already passed. Shows with nothing unwatched-and-aired are omitted."""
-    today = date.today()
+    today_d = today if today is not None else date.today()
     episodes = await episode_repo.earliest_aired_unwatched_per_show(
-        db, user_id=user_id, today=today
+        db, user_id=user_id, today=today_d
     )
     if not episodes:
         return []
@@ -234,8 +236,8 @@ async def list_watch_next(
     last_watched = await episode_watch_repo.latest_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
-    last_aired = await episode_repo.latest_aired_per_show(db, show_ids, today)
-    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today)
+    last_aired = await episode_repo.latest_aired_per_show(db, show_ids, today_d)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
     total_counts = await episode_repo.count_per_show(db, show_ids)
     watched_counts = await episode_watch_repo.count_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
@@ -274,11 +276,12 @@ async def list_upcoming(
     *,
     user_id: UUID,
     sort: UpcomingSort = "airdate_asc",
+    today: date | None = None,
 ) -> list[UpcomingEntry]:
     """Per show in My Shows, the earliest episode whose airdate is in the
     future. Shows with no scheduled future episodes are omitted."""
-    today = date.today()
-    episodes = await episode_repo.earliest_future_per_show(db, user_id=user_id, today=today)
+    today_d = today if today is not None else date.today()
+    episodes = await episode_repo.earliest_future_per_show(db, user_id=user_id, today=today_d)
     if not episodes:
         return []
 
@@ -291,7 +294,7 @@ async def list_upcoming(
 
     shows = list(shows_by_id.values())
     genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
-    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
     total_counts = await episode_repo.count_per_show(db, show_ids)
     watched_counts = await episode_watch_repo.count_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
