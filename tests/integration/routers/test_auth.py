@@ -8,7 +8,7 @@ import pytest
 from fastapi import HTTPException, Request, Response
 from httpx import ASGITransport, AsyncClient
 
-from tvbf.app.dto import (
+from tvbf.app.schemas import (
     LoginRequest,
     PasswordChangeRequest,
     SignupRequest,

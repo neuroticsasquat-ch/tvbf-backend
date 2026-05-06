@@ -1,4 +1,4 @@
-from tvbf.tvmaze.schemas import TVMazeAka
+from tvbf.tvmaze.api_payloads import TVMazeAka
 
 
 def test_parses_full_aka_payload():

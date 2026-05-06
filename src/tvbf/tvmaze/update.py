@@ -3,10 +3,10 @@ from uuid import UUID
 
 import httpx
 
+from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import IngestResult, SessionFactory, _owned_session
 from tvbf.tvmaze.runs import finalize_run, get_last_successful_cursor, record_progress
-from tvbf.tvmaze.schemas import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.upsert import mark_akas_synced, upsert_akas, upsert_show_payload
 
 log = logging.getLogger(__name__)

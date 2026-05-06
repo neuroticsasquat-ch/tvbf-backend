@@ -1,14 +1,14 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.dto import (
+from tvbf.app.errors import EmailInUse, InvalidCredentials, InvalidInvite
+from tvbf.app.models import User
+from tvbf.app.schemas import (
     AuthedUserOut,
     LoginRequest,
     PasswordChangeRequest,
     SignupRequest,
 )
-from tvbf.app.errors import EmailInUse, InvalidCredentials, InvalidInvite
-from tvbf.app.models import User
 from tvbf.app.services import account_service
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf

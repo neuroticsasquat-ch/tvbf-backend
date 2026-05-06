@@ -4,7 +4,9 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.dto import (
+from tvbf.app.errors import InvalidCredentials, NotFound
+from tvbf.app.models import User
+from tvbf.app.schemas import (
     AccountDeleteRequest,
     AuthedUserOut,
     BulkSeasonResult,
@@ -17,8 +19,6 @@ from tvbf.app.dto import (
     WatchNextEntry,
     WatchNextSort,
 )
-from tvbf.app.errors import InvalidCredentials, NotFound
-from tvbf.app.models import User
 from tvbf.app.services import account_service, episode_service, my_shows_service
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf

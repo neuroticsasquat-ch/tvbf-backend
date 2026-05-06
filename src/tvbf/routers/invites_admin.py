@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Depends, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.dto import InviteCreateRequest, InviteOut
+from tvbf.app.schemas import InviteCreateRequest, InviteOut
 from tvbf.app.services import invite_service
 from tvbf.deps import get_session, require_admin
 

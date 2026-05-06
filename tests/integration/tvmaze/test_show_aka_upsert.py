@@ -4,7 +4,7 @@ import pytest
 from sqlalchemy import select
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.schemas import TVMazeAka
+from tvbf.tvmaze.api_payloads import TVMazeAka
 from tvbf.tvmaze.upsert import mark_akas_synced, upsert_akas
 
 
