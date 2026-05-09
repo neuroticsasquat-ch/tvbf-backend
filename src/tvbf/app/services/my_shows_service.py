@@ -11,6 +11,9 @@ from tvbf.app.schemas import (
     MyShowsSort,
     UpcomingEntry,
     UpcomingSort,
+    WatchedEntry,
+    WatchedSort,
+    WatchedStatusFilter,
     WatchNextEntry,
     WatchNextSort,
 )
@@ -355,3 +358,97 @@ async def list_upcoming(
         )
 
     return sort_upcoming(entries, sort)
+
+
+# ---------------------------------------------------------------------------
+# Watch history (NEU-102)
+# ---------------------------------------------------------------------------
+
+
+def sort_watched(entries: list[WatchedEntry], sort: WatchedSort) -> list[WatchedEntry]:
+    """Order Watched entries. Default `last_watched_desc` sorts by recency,
+    falling back to epoch when missing (shouldn't happen — entries are filtered
+    to ≥1 watched episode — but defensive)."""
+    if sort == "name_asc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
+    if sort == "name_desc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    return sorted(
+        entries,
+        key=lambda e: (e.last_watched_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+        reverse=True,
+    )
+
+
+async def list_watched(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    status: WatchedStatusFilter = "all",
+    sort: WatchedSort = "last_watched_desc",
+    today: date | None = None,
+) -> list[WatchedEntry]:
+    """Every show with ≥1 watched episode for the user, regardless of My Shows
+    membership. `finished` requires the show to be `Ended` AND fully caught up;
+    everything else with ≥1 watch is `in_progress`."""
+    today_d = today if today is not None else date.today()
+
+    show_ids = await episode_watch_repo.list_show_ids_with_watches(db, user_id=user_id)
+    if not show_ids:
+        return []
+
+    shows: list[Show] = []
+    for sid in show_ids:
+        show = await show_repo.get_by_id(db, sid)
+        if show is not None:
+            shows.append(show)
+    if not shows:
+        return []
+    show_ids = [s.id for s in shows]
+
+    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    total_counts = await episode_repo.count_per_show(db, show_ids)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
+    watched_counts = await episode_watch_repo.count_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    last_watched = await episode_watch_repo.latest_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    my_shows_pairs = await show_membership_repo.list_with_added_at(db, user_id)
+    my_shows_ids = {show.id for show, _added in my_shows_pairs}
+
+    entries: list[WatchedEntry] = []
+    for show in shows:
+        watched = watched_counts.get(show.id, 0)
+        if watched == 0:
+            continue
+        aired = aired_counts.get(show.id, 0)
+        is_ended = (show.status or "") == "Ended"
+        row_status: str
+        if aired > 0 and watched >= aired and is_ended:
+            row_status = "finished"
+        else:
+            row_status = "in_progress"
+        if status == "finished" and row_status != "finished":
+            continue
+        if status == "in_progress" and row_status != "in_progress":
+            continue
+        entries.append(
+            WatchedEntry(
+                show=build_show_summary_from_refs(
+                    show,
+                    genres_by_show=genres_by_show,
+                    networks_by_id=networks_by_id,
+                    wcs_by_id=wcs_by_id,
+                ),
+                watched_episode_count=watched,
+                aired_episode_count=aired,
+                total_episode_count=total_counts.get(show.id, 0),
+                last_watched_at=last_watched.get(show.id),
+                in_my_shows=show.id in my_shows_ids,
+                status=row_status,  # type: ignore[arg-type]
+            )
+        )
+
+    return sort_watched(entries, sort)
