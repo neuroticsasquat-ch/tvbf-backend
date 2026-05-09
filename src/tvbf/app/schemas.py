@@ -102,3 +102,44 @@ class InviteOut(BaseModel):
     created_at: datetime
     consumed_at: datetime | None
     consumed_by_user_id: UUID | None
+
+
+ConnectionState = Literal["pending", "accepted", "blocked"]
+
+
+class UserBrief(BaseModel):
+    id: UUID
+    display_name: str
+
+
+class UserSearchResult(BaseModel):
+    id: UUID
+    display_name: str
+
+
+class ConnectionRequestCreate(BaseModel):
+    addressee_id: UUID
+
+
+class ConnectionRequestOut(BaseModel):
+    id: UUID
+    requester: UserBrief
+    addressee: UserBrief
+    state: ConnectionState
+    created_at: datetime
+    responded_at: datetime | None
+
+
+class ConnectionRequestList(BaseModel):
+    incoming: list[ConnectionRequestOut]
+    outgoing: list[ConnectionRequestOut]
+
+
+class ConnectionOut(BaseModel):
+    user: UserBrief
+    since: datetime
+
+
+class BlockedUserOut(BaseModel):
+    user: UserBrief
+    blocked_at: datetime
