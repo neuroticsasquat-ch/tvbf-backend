@@ -14,6 +14,7 @@ from tvbf.app.errors import (
 from tvbf.app.models import Connection, User
 from tvbf.app.repos import connection_repo, user_repo
 from tvbf.app.schemas import (
+    BlockedUserOut,
     ConnectionOut,
     ConnectionRequestCreate,
     ConnectionRequestList,
@@ -175,3 +176,70 @@ async def remove_connection(
     except NotFound as err:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_connected") from err
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/me/blocks/{user_id}",
+    response_model=BlockedUserOut,
+    status_code=status.HTTP_201_CREATED,
+    dependencies=[Depends(require_csrf)],
+)
+async def block_user(
+    user_id: UUID = Path(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> BlockedUserOut:
+    target = await user_repo.get_by_id(db, user_id)
+    if target is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="user_not_found")
+
+    try:
+        row = await connection_service.block(db, blocker_id=user.id, blocked_id=target.id)
+    except SelfConnectionForbidden as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="self_block_forbidden"
+        ) from err
+
+    return BlockedUserOut(
+        user=UserBrief(id=target.id, display_name=target.display_name),
+        blocked_at=row.responded_at or row.created_at,
+    )
+
+
+@router.delete(
+    "/me/blocks/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def unblock_user(
+    user_id: UUID = Path(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    try:
+        await connection_service.unblock(db, blocker_id=user.id, blocked_id=user_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_blocked") from err
+    except NotAConnectionParty as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_blocker") from err
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me/blocks", response_model=list[BlockedUserOut])
+async def list_blocks(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[BlockedUserOut]:
+    rows = await connection_repo.list_blocked_by(db, user.id)
+    others = await user_repo.get_many_by_ids(db, {row.addressee_id for row in rows})
+    return [
+        BlockedUserOut(
+            user=UserBrief(
+                id=others[row.addressee_id].id,
+                display_name=others[row.addressee_id].display_name,
+            ),
+            blocked_at=row.responded_at or row.created_at,
+        )
+        for row in rows
+        if row.addressee_id in others
+    ]

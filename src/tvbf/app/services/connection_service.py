@@ -106,10 +106,14 @@ async def block(db: AsyncSession, *, blocker_id: UUID, blocked_id: UUID) -> Conn
 
 
 async def unblock(db: AsyncSession, *, blocker_id: UUID, blocked_id: UUID) -> None:
-    """Remove a blocked row. Only the original blocker can unblock."""
+    """Remove a blocked row. Only the original blocker can unblock.
+    Raises NotFound if no blocked row exists; raises NotAConnectionParty if
+    the row exists but caller isn't the blocker."""
     row = await connection_repo.find_pair(db, blocker_id, blocked_id)
-    if row is None or row.state != "blocked" or row.requester_id != blocker_id:
+    if row is None or row.state != "blocked":
         raise NotFound()
+    if row.requester_id != blocker_id:
+        raise NotAConnectionParty()
     await connection_repo.delete(db, row.id)
     await db.commit()
 

@@ -183,8 +183,8 @@ async def test_unblock_requires_blocker(session):
     await session.commit()
     await connection_service.block(session, blocker_id=a.id, blocked_id=b.id)
 
-    # Blocked user cannot unblock themselves.
-    with pytest.raises(NotFound):
+    # Blocked user cannot unblock themselves — they aren't the blocker.
+    with pytest.raises(NotAConnectionParty):
         await connection_service.unblock(session, blocker_id=b.id, blocked_id=a.id)
 
     # Blocker can unblock.
