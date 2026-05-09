@@ -53,6 +53,19 @@ async def accept(db: AsyncSession, *, id: UUID, accepting_user_id: UUID) -> Conn
     return updated
 
 
+async def delete_pending_request(db: AsyncSession, *, id: UUID, caller_id: UUID) -> None:
+    """Reject (addressee) or cancel (requester) a pending connection request.
+    Raises NotFound if the row doesn't exist or isn't pending; raises
+    NotAConnectionParty if caller isn't requester or addressee."""
+    row = await connection_repo.get(db, id)
+    if row is None or row.state != "pending":
+        raise NotFound()
+    if caller_id not in (row.requester_id, row.addressee_id):
+        raise NotAConnectionParty()
+    await connection_repo.delete(db, id)
+    await db.commit()
+
+
 async def delete(db: AsyncSession, *, id: UUID, caller_id: UUID) -> None:
     """Delete a connection row. Used by reject (addressee), cancel (requester),
     and the explicit delete endpoint. Caller must be one of the two parties."""

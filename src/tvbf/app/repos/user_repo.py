@@ -31,6 +31,13 @@ async def get_by_email(db: AsyncSession, email: str) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def get_many_by_ids(db: AsyncSession, ids: set[UUID]) -> dict[UUID, User]:
+    if not ids:
+        return {}
+    rows = (await db.execute(select(User).where(User.id.in_(ids)))).scalars().all()
+    return {row.id: row for row in rows}
+
+
 async def delete_user(db: AsyncSession, user_id: UUID) -> None:
     await db.execute(sa_delete(User).where(User.id == user_id))
 
