@@ -404,3 +404,55 @@ async def test_list_upcoming_uses_supplied_today_as_lower_bound(session, make_us
 
     rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date(2026, 5, 7))
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# NEU-100 Path B: EpisodeOut.watched populated on list endpoints
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_my_shows_next_episode_carries_watched_flag(session, make_user):
+    """The next-episode included in `MyShowEntry` carries `watched=False` so
+    the frontend can render the watch checkbox without a per-show round trip."""
+    user = await make_user(email="me-watched@example.com")
+    show = await _seed_show(session, show_id=910500, episodes=2)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id, today=date.today())
+    assert len(rows) == 1
+    assert rows[0].next_episode is not None
+    assert rows[0].next_episode.watched is False
+
+
+@pytest.mark.asyncio
+async def test_list_watch_next_episode_carries_watched_flag(session, make_user):
+    user = await make_user(email="wn-watched@example.com")
+    show = await _seed_show(session, show_id=910501, episodes=2)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_watch_next(session, user_id=user.id, today=date.today())
+    assert len(rows) >= 1
+    assert all(e.episode.watched is False for e in rows)
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_episode_carries_watched_flag(session, make_user):
+    """Future episodes are unwatched by definition; `watched` is still populated
+    explicitly so the frontend doesn't have to special-case it."""
+    user = await make_user(email="up-watched@example.com")
+    future = date.today() + timedelta(days=1)
+    show = await _seed_show(
+        session,
+        show_id=910502,
+        episodes=1,
+        airdates=[future],
+    )
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date.today())
+    assert len(rows) == 1
+    assert rows[0].episode.watched is False
