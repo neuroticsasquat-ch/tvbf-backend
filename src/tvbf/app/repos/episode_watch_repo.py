@@ -43,6 +43,28 @@ async def unmark(db: AsyncSession, *, user_id: UUID, episode_id: int) -> None:
     )
 
 
+async def watched_in(
+    db: AsyncSession, *, user_id: UUID, episode_ids: list[int] | set[int]
+) -> set[int]:
+    """Return the subset of `episode_ids` the user has watched. Used by list
+    builders to populate `EpisodeOut.watched` in one batch query."""
+    if not episode_ids:
+        return set()
+    rows = (
+        (
+            await db.execute(
+                select(UserEpisodeWatch.episode_id).where(
+                    UserEpisodeWatch.user_id == user_id,
+                    UserEpisodeWatch.episode_id.in_(episode_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return set(rows)
+
+
 async def list_episode_ids_for_show(db: AsyncSession, *, user_id: UUID, show_id: int) -> list[int]:
     rows = (
         (

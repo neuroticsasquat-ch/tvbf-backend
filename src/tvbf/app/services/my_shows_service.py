@@ -20,8 +20,11 @@ from tvbf.tvmaze.models import Show
 from tvbf.tvmaze.schemas import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
 
 
-def _episode_to_out(ep: object) -> EpisodeOut:
-    return EpisodeOut.model_validate(ep, from_attributes=True)
+def _episode_to_out(ep: object, *, watched: bool | None = None) -> EpisodeOut:
+    out = EpisodeOut.model_validate(ep, from_attributes=True)
+    if watched is not None:
+        out = out.model_copy(update={"watched": watched})
+    return out
 
 
 def build_show_summary_from_refs(
@@ -177,9 +180,19 @@ async def list_my_shows(
         db, user_id=user_id, show_ids=show_ids
     )
 
-    entries: list[MyShowEntry] = []
+    next_eps_by_show: dict[int, object] = {}
     for show in shows:
         next_ep = await episode_repo.next_unwatched(db, user_id=user_id, show_id=show.id)
+        if next_ep is not None:
+            next_eps_by_show[show.id] = next_ep
+    next_ep_ids = {ep.id for ep in next_eps_by_show.values()}  # type: ignore[attr-defined]
+    watched_next_ids = await episode_watch_repo.watched_in(
+        db, user_id=user_id, episode_ids=next_ep_ids
+    )
+
+    entries: list[MyShowEntry] = []
+    for show in shows:
+        next_ep = next_eps_by_show.get(show.id)
         total = total_counts.get(show.id, 0)
         aired = aired_counts.get(show.id, 0)
         entries.append(
@@ -196,7 +209,14 @@ async def list_my_shows(
                 upcoming_episode_count=total - aired,
                 last_aired=latest_aired.get(show.id),
                 last_watched_at=last_watched.get(show.id),
-                next_episode=_episode_to_out(next_ep) if next_ep is not None else None,
+                next_episode=(
+                    _episode_to_out(
+                        next_ep,
+                        watched=next_ep.id in watched_next_ids,  # type: ignore[attr-defined]
+                    )
+                    if next_ep is not None
+                    else None
+                ),
                 added_at=added_at_by_show[show.id],
             )
         )
@@ -243,6 +263,10 @@ async def list_watch_next(
         db, user_id=user_id, show_ids=show_ids
     )
 
+    watched_ep_ids = await episode_watch_repo.watched_in(
+        db, user_id=user_id, episode_ids=[ep.id for ep in episodes]
+    )
+
     entries: list[WatchNextEntry] = []
     for ep in episodes:
         show = shows_by_id.get(ep.show_id)
@@ -256,7 +280,7 @@ async def list_watch_next(
                     networks_by_id=networks_by_id,
                     wcs_by_id=wcs_by_id,
                 ),
-                episode=_episode_to_out(ep),
+                episode=_episode_to_out(ep, watched=ep.id in watched_ep_ids),
                 last_watched_at=last_watched.get(ep.show_id),
                 last_aired=last_aired.get(ep.show_id),
                 watched_episode_count=watched_counts.get(ep.show_id, 0),
@@ -303,6 +327,10 @@ async def list_upcoming(
         show.id: added for show, added in await show_membership_repo.list_with_added_at(db, user_id)
     }
 
+    watched_ep_ids = await episode_watch_repo.watched_in(
+        db, user_id=user_id, episode_ids=[ep.id for ep in episodes]
+    )
+
     entries: list[UpcomingEntry] = []
     for ep in episodes:
         show = shows_by_id.get(ep.show_id)
@@ -316,7 +344,7 @@ async def list_upcoming(
                     networks_by_id=networks_by_id,
                     wcs_by_id=wcs_by_id,
                 ),
-                episode=_episode_to_out(ep),
+                episode=_episode_to_out(ep, watched=ep.id in watched_ep_ids),
                 watched_episode_count=watched_counts.get(ep.show_id, 0),
                 aired_episode_count=aired_counts.get(ep.show_id, 0),
                 upcoming_episode_count=(
