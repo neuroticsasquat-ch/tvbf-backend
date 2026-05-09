@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
-from tvbf.routers import admin, auth, browse, health, invites_admin, me
+from tvbf.routers import admin, auth, browse, health, invites_admin, me, users
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
 
 if dsn := os.environ.get("SENTRY_DSN"):
@@ -68,6 +68,7 @@ def create_app() -> FastAPI:
     app.include_router(browse.router)
     app.include_router(auth.router)
     app.include_router(me.router)
+    app.include_router(users.router)
     return app
 
 

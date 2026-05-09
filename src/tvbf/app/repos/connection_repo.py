@@ -75,6 +75,25 @@ async def list_pending_for_user(
     return incoming, outgoing
 
 
+async def list_blocked_user_ids(db: AsyncSession, user_id: UUID) -> set[UUID]:
+    """All user_ids that share a blocked row with `user_id` (either direction)."""
+    rows = (
+        await db.execute(
+            select(Connection.requester_id, Connection.addressee_id).where(
+                Connection.state == "blocked",
+                or_(
+                    Connection.requester_id == user_id,
+                    Connection.addressee_id == user_id,
+                ),
+            )
+        )
+    ).all()
+    out: set[UUID] = set()
+    for requester_id, addressee_id in rows:
+        out.add(addressee_id if requester_id == user_id else requester_id)
+    return out
+
+
 async def list_blocked_by(db: AsyncSession, user_id: UUID) -> list[Connection]:
     """Rows where user_id is the blocker (requester_id on a blocked row)."""
     rows = (
