@@ -43,6 +43,24 @@ async def unmark(db: AsyncSession, *, user_id: UUID, episode_id: int) -> None:
     )
 
 
+async def list_show_ids_with_watches(db: AsyncSession, *, user_id: UUID) -> list[int]:
+    """Return distinct show_ids the user has at least one watched episode in.
+    Used by the watch-history list to seed candidate shows."""
+    rows = (
+        (
+            await db.execute(
+                select(Episode.show_id)
+                .join(UserEpisodeWatch, UserEpisodeWatch.episode_id == Episode.id)
+                .where(UserEpisodeWatch.user_id == user_id)
+                .group_by(Episode.show_id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return list(rows)
+
+
 async def watched_in(
     db: AsyncSession, *, user_id: UUID, episode_ids: list[int] | set[int]
 ) -> set[int]:
