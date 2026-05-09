@@ -43,6 +43,52 @@ async def unmark(db: AsyncSession, *, user_id: UUID, episode_id: int) -> None:
     )
 
 
+async def user_ids_who_watched_show(
+    db: AsyncSession, *, show_id: int, restrict_to: set[UUID]
+) -> set[UUID]:
+    """Return the subset of `restrict_to` user_ids that have watched at least
+    one episode of this show. Empty set if `restrict_to` is empty."""
+    if not restrict_to:
+        return set()
+    rows = (
+        (
+            await db.execute(
+                select(UserEpisodeWatch.user_id)
+                .distinct()
+                .join(Episode, Episode.id == UserEpisodeWatch.episode_id)
+                .where(
+                    Episode.show_id == show_id,
+                    UserEpisodeWatch.user_id.in_(restrict_to),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return set(rows)
+
+
+async def user_ids_who_watched_episode(
+    db: AsyncSession, *, episode_id: int, restrict_to: set[UUID]
+) -> set[UUID]:
+    """Return the subset of `restrict_to` user_ids that watched this episode."""
+    if not restrict_to:
+        return set()
+    rows = (
+        (
+            await db.execute(
+                select(UserEpisodeWatch.user_id).where(
+                    UserEpisodeWatch.episode_id == episode_id,
+                    UserEpisodeWatch.user_id.in_(restrict_to),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return set(rows)
+
+
 async def list_show_ids_with_watches(db: AsyncSession, *, user_id: UUID) -> list[int]:
     """Return distinct show_ids the user has at least one watched episode in.
     Used by the watch-history list to seed candidate shows."""

@@ -156,3 +156,8 @@ class ConnectionOut(BaseModel):
 class BlockedUserOut(BaseModel):
     user: UserBrief
     blocked_at: datetime
+
+
+class ShowFriendActivity(BaseModel):
+    in_my_shows: list[UserBrief]
+    watched: list[UserBrief]
