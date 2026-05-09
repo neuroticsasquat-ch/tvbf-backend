@@ -207,3 +207,111 @@ async def test_sort_name_asc(session, make_user):
 
     rows = await my_shows_service.list_watched(session, user_id=user.id, sort="name_asc")
     assert [e.show.id for e in rows] == [a.id, z.id]
+
+
+@pytest.mark.asyncio
+async def test_last_aired_and_first_watched_populated(session, make_user):
+    user = await make_user()
+    today = date.today()
+    show = await _seed_show(
+        session,
+        show_id=940100,
+        episodes=2,
+        airdates=[today - timedelta(days=10), today - timedelta(days=5)],
+    )
+    early = datetime.now(UTC) - timedelta(days=20)
+    later = datetime.now(UTC) - timedelta(days=2)
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 1, watched_at=early))
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 2, watched_at=later))
+    await session.commit()
+
+    rows = await my_shows_service.list_watched(session, user_id=user.id, today=today)
+    assert len(rows) == 1
+    e = rows[0]
+    assert e.last_aired == today - timedelta(days=5)
+    assert e.first_watched_at is not None
+    # MIN(watched_at) corresponds to the older one.
+    assert abs((e.first_watched_at - early).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_sort_last_aired_desc(session, make_user):
+    user = await make_user()
+    today = date.today()
+    older = await _seed_show(
+        session,
+        show_id=940110,
+        name="Older",
+        episodes=1,
+        airdates=[today - timedelta(days=30)],
+    )
+    newer = await _seed_show(
+        session,
+        show_id=940111,
+        name="Newer",
+        episodes=1,
+        airdates=[today - timedelta(days=2)],
+    )
+    await _watch(session, user.id, older.id * 100 + 1)
+    await _watch(session, user.id, newer.id * 100 + 1)
+    await session.commit()
+
+    rows = await my_shows_service.list_watched(session, user_id=user.id, sort="last_aired_desc")
+    assert [e.show.id for e in rows] == [newer.id, older.id]
+
+
+@pytest.mark.asyncio
+async def test_sort_premiered_asc(session, make_user):
+    user = await make_user()
+    early = await _seed_show(session, show_id=940120, name="Early", episodes=1)
+    late = await _seed_show(session, show_id=940121, name="Late", episodes=1)
+    early.premiered = date(2010, 1, 1)
+    late.premiered = date(2020, 1, 1)
+    await _watch(session, user.id, early.id * 100 + 1)
+    await _watch(session, user.id, late.id * 100 + 1)
+    await session.commit()
+
+    rows = await my_shows_service.list_watched(session, user_id=user.id, sort="premiered_asc")
+    assert [e.show.id for e in rows] == [early.id, late.id]
+
+
+@pytest.mark.asyncio
+async def test_sort_premiered_desc(session, make_user):
+    user = await make_user()
+    early = await _seed_show(session, show_id=940130, name="Early", episodes=1)
+    late = await _seed_show(session, show_id=940131, name="Late", episodes=1)
+    early.premiered = date(2010, 1, 1)
+    late.premiered = date(2020, 1, 1)
+    await _watch(session, user.id, early.id * 100 + 1)
+    await _watch(session, user.id, late.id * 100 + 1)
+    await session.commit()
+
+    rows = await my_shows_service.list_watched(session, user_id=user.id, sort="premiered_desc")
+    assert [e.show.id for e in rows] == [late.id, early.id]
+
+
+@pytest.mark.asyncio
+async def test_sort_first_watched_desc(session, make_user):
+    user = await make_user()
+    started_long_ago = await _seed_show(session, show_id=940140, name="Long ago", episodes=1)
+    started_recently = await _seed_show(session, show_id=940141, name="Recently", episodes=1)
+    long_ago_dt = datetime.now(UTC) - timedelta(days=100)
+    recent_dt = datetime.now(UTC) - timedelta(days=2)
+    session.add(
+        UserEpisodeWatch(
+            user_id=user.id,
+            episode_id=started_long_ago.id * 100 + 1,
+            watched_at=long_ago_dt,
+        )
+    )
+    session.add(
+        UserEpisodeWatch(
+            user_id=user.id,
+            episode_id=started_recently.id * 100 + 1,
+            watched_at=recent_dt,
+        )
+    )
+    await session.commit()
+
+    rows = await my_shows_service.list_watched(session, user_id=user.id, sort="first_watched_desc")
+    assert [e.show.id for e in rows] == [started_recently.id, started_long_ago.id]

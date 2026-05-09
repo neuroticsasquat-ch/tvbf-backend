@@ -11,7 +11,14 @@ WatchNextSort = Literal[
     "airdate_desc", "unwatched_airdate_desc", "airdate_asc", "name_asc", "name_desc"
 ]
 UpcomingSort = Literal["airdate_asc", "airdate_desc", "added_desc", "name_asc", "name_desc"]
-WatchedSort = Literal["last_watched_desc", "name_asc", "name_desc"]
+WatchedSort = Literal[
+    "name_asc",
+    "last_watched_desc",
+    "last_aired_desc",
+    "premiered_asc",
+    "premiered_desc",
+    "first_watched_desc",
+]
 WatchedStatusFilter = Literal["all", "finished", "in_progress"]
 WatchedStatus = Literal["finished", "in_progress"]
 
@@ -91,6 +98,8 @@ class WatchedEntry(BaseModel):
     aired_episode_count: int
     total_episode_count: int
     last_watched_at: datetime | None = None
+    last_aired: date | None = None
+    first_watched_at: datetime | None = None
     in_my_shows: bool
     status: WatchedStatus
 
