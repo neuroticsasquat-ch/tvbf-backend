@@ -366,16 +366,29 @@ async def list_upcoming(
 
 
 def sort_watched(entries: list[WatchedEntry], sort: WatchedSort) -> list[WatchedEntry]:
-    """Order Watched entries. Default `last_watched_desc` sorts by recency,
-    falling back to epoch when missing (shouldn't happen — entries are filtered
-    to ≥1 watched episode — but defensive)."""
+    """Order Watched entries. Mirrors the six sort options Active offers so the
+    two views feel consistent. Tiebreaker is name asc (article-stripped) on all
+    sorts. Nulls fall to the bottom on every sort."""
+    name = lambda e: show_name_sort_key(e.show.name)  # noqa: E731
     if sort == "name_asc":
-        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
-    if sort == "name_desc":
-        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+        return sorted(entries, key=name)
+    if sort == "last_aired_desc":
+        return sorted(entries, key=lambda e: (e.last_aired or _EPOCH, name(e)), reverse=True)
+    if sort == "premiered_asc":
+        # Null premiered → falls to bottom in ascending order via date.max.
+        return sorted(entries, key=lambda e: (e.show.premiered or date.max, name(e)))
+    if sort == "premiered_desc":
+        return sorted(entries, key=lambda e: (e.show.premiered or _EPOCH, name(e)), reverse=True)
+    if sort == "first_watched_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.first_watched_at or _EPOCH_DT, name(e)),
+            reverse=True,
+        )
+    # last_watched_desc — default
     return sorted(
         entries,
-        key=lambda e: (e.last_watched_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+        key=lambda e: (e.last_watched_at or _EPOCH_DT, name(e)),
         reverse=True,
     )
 
@@ -415,6 +428,10 @@ async def list_watched(
     last_watched = await episode_watch_repo.latest_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
+    last_aired_by_show = await episode_repo.latest_aired_per_show(db, show_ids, today_d)
+    first_watched = await episode_watch_repo.first_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
     my_shows_pairs = await show_membership_repo.list_with_added_at(db, user_id)
     my_shows_ids = {show.id for show, _added in my_shows_pairs}
 
@@ -446,6 +463,8 @@ async def list_watched(
                 aired_episode_count=aired,
                 total_episode_count=total_counts.get(show.id, 0),
                 last_watched_at=last_watched.get(show.id),
+                last_aired=last_aired_by_show.get(show.id),
+                first_watched_at=first_watched.get(show.id),
                 in_my_shows=show.id in my_shows_ids,
                 status=row_status,  # type: ignore[arg-type]
             )
