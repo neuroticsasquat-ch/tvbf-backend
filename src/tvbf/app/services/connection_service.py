@@ -121,3 +121,12 @@ async def unblock(db: AsyncSession, *, blocker_id: UUID, blocked_id: UUID) -> No
 async def is_blocked_either_way(db: AsyncSession, *, user_a: UUID, user_b: UUID) -> bool:
     row = await connection_repo.find_pair(db, user_a, user_b)
     return row is not None and row.state == "blocked"
+
+
+async def are_connected(db: AsyncSession, user_a: UUID, user_b: UUID) -> bool:
+    """True iff there is an `accepted` connection between the two users
+    (either direction). Used as a permission gate on friend-scoped endpoints."""
+    if user_a == user_b:
+        return False
+    row = await connection_repo.find_pair(db, user_a, user_b)
+    return row is not None and row.state == "accepted"
