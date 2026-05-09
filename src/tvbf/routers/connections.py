@@ -1,15 +1,21 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from uuid import UUID
+
+from fastapi import APIRouter, Depends, HTTPException, Path, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import (
     ConnectionAlreadyExists,
     ConnectionBlocked,
+    ConnectionWrongState,
+    NotAConnectionParty,
+    NotFound,
     SelfConnectionForbidden,
 )
 from tvbf.app.models import Connection, User
-from tvbf.app.repos import user_repo
+from tvbf.app.repos import connection_repo, user_repo
 from tvbf.app.schemas import (
     ConnectionRequestCreate,
+    ConnectionRequestList,
     ConnectionRequestOut,
     UserBrief,
 )
@@ -61,3 +67,73 @@ async def create_connection_request(
         ) from err
 
     return _to_request_out(row, requester=user, addressee=addressee)
+
+
+@router.get("/me/connection-requests", response_model=ConnectionRequestList)
+async def list_connection_requests(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ConnectionRequestList:
+    incoming, outgoing = await connection_repo.list_pending_for_user(db, user.id)
+
+    user_ids: set[UUID] = set()
+    for row in (*incoming, *outgoing):
+        user_ids.add(row.requester_id)
+        user_ids.add(row.addressee_id)
+    users = await user_repo.get_many_by_ids(db, user_ids)
+
+    def _hydrate(row: Connection) -> ConnectionRequestOut:
+        return _to_request_out(
+            row,
+            requester=users[row.requester_id],
+            addressee=users[row.addressee_id],
+        )
+
+    return ConnectionRequestList(
+        incoming=[_hydrate(row) for row in incoming],
+        outgoing=[_hydrate(row) for row in outgoing],
+    )
+
+
+@router.post(
+    "/connection-requests/{connection_id}/accept",
+    response_model=ConnectionRequestOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def accept_connection_request(
+    connection_id: UUID = Path(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ConnectionRequestOut:
+    try:
+        row = await connection_service.accept(db, id=connection_id, accepting_user_id=user.id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    except NotAConnectionParty as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_addressee") from err
+    except ConnectionWrongState as err:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="wrong_state") from err
+
+    users = await user_repo.get_many_by_ids(db, {row.requester_id, row.addressee_id})
+    return _to_request_out(
+        row, requester=users[row.requester_id], addressee=users[row.addressee_id]
+    )
+
+
+@router.delete(
+    "/connection-requests/{connection_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def delete_connection_request(
+    connection_id: UUID = Path(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    try:
+        await connection_service.delete_pending_request(db, id=connection_id, caller_id=user.id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    except NotAConnectionParty as err:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_a_party") from err
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
