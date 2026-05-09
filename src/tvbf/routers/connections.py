@@ -14,6 +14,7 @@ from tvbf.app.errors import (
 from tvbf.app.models import Connection, User
 from tvbf.app.repos import connection_repo, user_repo
 from tvbf.app.schemas import (
+    ConnectionOut,
     ConnectionRequestCreate,
     ConnectionRequestList,
     ConnectionRequestOut,
@@ -136,4 +137,41 @@ async def delete_connection_request(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
     except NotAConnectionParty as err:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="not_a_party") from err
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get("/me/connections", response_model=list[ConnectionOut])
+async def list_connections(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[ConnectionOut]:
+    pairs = await connection_repo.list_accepted_for_user(db, user.id)
+    other_ids = {other_id for _, other_id in pairs}
+    others = await user_repo.get_many_by_ids(db, other_ids)
+    out = [
+        ConnectionOut(
+            user=UserBrief(id=others[other_id].id, display_name=others[other_id].display_name),
+            since=row.responded_at or row.created_at,
+        )
+        for row, other_id in pairs
+        if other_id in others
+    ]
+    out.sort(key=lambda c: c.user.display_name)
+    return out
+
+
+@router.delete(
+    "/me/connections/{user_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def remove_connection(
+    user_id: UUID = Path(...),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    try:
+        await connection_service.remove_connection(db, user_a=user.id, user_b=user_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_connected") from err
     return Response(status_code=status.HTTP_204_NO_CONTENT)
