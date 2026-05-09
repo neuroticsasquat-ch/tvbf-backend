@@ -1,22 +1,24 @@
+from datetime import date
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.dto import (
+from tvbf.app.errors import InvalidCredentials, NotFound
+from tvbf.app.models import User
+from tvbf.app.schemas import (
     AccountDeleteRequest,
     AuthedUserOut,
     BulkSeasonResult,
     EpisodeWatchOut,
     MyShowEntry,
     MyShowsSort,
+    SeasonProgress,
     UpcomingEntry,
     UpcomingSort,
     WatchNextEntry,
     WatchNextSort,
 )
-from tvbf.app.errors import InvalidCredentials, NotFound
-from tvbf.app.models import User
 from tvbf.app.services import account_service, episode_service, my_shows_service
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf
@@ -67,10 +69,11 @@ async def delete_me(
 @router.get("/me/shows", response_model=list[MyShowEntry])
 async def list_my_shows_route(
     sort: Annotated[MyShowsSort, Query()] = "recent_activity",
+    today: Annotated[date | None, Query()] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[MyShowEntry]:
-    return await my_shows_service.list_my_shows(db, user_id=user.id, sort=sort)
+    return await my_shows_service.list_my_shows(db, user_id=user.id, sort=sort, today=today)
 
 
 @router.put(
@@ -112,19 +115,21 @@ async def remove_show_route(
 @router.get("/me/watch-next", response_model=list[WatchNextEntry])
 async def watch_next_route(
     sort: Annotated[WatchNextSort, Query()] = "airdate_desc",
+    today: Annotated[date | None, Query()] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[WatchNextEntry]:
-    return await my_shows_service.list_watch_next(db, user_id=user.id, sort=sort)
+    return await my_shows_service.list_watch_next(db, user_id=user.id, sort=sort, today=today)
 
 
 @router.get("/me/upcoming", response_model=list[UpcomingEntry])
 async def upcoming_route(
     sort: Annotated[UpcomingSort, Query()] = "airdate_asc",
+    today: Annotated[date | None, Query()] = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[UpcomingEntry]:
-    return await my_shows_service.list_upcoming(db, user_id=user.id, sort=sort)
+    return await my_shows_service.list_upcoming(db, user_id=user.id, sort=sort, today=today)
 
 
 # ---------------------------------------------------------------------------
@@ -212,4 +217,54 @@ async def bulk_unmark_season(
     await episode_service.bulk_unmark_season(
         db, user_id=user.id, show_id=show_id, season_number=season_number
     )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.get(
+    "/me/shows/{show_id}/seasons/progress",
+    response_model=list[SeasonProgress],
+)
+async def list_season_progress(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[SeasonProgress]:
+    rows = await episode_service.list_season_progress(db, user_id=user.id, show_id=show_id)
+    return [SeasonProgress(**r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Bulk show mark/unmark
+# ---------------------------------------------------------------------------
+
+
+@router.post(
+    "/me/shows/{show_id}/watched",
+    status_code=status.HTTP_201_CREATED,
+    response_model=BulkSeasonResult,
+    dependencies=[Depends(require_csrf)],
+)
+async def bulk_mark_show(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> BulkSeasonResult:
+    try:
+        count = await episode_service.bulk_mark_show(db, user_id=user.id, show_id=show_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    return BulkSeasonResult(marked=count)
+
+
+@router.delete(
+    "/me/shows/{show_id}/watched",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def bulk_unmark_show(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await episode_service.bulk_unmark_show(db, user_id=user.id, show_id=show_id)
     return Response(status_code=status.HTTP_204_NO_CONTENT)

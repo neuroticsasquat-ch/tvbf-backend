@@ -1,14 +1,16 @@
-from datetime import datetime
+from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field
 
-from tvbf.tvmaze.dto import EpisodeOut, ShowSummary
+from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
 
 MyShowsSort = Literal["recent_activity", "name_asc", "name_desc", "added"]
-WatchNextSort = Literal["airdate_desc", "airdate_asc", "name_asc", "name_desc"]
-UpcomingSort = Literal["airdate_asc", "airdate_desc", "name_asc", "name_desc"]
+WatchNextSort = Literal[
+    "airdate_desc", "unwatched_airdate_desc", "airdate_asc", "name_asc", "name_desc"
+]
+UpcomingSort = Literal["airdate_asc", "airdate_desc", "added_desc", "name_asc", "name_desc"]
 
 
 class SignupRequest(BaseModel):
@@ -47,6 +49,10 @@ class MyShowEntry(BaseModel):
     show: ShowSummary
     watched_episode_count: int
     total_episode_count: int
+    aired_episode_count: int = 0
+    upcoming_episode_count: int = 0
+    last_aired: date | None = None
+    last_watched_at: datetime | None = None
     next_episode: EpisodeOut | None = None
     added_at: datetime
 
@@ -54,11 +60,21 @@ class MyShowEntry(BaseModel):
 class WatchNextEntry(BaseModel):
     show: ShowSummary
     episode: EpisodeOut
+    last_watched_at: datetime | None = None
+    last_aired: date | None = None
+    watched_episode_count: int
+    aired_episode_count: int
+    upcoming_episode_count: int
+    added_at: datetime | None = None
 
 
 class UpcomingEntry(BaseModel):
     show: ShowSummary
     episode: EpisodeOut
+    watched_episode_count: int
+    aired_episode_count: int
+    upcoming_episode_count: int
+    added_at: datetime | None = None
 
 
 class EpisodeWatchOut(BaseModel):
@@ -68,6 +84,12 @@ class EpisodeWatchOut(BaseModel):
 
 class BulkSeasonResult(BaseModel):
     marked: int
+
+
+class SeasonProgress(BaseModel):
+    season: int
+    aired: int
+    watched: int
 
 
 class InviteCreateRequest(BaseModel):

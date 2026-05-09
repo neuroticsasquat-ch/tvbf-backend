@@ -1,12 +1,22 @@
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.sorting import SQL_LEADING_ARTICLE_PATTERN
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.dto import ALLOWED_SORT_KEYS, ShowFilters
+from tvbf.tvmaze.schemas import ALLOWED_SORT_KEYS, ShowFilters
 
 # Strip leading articles for natural alphabetical sort: "The Office" → "office".
 _NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTICLE_PATTERN, "")
+
+# Most recent already-aired episode airdate per show. Correlated subquery so it can
+# participate in ORDER BY without a join that would multiply rows.
+_LAST_AIRED = (
+    select(func.max(m.Episode.airdate))
+    .where(m.Episode.show_id == m.Show.id)
+    .where(m.Episode.airdate <= func.current_date())
+    .correlate(m.Show)
+    .scalar_subquery()
+)
 
 _SORT_EXPRS = {
     "name": _NORMALIZED_NAME.asc(),
@@ -15,6 +25,8 @@ _SORT_EXPRS = {
     "-premiered": m.Show.premiered.desc().nulls_last(),
     "tvmaze_updated": m.Show.tvmaze_updated.asc(),
     "-tvmaze_updated": m.Show.tvmaze_updated.desc(),
+    "last_aired": _LAST_AIRED.asc().nulls_last(),
+    "-last_aired": _LAST_AIRED.desc().nulls_last(),
 }
 
 
@@ -116,11 +128,14 @@ async def list_shows(
     base = select(m.Show)
     if filters.search:
         # Token-based AND match: every whitespace-separated token must appear
-        # as a substring (case-insensitive) of the show name. Lets "alien earth"
-        # match "Alien: Earth" and "the office us" match "The Office (US)" —
-        # punctuation between tokens stops mattering.
+        # as a substring (case-insensitive) of the show name OR any of its AKAs.
+        # Lets "alien earth" match "Alien: Earth", "the office us" match
+        # "The Office (US)", and "tokyo revengers" match a Japanese-titled show
+        # whose English AKA is "Tokyo Revengers".
         for token in filters.search.split():
-            base = base.where(m.Show.name.ilike(f"%{token}%"))
+            needle = f"%{token}%"
+            aka_subq = select(m.ShowAka.show_id).where(m.ShowAka.name.ilike(needle))
+            base = base.where(or_(m.Show.name.ilike(needle), m.Show.id.in_(aka_subq)))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:
@@ -148,6 +163,49 @@ async def list_shows(
     )
     rows = list((await session.execute(stmt)).scalars().all())
     return rows, total
+
+
+async def hydrate_matched_aka(
+    session: AsyncSession, shows: list[m.Show], search: str | None
+) -> dict[int, str | None]:
+    """Per-show: which AKA (if any) matched the search?
+
+    Returns a dict mapping show_id → matched_aka (or None when the show's own
+    name carries the match, or when there's no search term). Empty dict when
+    `shows` is empty or `search` is falsy. Used by the browse list route to
+    surface match context to the frontend so users see why a foreign-titled
+    show came back for an English query.
+
+    Picks the shortest matching AKA per show — heuristic for "most canonical".
+    """
+    if not search or not shows:
+        return {}
+
+    tokens = search.split()
+    if not tokens:
+        return {}
+
+    show_ids = [s.id for s in shows]
+
+    aka_query = select(m.ShowAka.show_id, m.ShowAka.name).where(m.ShowAka.show_id.in_(show_ids))
+    for token in tokens:
+        aka_query = aka_query.where(m.ShowAka.name.ilike(f"%{token}%"))
+
+    aka_rows = (await session.execute(aka_query)).all()
+    best_by_show: dict[int, str] = {}
+    for sid, aname in aka_rows:
+        if sid not in best_by_show or len(aname) < len(best_by_show[sid]):
+            best_by_show[sid] = aname
+
+    result: dict[int, str | None] = {}
+    lower_tokens = [t.lower() for t in tokens]
+    for show in shows:
+        name_lower = (show.name or "").lower()
+        if all(t in name_lower for t in lower_tokens):
+            result[show.id] = None
+        else:
+            result[show.id] = best_by_show.get(show.id)
+    return result
 
 
 async def hydrate_show_refs(

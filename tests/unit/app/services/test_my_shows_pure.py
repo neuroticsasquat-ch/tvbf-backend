@@ -8,14 +8,14 @@ ref-resolution logic in build_show_summary_from_refs.
 from datetime import UTC, date, datetime
 from types import SimpleNamespace
 
-from tvbf.app.dto import MyShowEntry, UpcomingEntry, WatchNextEntry
+from tvbf.app.schemas import MyShowEntry, UpcomingEntry, WatchNextEntry
 from tvbf.app.services.my_shows_service import (
     build_show_summary_from_refs,
     sort_my_shows,
     sort_upcoming,
     sort_watch_next,
 )
-from tvbf.tvmaze.dto import EpisodeOut, ShowSummary
+from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
 
 # ---------------------------------------------------------------------------
 # Fixtures (factories — pure construction, no fixtures decorator)
@@ -83,11 +83,20 @@ def _my_show(
 
 
 def _watch_next(
-    *, id: int, name: str, airdate: date | None = None, ep_number: int = 1
+    *,
+    id: int,
+    name: str,
+    airdate: date | None = None,
+    ep_number: int = 1,
+    last_aired: date | None = None,
 ) -> WatchNextEntry:
     return WatchNextEntry(
         show=_show_summary(id=id, name=name),
         episode=_episode_out(id=id * 100, show_id=id, number=ep_number, airdate=airdate),
+        last_aired=last_aired,
+        watched_episode_count=0,
+        aired_episode_count=0,
+        upcoming_episode_count=0,
     )
 
 
@@ -95,6 +104,9 @@ def _upcoming(*, id: int, name: str, airdate: date | None = None) -> UpcomingEnt
     return UpcomingEntry(
         show=_show_summary(id=id, name=name),
         episode=_episode_out(id=id * 100, show_id=id, airdate=airdate),
+        watched_episode_count=0,
+        aired_episode_count=0,
+        upcoming_episode_count=0,
     )
 
 
@@ -176,12 +188,27 @@ def test_sort_my_shows_does_not_strip_articles_without_following_space():
 # ---------------------------------------------------------------------------
 
 
-def test_sort_watch_next_default_is_airdate_desc():
+def test_sort_watch_next_default_airdate_desc_orders_by_last_aired():
+    # airdate_desc now sorts by the show's most recent aired episode (last_aired),
+    # NOT by the unwatched episode's airdate. To make sure we're not accidentally
+    # reading episode.airdate, give entries opposite orderings on the two fields.
     entries = [
-        _watch_next(id=1, name="Old", airdate=date(2026, 1, 1)),
-        _watch_next(id=2, name="New", airdate=date(2026, 4, 1)),
+        _watch_next(id=1, name="Old", airdate=date(2026, 4, 1), last_aired=date(2026, 1, 1)),
+        _watch_next(id=2, name="New", airdate=date(2026, 1, 1), last_aired=date(2026, 4, 1)),
     ]
     out = sort_watch_next(entries, "airdate_desc")
+    assert [e.show.id for e in out] == [2, 1]
+
+
+def test_sort_watch_next_unwatched_airdate_desc_orders_by_episode_airdate():
+    # unwatched_airdate_desc preserves the prior airdate_desc behavior: sort by
+    # the unwatched episode's airdate. Cross-wire last_aired to prove we're not
+    # reading it here.
+    entries = [
+        _watch_next(id=1, name="Old", airdate=date(2026, 1, 1), last_aired=date(2026, 4, 1)),
+        _watch_next(id=2, name="New", airdate=date(2026, 4, 1), last_aired=date(2026, 1, 1)),
+    ]
+    out = sort_watch_next(entries, "unwatched_airdate_desc")
     assert [e.show.id for e in out] == [2, 1]
 
 
@@ -202,13 +229,32 @@ def test_sort_watch_next_name_modes():
     assert [e.show.id for e in desc] == [1, 2]
 
 
-def test_sort_watch_next_null_airdates_fall_to_bottom_under_desc():
-    # date.min as fallback — under reverse=True, that's the bottom.
+def test_sort_watch_next_airdate_desc_null_last_aired_falls_to_bottom():
+    entries = [
+        _watch_next(id=1, name="HasDate", last_aired=date(2026, 4, 1)),
+        _watch_next(id=2, name="NoDate", last_aired=None),
+    ]
+    out = sort_watch_next(entries, "airdate_desc")
+    assert [e.show.id for e in out] == [1, 2]
+
+
+def test_sort_watch_next_unwatched_airdate_desc_null_episode_airdate_falls_to_bottom():
     entries = [
         _watch_next(id=1, name="HasDate", airdate=date(2026, 4, 1)),
         _watch_next(id=2, name="NoDate", airdate=None),
     ]
+    out = sort_watch_next(entries, "unwatched_airdate_desc")
+    assert [e.show.id for e in out] == [1, 2]
+
+
+def test_sort_watch_next_airdate_desc_ties_break_by_name():
+    same = date(2026, 4, 1)
+    entries = [
+        _watch_next(id=1, name="bravo", last_aired=same),
+        _watch_next(id=2, name="alpha", last_aired=same),
+    ]
     out = sort_watch_next(entries, "airdate_desc")
+    # Under reverse=True, name tiebreaker also reverses, so "bravo" comes first.
     assert [e.show.id for e in out] == [1, 2]
 
 

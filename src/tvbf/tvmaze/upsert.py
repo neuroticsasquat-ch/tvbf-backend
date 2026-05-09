@@ -1,9 +1,17 @@
-from sqlalchemy import delete, select
+from datetime import UTC, datetime
+
+from sqlalchemy import delete, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.schemas import TVMazeEpisode, TVMazeNetwork, TVMazeSeason, TVMazeShow
+from tvbf.tvmaze.api_payloads import (
+    TVMazeAka,
+    TVMazeEpisode,
+    TVMazeNetwork,
+    TVMazeSeason,
+    TVMazeShow,
+)
 
 
 async def upsert_network(session: AsyncSession, net: TVMazeNetwork | None) -> int | None:
@@ -203,3 +211,33 @@ async def upsert_show_payload(session: AsyncSession, show: TVMazeShow) -> int:
         await upsert_season(session, show_id=show.id, season=season)
     await upsert_episodes(session, show_id=show.id, episodes=show.embedded.episodes)
     return show.id
+
+
+async def upsert_akas(session: AsyncSession, *, show_id: int, akas: list[TVMazeAka]) -> None:
+    """Replace this show's AKA rows. Caller owns the transaction.
+
+    AKA lists are short (typically <20 entries) and TVMaze can both add and
+    remove entries between syncs, so a delete-then-insert is simpler and more
+    correct than per-row upserts.
+    """
+    await session.execute(delete(m.ShowAka).where(m.ShowAka.show_id == show_id))
+    if not akas:
+        return
+    rows = [
+        {
+            "show_id": show_id,
+            "name": a.name,
+            "country_code": a.country_code,
+            "country_name": a.country_name,
+            "language": a.language,
+        }
+        for a in akas
+    ]
+    await session.execute(insert(m.ShowAka).values(rows))
+
+
+async def mark_akas_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Set the show's akas_synced_at to now()."""
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(akas_synced_at=datetime.now(UTC))
+    )
