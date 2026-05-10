@@ -456,3 +456,66 @@ async def test_list_upcoming_episode_carries_watched_flag(session, make_user):
     rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date.today())
     assert len(rows) == 1
     assert rows[0].episode.watched is False
+
+
+# ---------------------------------------------------------------------------
+# NEU-122: first_watched_at on MyShowEntry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_my_shows_first_watched_at_is_null_when_no_watches(session, make_user):
+    user = await make_user(email="fw-none@example.com")
+    show = await _seed_show(session, show_id=910600, episodes=2)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].first_watched_at is None
+
+
+@pytest.mark.asyncio
+async def test_my_shows_first_watched_at_reflects_min_watched_at(session, make_user):
+    from datetime import UTC, datetime, timedelta
+
+    user = await make_user(email="fw-min@example.com")
+    show = await _seed_show(session, show_id=910601, episodes=3)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    early = datetime.now(UTC) - timedelta(days=30)
+    middle = datetime.now(UTC) - timedelta(days=15)
+    later = datetime.now(UTC) - timedelta(days=2)
+    # Insert out of chronological order to confirm MIN is used, not first-row.
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 2, watched_at=middle))
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 1, watched_at=early))
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 3, watched_at=later))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].first_watched_at is not None
+    assert abs((rows[0].first_watched_at - early).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_my_shows_first_watched_at_is_independent_of_added_at(session, make_user):
+    """A show added recently can have an older first_watched_at if the user
+    already had old watch records (e.g., they unfollowed and refollowed)."""
+    from datetime import UTC, datetime, timedelta
+
+    user = await make_user(email="fw-old@example.com")
+    show = await _seed_show(session, show_id=910602, episodes=1)
+    long_ago = datetime.now(UTC) - timedelta(days=365)
+    session.add(
+        UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 1, watched_at=long_ago)
+    )
+    # Add to My Shows after the watch records exist.
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].first_watched_at is not None
+    assert abs((rows[0].first_watched_at - long_ago).total_seconds()) < 1
+    # added_at is "now-ish", much more recent than first_watched_at.
+    assert rows[0].added_at > rows[0].first_watched_at
