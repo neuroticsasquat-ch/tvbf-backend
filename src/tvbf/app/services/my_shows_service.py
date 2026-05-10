@@ -27,7 +27,7 @@ from tvbf.app.schemas import (
 )
 from tvbf.sorting import show_name_sort_key
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
-from tvbf.tvmaze.models import Show
+from tvbf.tvmaze.models import Season, Show
 from tvbf.tvmaze.schemas import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
 
 
@@ -314,10 +314,12 @@ def sort_upcoming_seasons(
     entries: list[UpcomingSeasonEntry], sort: UpcomingSort
 ) -> list[UpcomingSeasonEntry]:
     """Order Upcoming Seasons. Mirrors `sort_upcoming` but keys against the
-    season's premiere_date for the airdate sorts. Default `airdate_asc`."""
+    season's premiere_date for the airdate sorts. Null `premiere_date` (TBA)
+    sorts last in both directions. Default `airdate_asc`."""
     if sort == "airdate_desc":
         return sorted(
             entries,
+            # Null premiere → date.min so it lands last under reverse=True.
             key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
             reverse=True,
         )
@@ -331,20 +333,22 @@ def sort_upcoming_seasons(
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    # airdate_asc: null premiere → date.max so TBA rows land last.
     return sorted(
         entries,
-        key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+        key=lambda e: (e.premiere_date or date.max, show_name_sort_key(e.show.name)),
     )
 
 
 def sort_upcoming_shows(
     entries: list[UpcomingShowEntry], sort: UpcomingSort
 ) -> list[UpcomingShowEntry]:
-    """Order Upcoming Shows. `airdate_*` keys against `show.premiered`.
-    Default `airdate_asc`."""
+    """Order Upcoming Shows. `airdate_*` keys against `show.premiered`. Null
+    `premiere_date` (TBA) sorts last in both directions. Default `airdate_asc`."""
     if sort == "airdate_desc":
         return sorted(
             entries,
+            # Null premiere → date.min so it lands last under reverse=True.
             key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
             reverse=True,
         )
@@ -358,9 +362,10 @@ def sort_upcoming_shows(
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
     if sort == "name_desc":
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    # airdate_asc: null premiere → date.max so TBA rows land last.
     return sorted(
         entries,
-        key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+        key=lambda e: (e.premiere_date or date.max, show_name_sort_key(e.show.name)),
     )
 
 
@@ -448,6 +453,16 @@ async def list_upcoming_seasons(
     seasons = await season_repo.unaired_for_shows(db, show_ids, today_d)
     if not seasons:
         return []
+
+    # Collapse to one row per show: the next upcoming season (lowest season
+    # number among unaired). A show with seasons 6 and 7 unaired surfaces
+    # only season 6.
+    next_by_show: dict[int, Season] = {}
+    for season in seasons:
+        existing = next_by_show.get(season.show_id)
+        if existing is None or season.number < existing.number:
+            next_by_show[season.show_id] = season
+    seasons = list(next_by_show.values())
 
     shows = list(shows_by_id.values())
     genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)

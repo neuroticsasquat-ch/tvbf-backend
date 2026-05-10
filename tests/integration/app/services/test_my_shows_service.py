@@ -584,6 +584,30 @@ async def test_upcoming_seasons_returns_unaired_season(session, make_user):
 
 
 @pytest.mark.asyncio
+async def test_upcoming_seasons_collapses_to_next_per_show(session, make_user):
+    """A show with multiple unaired seasons surfaces only the lowest-numbered
+    one (the next upcoming season)."""
+    user = await make_user()
+    today = date.today()
+    show = Show(id=920015, name="Slow Horses", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    # Seasons 6 and 7 both unaired; only 6 should appear.
+    session.add(
+        Season(id=92001506, show_id=show.id, number=6, premiere_date=today + timedelta(days=30))
+    )
+    session.add(
+        Season(id=92001507, show_id=show.id, number=7, premiere_date=today + timedelta(days=400))
+    )
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming_seasons(session, user_id=user.id)
+    assert [(r.show.id, r.season_number) for r in rows] == [(show.id, 6)]
+
+
+@pytest.mark.asyncio
 async def test_upcoming_seasons_includes_season_with_no_episodes(session, make_user):
     """A season that has no episode rows at all still appears (data may not
     yet be populated)."""
