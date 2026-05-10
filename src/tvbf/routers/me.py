@@ -15,6 +15,8 @@ from tvbf.app.schemas import (
     MyShowsSort,
     SeasonProgress,
     UpcomingEntry,
+    UpcomingSeasonEntry,
+    UpcomingShowEntry,
     UpcomingSort,
     WatchedEntry,
     WatchedSort,
@@ -133,6 +135,26 @@ async def upcoming_route(
     db: AsyncSession = Depends(get_session),
 ) -> list[UpcomingEntry]:
     return await my_shows_service.list_upcoming(db, user_id=user.id, sort=sort, today=today)
+
+
+@router.get("/me/upcoming/seasons", response_model=list[UpcomingSeasonEntry])
+async def upcoming_seasons_route(
+    sort: Annotated[UpcomingSort, Query()] = "airdate_asc",
+    today: Annotated[date | None, Query()] = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[UpcomingSeasonEntry]:
+    return await my_shows_service.list_upcoming_seasons(db, user_id=user.id, sort=sort, today=today)
+
+
+@router.get("/me/upcoming/shows", response_model=list[UpcomingShowEntry])
+async def upcoming_shows_route(
+    sort: Annotated[UpcomingSort, Query()] = "airdate_asc",
+    today: Annotated[date | None, Query()] = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> list[UpcomingShowEntry]:
+    return await my_shows_service.list_upcoming_shows(db, user_id=user.id, sort=sort, today=today)
 
 
 @router.get("/me/watched", response_model=list[WatchedEntry])

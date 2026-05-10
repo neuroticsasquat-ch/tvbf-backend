@@ -88,6 +88,20 @@ class UpcomingEntry(BaseModel):
     added_at: datetime | None = None
 
 
+class UpcomingSeasonEntry(BaseModel):
+    show: ShowSummary
+    season_number: int
+    season_name: str | None = None
+    premiere_date: date | None = None
+    added_at: datetime | None = None
+
+
+class UpcomingShowEntry(BaseModel):
+    show: ShowSummary
+    premiere_date: date | None = None
+    added_at: datetime | None = None
+
+
 class EpisodeWatchOut(BaseModel):
     episode_id: int
     watched_at: datetime
