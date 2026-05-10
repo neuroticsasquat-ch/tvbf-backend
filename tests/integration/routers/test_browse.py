@@ -40,6 +40,12 @@ async def test_get_genres_returns_flat_sorted_list(client):
     assert all("id" in g and "name" in g for g in body)
 
 
+async def test_browse_responses_set_private_cache_control(client):
+    """Browse is auth-gated; shared caches must not fan out responses (NEU-93)."""
+    r = await client.get("/genres")
+    assert r.headers.get("cache-control") == "private, max-age=300"
+
+
 async def test_get_networks_returns_flat_sorted_list(client):
     r = await client.get("/networks")
     assert r.status_code == 200
