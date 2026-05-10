@@ -5,11 +5,19 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import NotFound
-from tvbf.app.repos import episode_repo, episode_watch_repo, show_membership_repo, show_repo
+from tvbf.app.repos import (
+    episode_repo,
+    episode_watch_repo,
+    season_repo,
+    show_membership_repo,
+    show_repo,
+)
 from tvbf.app.schemas import (
     MyShowEntry,
     MyShowsSort,
     UpcomingEntry,
+    UpcomingSeasonEntry,
+    UpcomingShowEntry,
     UpcomingSort,
     WatchedEntry,
     WatchedSort,
@@ -302,6 +310,60 @@ async def list_watch_next(
     return sort_watch_next(entries, sort)
 
 
+def sort_upcoming_seasons(
+    entries: list[UpcomingSeasonEntry], sort: UpcomingSort
+) -> list[UpcomingSeasonEntry]:
+    """Order Upcoming Seasons. Mirrors `sort_upcoming` but keys against the
+    season's premiere_date for the airdate sorts. Default `airdate_asc`."""
+    if sort == "airdate_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "added_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.added_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "name_asc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
+    if sort == "name_desc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    return sorted(
+        entries,
+        key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+    )
+
+
+def sort_upcoming_shows(
+    entries: list[UpcomingShowEntry], sort: UpcomingSort
+) -> list[UpcomingShowEntry]:
+    """Order Upcoming Shows. `airdate_*` keys against `show.premiered`.
+    Default `airdate_asc`."""
+    if sort == "airdate_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "added_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.added_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "name_asc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
+    if sort == "name_desc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    return sorted(
+        entries,
+        key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+    )
+
+
 async def list_upcoming(
     db: AsyncSession,
     *,
@@ -362,6 +424,97 @@ async def list_upcoming(
         )
 
     return sort_upcoming(entries, sort)
+
+
+async def list_upcoming_seasons(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    sort: UpcomingSort = "airdate_asc",
+    today: date | None = None,
+) -> list[UpcomingSeasonEntry]:
+    """One row per (My Shows show, unaired season). A season is unaired when
+    no episode in it has aired by `today` (including seasons with no episodes
+    at all). Rows are emitted even when premiere_date is null."""
+    today_d = today if today is not None else date.today()
+    pairs = await show_membership_repo.list_with_added_at(db, user_id)
+    if not pairs:
+        return []
+
+    shows_by_id: dict[int, Show] = {show.id: show for show, _ in pairs}
+    added_at_by_show = {show.id: added for show, added in pairs}
+    show_ids = list(shows_by_id.keys())
+
+    seasons = await season_repo.unaired_for_shows(db, show_ids, today_d)
+    if not seasons:
+        return []
+
+    shows = list(shows_by_id.values())
+    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+
+    entries: list[UpcomingSeasonEntry] = []
+    for season in seasons:
+        show = shows_by_id.get(season.show_id)
+        if show is None:  # pragma: no cover  -- defensive: FK guarantees presence
+            continue
+        entries.append(
+            UpcomingSeasonEntry(
+                show=build_show_summary_from_refs(
+                    show,
+                    genres_by_show=genres_by_show,
+                    networks_by_id=networks_by_id,
+                    wcs_by_id=wcs_by_id,
+                ),
+                season_number=season.number,
+                season_name=season.name,
+                premiere_date=season.premiere_date,
+                added_at=added_at_by_show.get(season.show_id),
+            )
+        )
+
+    return sort_upcoming_seasons(entries, sort)
+
+
+async def list_upcoming_shows(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    sort: UpcomingSort = "airdate_asc",
+    today: date | None = None,
+) -> list[UpcomingShowEntry]:
+    """One row per My Shows show that has no aired episodes anywhere yet —
+    typically in-development or TBD. Rows are emitted even when the show has
+    no premiere date and no scheduled episodes."""
+    today_d = today if today is not None else date.today()
+    pairs = await show_membership_repo.list_with_added_at(db, user_id)
+    if not pairs:
+        return []
+
+    show_ids = [show.id for show, _ in pairs]
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
+
+    unaired_shows = [show for show, _ in pairs if aired_counts.get(show.id, 0) == 0]
+    if not unaired_shows:
+        return []
+
+    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, unaired_shows)
+    added_at_by_show = {show.id: added for show, added in pairs}
+
+    entries: list[UpcomingShowEntry] = [
+        UpcomingShowEntry(
+            show=build_show_summary_from_refs(
+                show,
+                genres_by_show=genres_by_show,
+                networks_by_id=networks_by_id,
+                wcs_by_id=wcs_by_id,
+            ),
+            premiere_date=show.premiered,
+            added_at=added_at_by_show.get(show.id),
+        )
+        for show in unaired_shows
+    ]
+
+    return sort_upcoming_shows(entries, sort)
 
 
 # ---------------------------------------------------------------------------
