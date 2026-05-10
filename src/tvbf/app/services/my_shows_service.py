@@ -182,6 +182,9 @@ async def list_my_shows(
     last_watched = await episode_watch_repo.latest_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
+    first_watched = await episode_watch_repo.first_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
 
     next_eps_by_show: dict[int, object] = {}
     for show in shows:
@@ -212,6 +215,7 @@ async def list_my_shows(
                 upcoming_episode_count=total - aired,
                 last_aired=latest_aired.get(show.id),
                 last_watched_at=last_watched.get(show.id),
+                first_watched_at=first_watched.get(show.id),
                 next_episode=(
                     _episode_to_out(
                         next_ep,

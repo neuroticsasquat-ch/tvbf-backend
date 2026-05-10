@@ -63,6 +63,7 @@ class MyShowEntry(BaseModel):
     upcoming_episode_count: int = 0
     last_aired: date | None = None
     last_watched_at: datetime | None = None
+    first_watched_at: datetime | None = None
     next_episode: EpisodeOut | None = None
     added_at: datetime
 
