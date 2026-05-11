@@ -354,6 +354,20 @@ async def test_upcoming_route_returns_list(session, make_user):
 
 
 @pytest.mark.asyncio
+async def test_upcoming_seasons_route_returns_list(session, make_user):
+    user = await make_user(email="ups-rt@example.com")
+    out = await me_router.upcoming_seasons_route(sort="airdate_asc", user=user, db=session)
+    assert out == []
+
+
+@pytest.mark.asyncio
+async def test_upcoming_shows_route_returns_list(session, make_user):
+    user = await make_user(email="upsh-rt@example.com")
+    out = await me_router.upcoming_shows_route(sort="airdate_asc", user=user, db=session)
+    assert out == []
+
+
+@pytest.mark.asyncio
 async def test_list_watched_episodes_route_returns_list(session, make_user):
     user = await make_user(email="wep-rt@example.com")
     show = await _seed_show(session, show_id=940003)

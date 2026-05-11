@@ -11,6 +11,16 @@ WatchNextSort = Literal[
     "airdate_desc", "unwatched_airdate_desc", "airdate_asc", "name_asc", "name_desc"
 ]
 UpcomingSort = Literal["airdate_asc", "airdate_desc", "added_desc", "name_asc", "name_desc"]
+WatchedSort = Literal[
+    "name_asc",
+    "last_watched_desc",
+    "last_aired_desc",
+    "premiered_asc",
+    "premiered_desc",
+    "first_watched_desc",
+]
+WatchedStatusFilter = Literal["all", "finished", "in_progress"]
+WatchedStatus = Literal["finished", "in_progress"]
 
 
 class SignupRequest(BaseModel):
@@ -53,6 +63,7 @@ class MyShowEntry(BaseModel):
     upcoming_episode_count: int = 0
     last_aired: date | None = None
     last_watched_at: datetime | None = None
+    first_watched_at: datetime | None = None
     next_episode: EpisodeOut | None = None
     added_at: datetime
 
@@ -77,9 +88,35 @@ class UpcomingEntry(BaseModel):
     added_at: datetime | None = None
 
 
+class UpcomingSeasonEntry(BaseModel):
+    show: ShowSummary
+    season_number: int
+    season_name: str | None = None
+    premiere_date: date | None = None
+    added_at: datetime | None = None
+
+
+class UpcomingShowEntry(BaseModel):
+    show: ShowSummary
+    premiere_date: date | None = None
+    added_at: datetime | None = None
+
+
 class EpisodeWatchOut(BaseModel):
     episode_id: int
     watched_at: datetime
+
+
+class WatchedEntry(BaseModel):
+    show: ShowSummary
+    watched_episode_count: int
+    aired_episode_count: int
+    total_episode_count: int
+    last_watched_at: datetime | None = None
+    last_aired: date | None = None
+    first_watched_at: datetime | None = None
+    in_my_shows: bool
+    status: WatchedStatus
 
 
 class BulkSeasonResult(BaseModel):
@@ -102,3 +139,49 @@ class InviteOut(BaseModel):
     created_at: datetime
     consumed_at: datetime | None
     consumed_by_user_id: UUID | None
+
+
+ConnectionState = Literal["pending", "accepted", "blocked"]
+
+
+class UserBrief(BaseModel):
+    id: UUID
+    display_name: str
+
+
+class UserSearchResult(BaseModel):
+    id: UUID
+    display_name: str
+
+
+class ConnectionRequestCreate(BaseModel):
+    addressee_id: UUID
+
+
+class ConnectionRequestOut(BaseModel):
+    id: UUID
+    requester: UserBrief
+    addressee: UserBrief
+    state: ConnectionState
+    created_at: datetime
+    responded_at: datetime | None
+
+
+class ConnectionRequestList(BaseModel):
+    incoming: list[ConnectionRequestOut]
+    outgoing: list[ConnectionRequestOut]
+
+
+class ConnectionOut(BaseModel):
+    user: UserBrief
+    since: datetime
+
+
+class BlockedUserOut(BaseModel):
+    user: UserBrief
+    blocked_at: datetime
+
+
+class ShowFriendActivity(BaseModel):
+    in_my_shows: list[UserBrief]
+    watched: list[UserBrief]

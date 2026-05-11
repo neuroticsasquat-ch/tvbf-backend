@@ -61,6 +61,26 @@ tasks:
     cmds:
       - "{{.EXEC}} alembic revision --autogenerate -m \"{{.CLI_ARGS}}\""
 
+  db:refresh:
+    desc: 'Refresh local tvbf with prod tvmaze schema (preserves local app data)'
+    cmds:
+      - 'scripts/refresh_db.sh tvmaze'
+
+  db:refresh:app:
+    desc: 'Refresh local tvbf with prod app schema (anonymizes by default; ANONYMIZE=0 to opt out)'
+    cmds:
+      - 'scripts/refresh_db.sh app'
+
+  db:refresh:both:
+    desc: 'Refresh local tvbf with both prod schemas (anonymizes app by default; ANONYMIZE=0 to opt out)'
+    cmds:
+      - 'scripts/refresh_db.sh both'
+
+  db:set-password:
+    desc: 'Reset a local user password (task db:set-password -- email [password], default: localdev)'
+    cmds:
+      - 'scripts/set_password.sh {{.CLI_ARGS}}'
+
   test:
     desc: Run the pytest suite inside the container
     cmds:

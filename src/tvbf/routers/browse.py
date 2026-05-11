@@ -1,6 +1,6 @@
 import math
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.deps import get_current_user, get_session
@@ -20,9 +20,20 @@ from tvbf.tvmaze.schemas import (
     build_show_summary,
 )
 
+
+def _set_browse_cache(response: Response) -> None:
+    """Browse responses are user-gated (cookie session). Use `private` so
+    shared caches (CDN, corporate proxies) aren't authorized to fan out the
+    response across users; the requesting browser still caches for max-age."""
+    response.headers["Cache-Control"] = "private, max-age=300"
+
+
 # Browse is gated behind the session cookie — invite-only beta means even the
 # catalog isn't public.
-router = APIRouter(tags=["browse"], dependencies=[Depends(get_current_user)])
+router = APIRouter(
+    tags=["browse"],
+    dependencies=[Depends(get_current_user), Depends(_set_browse_cache)],
+)
 
 
 @router.get("/genres", response_model=list[GenreOut])
