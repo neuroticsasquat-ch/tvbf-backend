@@ -90,6 +90,10 @@ class EpisodeOut(BaseModel):
     summary: str | None = None
     image_medium: str | None = None
     image_original: str | None = None
+    # Per-user watched flag. Populated by `/me/*` list endpoints so list rows
+    # can render the watch checkbox without a per-show round trip. Null on
+    # endpoints that have no user context (catalog browse).
+    watched: bool | None = None
 
 
 class ShowSummary(BaseModel):

@@ -3,19 +3,30 @@ from uuid import UUID
 
 from sqlalchemy import (  # noqa: I001
     BigInteger,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     PrimaryKeyConstraint,
     Text,
+    func,
     text,
 )
 from sqlalchemy.dialects.postgresql import CITEXT, INET
+from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tvbf.db import Base
+
+connection_state_enum = PGEnum(
+    "pending",
+    "accepted",
+    "blocked",
+    name="connection_state",
+    schema="app",
+)
 
 
 class User(Base):
@@ -140,3 +151,46 @@ class Invite(Base):
         ForeignKey("app.user.id", ondelete="SET NULL"),
         nullable=True,
     )
+
+
+class Connection(Base):
+    __tablename__ = "connection"
+    __table_args__ = (
+        CheckConstraint(
+            "requester_id <> addressee_id",
+            name="ck_connection_not_self",
+        ),
+        Index(
+            "uq_connection_unordered_pair",
+            func.least(text("requester_id"), text("addressee_id")),
+            func.greatest(text("requester_id"), text("addressee_id")),
+            unique=True,
+        ),
+        Index("ix_connection_requester_state", "requester_id", "state"),
+        Index("ix_connection_addressee_state", "addressee_id", "state"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    requester_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    addressee_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    state: Mapped[str] = mapped_column(connection_state_enum, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

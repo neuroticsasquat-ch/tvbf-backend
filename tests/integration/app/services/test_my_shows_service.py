@@ -5,7 +5,7 @@ import pytest
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
 from tvbf.app.repos import episode_repo
 from tvbf.app.services import my_shows_service
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.tvmaze.models import Episode, Season, Show
 
 
 async def _seed_show(
@@ -404,3 +404,309 @@ async def test_list_upcoming_uses_supplied_today_as_lower_bound(session, make_us
 
     rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date(2026, 5, 7))
     assert rows == []
+
+
+# ---------------------------------------------------------------------------
+# NEU-100 Path B: EpisodeOut.watched populated on list endpoints
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_my_shows_next_episode_carries_watched_flag(session, make_user):
+    """The next-episode included in `MyShowEntry` carries `watched=False` so
+    the frontend can render the watch checkbox without a per-show round trip."""
+    user = await make_user(email="me-watched@example.com")
+    show = await _seed_show(session, show_id=910500, episodes=2)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id, today=date.today())
+    assert len(rows) == 1
+    assert rows[0].next_episode is not None
+    assert rows[0].next_episode.watched is False
+
+
+@pytest.mark.asyncio
+async def test_list_watch_next_episode_carries_watched_flag(session, make_user):
+    user = await make_user(email="wn-watched@example.com")
+    show = await _seed_show(session, show_id=910501, episodes=2)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_watch_next(session, user_id=user.id, today=date.today())
+    assert len(rows) >= 1
+    assert all(e.episode.watched is False for e in rows)
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_episode_carries_watched_flag(session, make_user):
+    """Future episodes are unwatched by definition; `watched` is still populated
+    explicitly so the frontend doesn't have to special-case it."""
+    user = await make_user(email="up-watched@example.com")
+    future = date.today() + timedelta(days=1)
+    show = await _seed_show(
+        session,
+        show_id=910502,
+        episodes=1,
+        airdates=[future],
+    )
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming(session, user_id=user.id, today=date.today())
+    assert len(rows) == 1
+    assert rows[0].episode.watched is False
+
+
+# ---------------------------------------------------------------------------
+# NEU-122: first_watched_at on MyShowEntry
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_my_shows_first_watched_at_is_null_when_no_watches(session, make_user):
+    user = await make_user(email="fw-none@example.com")
+    show = await _seed_show(session, show_id=910600, episodes=2)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].first_watched_at is None
+
+
+@pytest.mark.asyncio
+async def test_my_shows_first_watched_at_reflects_min_watched_at(session, make_user):
+    from datetime import UTC, datetime, timedelta
+
+    user = await make_user(email="fw-min@example.com")
+    show = await _seed_show(session, show_id=910601, episodes=3)
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    early = datetime.now(UTC) - timedelta(days=30)
+    middle = datetime.now(UTC) - timedelta(days=15)
+    later = datetime.now(UTC) - timedelta(days=2)
+    # Insert out of chronological order to confirm MIN is used, not first-row.
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 2, watched_at=middle))
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 1, watched_at=early))
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 3, watched_at=later))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].first_watched_at is not None
+    assert abs((rows[0].first_watched_at - early).total_seconds()) < 1
+
+
+@pytest.mark.asyncio
+async def test_my_shows_first_watched_at_is_independent_of_added_at(session, make_user):
+    """A show added recently can have an older first_watched_at if the user
+    already had old watch records (e.g., they unfollowed and refollowed)."""
+    from datetime import UTC, datetime, timedelta
+
+    user = await make_user(email="fw-old@example.com")
+    show = await _seed_show(session, show_id=910602, episodes=1)
+    long_ago = datetime.now(UTC) - timedelta(days=365)
+    session.add(
+        UserEpisodeWatch(user_id=user.id, episode_id=show.id * 100 + 1, watched_at=long_ago)
+    )
+    # Add to My Shows after the watch records exist.
+    session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    rows = await my_shows_service.list_my_shows(session, user_id=user.id)
+    assert len(rows) == 1
+    assert rows[0].first_watched_at is not None
+    assert abs((rows[0].first_watched_at - long_ago).total_seconds()) < 1
+    # added_at is "now-ish", much more recent than first_watched_at.
+    assert rows[0].added_at > rows[0].first_watched_at
+
+
+# ---------------------------------------------------------------------------
+# /me/upcoming/seasons + /me/upcoming/shows (NEU-135)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_seasons_empty_for_user_with_no_memberships(session, make_user):
+    user = await make_user()
+    await session.commit()
+    assert await my_shows_service.list_upcoming_seasons(session, user_id=user.id) == []
+
+
+@pytest.mark.asyncio
+async def test_upcoming_seasons_returns_unaired_season(session, make_user):
+    """A season whose episodes haven't aired yet appears in the list."""
+    user = await make_user()
+    today = date.today()
+    show = Show(id=920010, name="Show", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    s1 = Season(id=92001001, show_id=show.id, number=1, premiere_date=today - timedelta(days=30))
+    s2 = Season(
+        id=92001002,
+        show_id=show.id,
+        number=2,
+        name="Block 2",
+        premiere_date=today + timedelta(days=10),
+    )
+    session.add(s1)
+    session.add(s2)
+    await session.flush()
+    # s1 has aired episodes, s2 hasn't (one future episode).
+    session.add(
+        Episode(
+            id=92001011,
+            show_id=show.id,
+            season_id=s1.id,
+            season=1,
+            number=1,
+            airdate=today - timedelta(days=20),
+        )
+    )
+    session.add(
+        Episode(
+            id=92001021,
+            show_id=show.id,
+            season_id=s2.id,
+            season=2,
+            number=1,
+            airdate=today + timedelta(days=10),
+        )
+    )
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming_seasons(session, user_id=user.id)
+    assert [(r.show.id, r.season_number) for r in rows] == [(show.id, 2)]
+    assert rows[0].season_name == "Block 2"
+    assert rows[0].premiere_date == today + timedelta(days=10)
+
+
+@pytest.mark.asyncio
+async def test_upcoming_seasons_collapses_to_next_per_show(session, make_user):
+    """A show with multiple unaired seasons surfaces only the lowest-numbered
+    one (the next upcoming season)."""
+    user = await make_user()
+    today = date.today()
+    show = Show(id=920015, name="Slow Horses", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    # Seasons 6 and 7 both unaired; only 6 should appear.
+    session.add(
+        Season(id=92001506, show_id=show.id, number=6, premiere_date=today + timedelta(days=30))
+    )
+    session.add(
+        Season(id=92001507, show_id=show.id, number=7, premiere_date=today + timedelta(days=400))
+    )
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming_seasons(session, user_id=user.id)
+    assert [(r.show.id, r.season_number) for r in rows] == [(show.id, 6)]
+
+
+@pytest.mark.asyncio
+async def test_upcoming_seasons_includes_season_with_no_episodes(session, make_user):
+    """A season that has no episode rows at all still appears (data may not
+    yet be populated)."""
+    user = await make_user()
+    show = Show(id=920020, name="Bare", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    session.add(Season(id=92002001, show_id=show.id, number=1))
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming_seasons(session, user_id=user.id)
+    assert [(r.show.id, r.season_number) for r in rows] == [(show.id, 1)]
+    assert rows[0].premiere_date is None
+    assert rows[0].season_name is None
+
+
+@pytest.mark.asyncio
+async def test_upcoming_seasons_excludes_non_my_shows(session, make_user):
+    user = await make_user()
+    today = date.today()
+    show = Show(id=920030, name="NotMine", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    session.add(
+        Season(id=92003001, show_id=show.id, number=1, premiere_date=today + timedelta(days=5))
+    )
+    await session.flush()
+    await session.commit()
+    # User did NOT add this show.
+
+    rows = await my_shows_service.list_upcoming_seasons(session, user_id=user.id)
+    assert rows == []
+
+
+@pytest.mark.asyncio
+async def test_list_upcoming_shows_returns_show_with_no_aired_episodes(session, make_user):
+    user = await make_user()
+    show = Show(
+        id=920040,
+        name="InDev",
+        tvmaze_updated=1,
+        status="In Development",
+        premiered=date.today() + timedelta(days=60),
+    )
+    session.add(show)
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming_shows(session, user_id=user.id)
+    assert [r.show.id for r in rows] == [show.id]
+    assert rows[0].premiere_date == date.today() + timedelta(days=60)
+
+
+@pytest.mark.asyncio
+async def test_upcoming_shows_excludes_show_with_any_aired_episode(session, make_user):
+    user = await make_user()
+    today = date.today()
+    show = Show(id=920050, name="Aired", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    session.add(
+        Episode(id=92005001, show_id=show.id, season=1, number=1, airdate=today - timedelta(days=5))
+    )
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    assert await my_shows_service.list_upcoming_shows(session, user_id=user.id) == []
+
+
+@pytest.mark.asyncio
+async def test_upcoming_shows_includes_show_with_null_premiere_and_no_episodes(session, make_user):
+    """Show in My Shows with no premiere_date and no episodes still appears."""
+    user = await make_user()
+    show = Show(id=920060, name="Bare", tvmaze_updated=1)
+    session.add(show)
+    await session.flush()
+    await my_shows_service.add(session, user_id=user.id, show_id=show.id)
+    await session.commit()
+
+    rows = await my_shows_service.list_upcoming_shows(session, user_id=user.id)
+    assert [r.show.id for r in rows] == [show.id]
+    assert rows[0].premiere_date is None
+
+
+@pytest.mark.asyncio
+async def test_upcoming_shows_excludes_non_my_shows(session, make_user):
+    user = await make_user()
+    show = Show(
+        id=920070,
+        name="Stranger",
+        tvmaze_updated=1,
+        premiered=date.today() + timedelta(days=10),
+    )
+    session.add(show)
+    await session.flush()
+    await session.commit()
+
+    assert await my_shows_service.list_upcoming_shows(session, user_id=user.id) == []

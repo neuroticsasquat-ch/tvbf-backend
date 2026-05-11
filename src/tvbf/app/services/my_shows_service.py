@@ -5,23 +5,37 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import NotFound
-from tvbf.app.repos import episode_repo, episode_watch_repo, show_membership_repo, show_repo
+from tvbf.app.repos import (
+    episode_repo,
+    episode_watch_repo,
+    season_repo,
+    show_membership_repo,
+    show_repo,
+)
 from tvbf.app.schemas import (
     MyShowEntry,
     MyShowsSort,
     UpcomingEntry,
+    UpcomingSeasonEntry,
+    UpcomingShowEntry,
     UpcomingSort,
+    WatchedEntry,
+    WatchedSort,
+    WatchedStatusFilter,
     WatchNextEntry,
     WatchNextSort,
 )
 from tvbf.sorting import show_name_sort_key
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
-from tvbf.tvmaze.models import Show
+from tvbf.tvmaze.models import Season, Show
 from tvbf.tvmaze.schemas import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
 
 
-def _episode_to_out(ep: object) -> EpisodeOut:
-    return EpisodeOut.model_validate(ep, from_attributes=True)
+def _episode_to_out(ep: object, *, watched: bool | None = None) -> EpisodeOut:
+    out = EpisodeOut.model_validate(ep, from_attributes=True)
+    if watched is not None:
+        out = out.model_copy(update={"watched": watched})
+    return out
 
 
 def build_show_summary_from_refs(
@@ -176,10 +190,23 @@ async def list_my_shows(
     last_watched = await episode_watch_repo.latest_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
+    first_watched = await episode_watch_repo.first_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+
+    next_eps_by_show: dict[int, object] = {}
+    for show in shows:
+        next_ep = await episode_repo.next_unwatched(db, user_id=user_id, show_id=show.id)
+        if next_ep is not None:
+            next_eps_by_show[show.id] = next_ep
+    next_ep_ids = {ep.id for ep in next_eps_by_show.values()}  # type: ignore[attr-defined]
+    watched_next_ids = await episode_watch_repo.watched_in(
+        db, user_id=user_id, episode_ids=next_ep_ids
+    )
 
     entries: list[MyShowEntry] = []
     for show in shows:
-        next_ep = await episode_repo.next_unwatched(db, user_id=user_id, show_id=show.id)
+        next_ep = next_eps_by_show.get(show.id)
         total = total_counts.get(show.id, 0)
         aired = aired_counts.get(show.id, 0)
         entries.append(
@@ -196,7 +223,15 @@ async def list_my_shows(
                 upcoming_episode_count=total - aired,
                 last_aired=latest_aired.get(show.id),
                 last_watched_at=last_watched.get(show.id),
-                next_episode=_episode_to_out(next_ep) if next_ep is not None else None,
+                first_watched_at=first_watched.get(show.id),
+                next_episode=(
+                    _episode_to_out(
+                        next_ep,
+                        watched=next_ep.id in watched_next_ids,  # type: ignore[attr-defined]
+                    )
+                    if next_ep is not None
+                    else None
+                ),
                 added_at=added_at_by_show[show.id],
             )
         )
@@ -243,6 +278,10 @@ async def list_watch_next(
         db, user_id=user_id, show_ids=show_ids
     )
 
+    watched_ep_ids = await episode_watch_repo.watched_in(
+        db, user_id=user_id, episode_ids=[ep.id for ep in episodes]
+    )
+
     entries: list[WatchNextEntry] = []
     for ep in episodes:
         show = shows_by_id.get(ep.show_id)
@@ -256,7 +295,7 @@ async def list_watch_next(
                     networks_by_id=networks_by_id,
                     wcs_by_id=wcs_by_id,
                 ),
-                episode=_episode_to_out(ep),
+                episode=_episode_to_out(ep, watched=ep.id in watched_ep_ids),
                 last_watched_at=last_watched.get(ep.show_id),
                 last_aired=last_aired.get(ep.show_id),
                 watched_episode_count=watched_counts.get(ep.show_id, 0),
@@ -269,6 +308,65 @@ async def list_watch_next(
         )
 
     return sort_watch_next(entries, sort)
+
+
+def sort_upcoming_seasons(
+    entries: list[UpcomingSeasonEntry], sort: UpcomingSort
+) -> list[UpcomingSeasonEntry]:
+    """Order Upcoming Seasons. Mirrors `sort_upcoming` but keys against the
+    season's premiere_date for the airdate sorts. Null `premiere_date` (TBA)
+    sorts last in both directions. Default `airdate_asc`."""
+    if sort == "airdate_desc":
+        return sorted(
+            entries,
+            # Null premiere → date.min so it lands last under reverse=True.
+            key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "added_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.added_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "name_asc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
+    if sort == "name_desc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    # airdate_asc: null premiere → date.max so TBA rows land last.
+    return sorted(
+        entries,
+        key=lambda e: (e.premiere_date or date.max, show_name_sort_key(e.show.name)),
+    )
+
+
+def sort_upcoming_shows(
+    entries: list[UpcomingShowEntry], sort: UpcomingSort
+) -> list[UpcomingShowEntry]:
+    """Order Upcoming Shows. `airdate_*` keys against `show.premiered`. Null
+    `premiere_date` (TBA) sorts last in both directions. Default `airdate_asc`."""
+    if sort == "airdate_desc":
+        return sorted(
+            entries,
+            # Null premiere → date.min so it lands last under reverse=True.
+            key=lambda e: (e.premiere_date or date.min, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "added_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.added_at or _EPOCH_DT, show_name_sort_key(e.show.name)),
+            reverse=True,
+        )
+    if sort == "name_asc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name))
+    if sort == "name_desc":
+        return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
+    # airdate_asc: null premiere → date.max so TBA rows land last.
+    return sorted(
+        entries,
+        key=lambda e: (e.premiere_date or date.max, show_name_sort_key(e.show.name)),
+    )
 
 
 async def list_upcoming(
@@ -303,6 +401,10 @@ async def list_upcoming(
         show.id: added for show, added in await show_membership_repo.list_with_added_at(db, user_id)
     }
 
+    watched_ep_ids = await episode_watch_repo.watched_in(
+        db, user_id=user_id, episode_ids=[ep.id for ep in episodes]
+    )
+
     entries: list[UpcomingEntry] = []
     for ep in episodes:
         show = shows_by_id.get(ep.show_id)
@@ -316,7 +418,7 @@ async def list_upcoming(
                     networks_by_id=networks_by_id,
                     wcs_by_id=wcs_by_id,
                 ),
-                episode=_episode_to_out(ep),
+                episode=_episode_to_out(ep, watched=ep.id in watched_ep_ids),
                 watched_episode_count=watched_counts.get(ep.show_id, 0),
                 aired_episode_count=aired_counts.get(ep.show_id, 0),
                 upcoming_episode_count=(
@@ -327,3 +429,217 @@ async def list_upcoming(
         )
 
     return sort_upcoming(entries, sort)
+
+
+async def list_upcoming_seasons(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    sort: UpcomingSort = "airdate_asc",
+    today: date | None = None,
+) -> list[UpcomingSeasonEntry]:
+    """One row per (My Shows show, unaired season). A season is unaired when
+    no episode in it has aired by `today` (including seasons with no episodes
+    at all). Rows are emitted even when premiere_date is null."""
+    today_d = today if today is not None else date.today()
+    pairs = await show_membership_repo.list_with_added_at(db, user_id)
+    if not pairs:
+        return []
+
+    shows_by_id: dict[int, Show] = {show.id: show for show, _ in pairs}
+    added_at_by_show = {show.id: added for show, added in pairs}
+    show_ids = list(shows_by_id.keys())
+
+    seasons = await season_repo.unaired_for_shows(db, show_ids, today_d)
+    if not seasons:
+        return []
+
+    # Collapse to one row per show: the next upcoming season (lowest season
+    # number among unaired). A show with seasons 6 and 7 unaired surfaces
+    # only season 6.
+    next_by_show: dict[int, Season] = {}
+    for season in seasons:
+        existing = next_by_show.get(season.show_id)
+        if existing is None or season.number < existing.number:
+            next_by_show[season.show_id] = season
+    seasons = list(next_by_show.values())
+
+    shows = list(shows_by_id.values())
+    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+
+    entries: list[UpcomingSeasonEntry] = []
+    for season in seasons:
+        show = shows_by_id.get(season.show_id)
+        if show is None:  # pragma: no cover  -- defensive: FK guarantees presence
+            continue
+        entries.append(
+            UpcomingSeasonEntry(
+                show=build_show_summary_from_refs(
+                    show,
+                    genres_by_show=genres_by_show,
+                    networks_by_id=networks_by_id,
+                    wcs_by_id=wcs_by_id,
+                ),
+                season_number=season.number,
+                season_name=season.name,
+                premiere_date=season.premiere_date,
+                added_at=added_at_by_show.get(season.show_id),
+            )
+        )
+
+    return sort_upcoming_seasons(entries, sort)
+
+
+async def list_upcoming_shows(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    sort: UpcomingSort = "airdate_asc",
+    today: date | None = None,
+) -> list[UpcomingShowEntry]:
+    """One row per My Shows show that has no aired episodes anywhere yet —
+    typically in-development or TBD. Rows are emitted even when the show has
+    no premiere date and no scheduled episodes."""
+    today_d = today if today is not None else date.today()
+    pairs = await show_membership_repo.list_with_added_at(db, user_id)
+    if not pairs:
+        return []
+
+    show_ids = [show.id for show, _ in pairs]
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
+
+    unaired_shows = [show for show, _ in pairs if aired_counts.get(show.id, 0) == 0]
+    if not unaired_shows:
+        return []
+
+    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, unaired_shows)
+    added_at_by_show = {show.id: added for show, added in pairs}
+
+    entries: list[UpcomingShowEntry] = [
+        UpcomingShowEntry(
+            show=build_show_summary_from_refs(
+                show,
+                genres_by_show=genres_by_show,
+                networks_by_id=networks_by_id,
+                wcs_by_id=wcs_by_id,
+            ),
+            premiere_date=show.premiered,
+            added_at=added_at_by_show.get(show.id),
+        )
+        for show in unaired_shows
+    ]
+
+    return sort_upcoming_shows(entries, sort)
+
+
+# ---------------------------------------------------------------------------
+# Watch history (NEU-102)
+# ---------------------------------------------------------------------------
+
+
+def sort_watched(entries: list[WatchedEntry], sort: WatchedSort) -> list[WatchedEntry]:
+    """Order Watched entries. Mirrors the six sort options Active offers so the
+    two views feel consistent. Tiebreaker is name asc (article-stripped) on all
+    sorts. Nulls fall to the bottom on every sort."""
+    name = lambda e: show_name_sort_key(e.show.name)  # noqa: E731
+    if sort == "name_asc":
+        return sorted(entries, key=name)
+    if sort == "last_aired_desc":
+        return sorted(entries, key=lambda e: (e.last_aired or _EPOCH, name(e)), reverse=True)
+    if sort == "premiered_asc":
+        # Null premiered → falls to bottom in ascending order via date.max.
+        return sorted(entries, key=lambda e: (e.show.premiered or date.max, name(e)))
+    if sort == "premiered_desc":
+        return sorted(entries, key=lambda e: (e.show.premiered or _EPOCH, name(e)), reverse=True)
+    if sort == "first_watched_desc":
+        return sorted(
+            entries,
+            key=lambda e: (e.first_watched_at or _EPOCH_DT, name(e)),
+            reverse=True,
+        )
+    # last_watched_desc — default
+    return sorted(
+        entries,
+        key=lambda e: (e.last_watched_at or _EPOCH_DT, name(e)),
+        reverse=True,
+    )
+
+
+async def list_watched(
+    db: AsyncSession,
+    *,
+    user_id: UUID,
+    status: WatchedStatusFilter = "all",
+    sort: WatchedSort = "last_watched_desc",
+    today: date | None = None,
+) -> list[WatchedEntry]:
+    """Every show with ≥1 watched episode for the user, regardless of My Shows
+    membership. `finished` requires the show to be `Ended` AND fully caught up;
+    everything else with ≥1 watch is `in_progress`."""
+    today_d = today if today is not None else date.today()
+
+    show_ids = await episode_watch_repo.list_show_ids_with_watches(db, user_id=user_id)
+    if not show_ids:
+        return []
+
+    shows: list[Show] = []
+    for sid in show_ids:
+        show = await show_repo.get_by_id(db, sid)
+        if show is not None:
+            shows.append(show)
+    if not shows:
+        return []
+    show_ids = [s.id for s in shows]
+
+    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    total_counts = await episode_repo.count_per_show(db, show_ids)
+    aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
+    watched_counts = await episode_watch_repo.count_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    last_watched = await episode_watch_repo.latest_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    last_aired_by_show = await episode_repo.latest_aired_per_show(db, show_ids, today_d)
+    first_watched = await episode_watch_repo.first_watched_per_show(
+        db, user_id=user_id, show_ids=show_ids
+    )
+    my_shows_pairs = await show_membership_repo.list_with_added_at(db, user_id)
+    my_shows_ids = {show.id for show, _added in my_shows_pairs}
+
+    entries: list[WatchedEntry] = []
+    for show in shows:
+        watched = watched_counts.get(show.id, 0)
+        if watched == 0:
+            continue
+        aired = aired_counts.get(show.id, 0)
+        is_ended = (show.status or "") == "Ended"
+        row_status: str
+        if aired > 0 and watched >= aired and is_ended:
+            row_status = "finished"
+        else:
+            row_status = "in_progress"
+        if status == "finished" and row_status != "finished":
+            continue
+        if status == "in_progress" and row_status != "in_progress":
+            continue
+        entries.append(
+            WatchedEntry(
+                show=build_show_summary_from_refs(
+                    show,
+                    genres_by_show=genres_by_show,
+                    networks_by_id=networks_by_id,
+                    wcs_by_id=wcs_by_id,
+                ),
+                watched_episode_count=watched,
+                aired_episode_count=aired,
+                total_episode_count=total_counts.get(show.id, 0),
+                last_watched_at=last_watched.get(show.id),
+                last_aired=last_aired_by_show.get(show.id),
+                first_watched_at=first_watched.get(show.id),
+                in_my_shows=show.id in my_shows_ids,
+                status=row_status,  # type: ignore[arg-type]
+            )
+        )
+
+    return sort_watched(entries, sort)
