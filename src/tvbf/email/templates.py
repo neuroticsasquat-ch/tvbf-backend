@@ -32,6 +32,28 @@ def render_verification_email(*, display_name: str, verify_url: str) -> tuple[st
     return subject, html_body, text
 
 
+def render_password_reset_email(*, display_name: str, reset_url: str) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the password-reset message."""
+    subject = "Reset your TV BingeFriend password"
+    safe_name = html.escape(display_name)
+    safe_url = html.escape(reset_url, quote=True)
+    text = (
+        f"Hi {display_name},\n\n"
+        "Click the link below to set a new password for your TV BingeFriend account:\n"
+        f"{reset_url}\n\n"
+        "This link expires in 1 hour. If you didn't request a password reset,\n"
+        "you can ignore this message — your password will stay the same.\n"
+    )
+    html_body = (
+        f"<p>Hi {safe_name},</p>"
+        "<p>Click the link below to set a new password for your TV BingeFriend account:</p>"
+        f'<p><a href="{safe_url}">{safe_url}</a></p>'
+        "<p>This link expires in 1 hour. If you didn't request a password reset, "
+        "you can ignore this message — your password will stay the same.</p>"
+    )
+    return subject, html_body, text
+
+
 def render_email_change_email(
     *, display_name: str, new_email: str, confirm_url: str
 ) -> tuple[str, str, str]:

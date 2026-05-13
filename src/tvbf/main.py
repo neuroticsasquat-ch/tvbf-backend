@@ -23,6 +23,7 @@ from tvbf.routers import (
     health,
     invites_admin,
     me,
+    password_reset,
     users,
 )
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
@@ -82,6 +83,7 @@ def create_app() -> FastAPI:
     app.include_router(me.router)
     app.include_router(email_verification.router)
     app.include_router(email_change.router)
+    app.include_router(password_reset.router)
     app.include_router(users.router)
     app.include_router(connections.router)
     app.include_router(friend_engagement.router)
