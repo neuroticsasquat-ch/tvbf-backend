@@ -13,7 +13,7 @@ from sqlalchemy import (  # noqa: I001
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import CITEXT, INET
+from sqlalchemy.dialects.postgresql import CITEXT, INET, JSONB
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -31,6 +31,7 @@ connection_state_enum = PGEnum(
 auth_token_purpose_enum = PGEnum(
     "email_verification",
     "password_reset",
+    "email_change",
     name="auth_token_purpose",
     schema="app",
 )
@@ -231,3 +232,4 @@ class AuthToken(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

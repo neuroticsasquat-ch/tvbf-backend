@@ -24,10 +24,12 @@ from tvbf.app.repos import auth_token_repo
 
 PURPOSE_EMAIL_VERIFICATION = "email_verification"
 PURPOSE_PASSWORD_RESET = "password_reset"
+PURPOSE_EMAIL_CHANGE = "email_change"
 
 _TTLS: dict[str, timedelta] = {
     PURPOSE_EMAIL_VERIFICATION: timedelta(hours=24),
     PURPOSE_PASSWORD_RESET: timedelta(hours=1),
+    PURPOSE_EMAIL_CHANGE: timedelta(hours=24),
 }
 
 RATE_LIMIT_PER_MINUTE = 1
@@ -69,10 +71,18 @@ async def can_issue(db: AsyncSession, *, user_id, purpose: str) -> bool:
     return per_hour < RATE_LIMIT_PER_HOUR
 
 
-async def issue(db: AsyncSession, *, user_id, purpose: str) -> IssuedToken:
+async def issue(
+    db: AsyncSession,
+    *,
+    user_id,
+    purpose: str,
+    payload: dict | None = None,
+) -> IssuedToken:
     """Generate a fresh token, store its hash, return the raw value exactly once.
 
-    Callers are responsible for checking `can_issue` first.
+    Callers are responsible for checking `can_issue` first. `payload` is an
+    optional jsonb blob that travels with the token (e.g. the pending new email
+    for the email-change flow).
     """
     raw = secrets.token_urlsafe(32)
     expires_at = _now() + ttl_for(purpose)
@@ -82,6 +92,7 @@ async def issue(db: AsyncSession, *, user_id, purpose: str) -> IssuedToken:
         token_hash=_hash(raw),
         purpose=purpose,
         expires_at=expires_at,
+        payload=payload,
     )
     return IssuedToken(raw_token=raw, token=token)
 
@@ -93,6 +104,15 @@ async def verify_and_consume(db: AsyncSession, *, raw_token: str, purpose: str) 
     already consumed). Raises NotFound if the user behind the token no longer
     exists (cascade should normally prevent this, but we guard anyway).
     """
+    user, _ = await verify_and_consume_with_token(db, raw_token=raw_token, purpose=purpose)
+    return user
+
+
+async def verify_and_consume_with_token(
+    db: AsyncSession, *, raw_token: str, purpose: str
+) -> tuple[User, AuthToken]:
+    """Same checks as `verify_and_consume`, but also returns the AuthToken so
+    callers can read `payload` (used by the email-change flow)."""
     token = await auth_token_repo.find_unconsumed_by_hash(
         db, token_hash=_hash(raw_token), purpose=purpose
     )
@@ -106,4 +126,4 @@ async def verify_and_consume(db: AsyncSession, *, raw_token: str, purpose: str) 
         raise NotFound()
 
     await auth_token_repo.consume(db, token=token, consumed_at=_now())
-    return user
+    return user, token

@@ -53,3 +53,7 @@ class InvalidAuthToken(DomainError):
 
 class AuthTokenRateLimited(DomainError):
     """The user has issued too many tokens for this purpose recently."""
+
+
+class EmailChangePayloadMissing(DomainError):
+    """Token has no payload — should be unreachable, but we surface it as 400."""

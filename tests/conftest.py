@@ -53,19 +53,24 @@ def _stub_outbound_email():
     after the `session` fixture's, which breaks admin tests that patch
     `asyncio.create_task` (SQLAlchemy's AsyncSession close calls it).
     """
-    from tvbf.app.services import email_verification_service
+    from tvbf.app.services import email_change_service, email_verification_service
 
     captured: list[dict[str, str]] = []
 
     async def _fake(*, to: str, subject: str, html: str, text: str) -> None:
         captured.append({"to": to, "subject": subject, "html": html, "text": text})
 
-    original = email_verification_service.send_email
+    originals = {
+        "verification": email_verification_service.send_email,
+        "change": email_change_service.send_email,
+    }
     email_verification_service.send_email = _fake  # type: ignore[assignment]
+    email_change_service.send_email = _fake  # type: ignore[assignment]
     try:
         yield captured
     finally:
-        email_verification_service.send_email = original  # type: ignore[assignment]
+        email_verification_service.send_email = originals["verification"]  # type: ignore[assignment]
+        email_change_service.send_email = originals["change"]  # type: ignore[assignment]
 
 
 @pytest.fixture
