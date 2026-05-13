@@ -1,7 +1,9 @@
-from datetime import date
+from collections.abc import AsyncIterator
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import InvalidCredentials, NotFound
@@ -29,11 +31,13 @@ from tvbf.app.schemas import (
 from tvbf.app.services import (
     account_service,
     episode_service,
+    export_service,
     my_shows_service,
     session_service,
 )
 from tvbf.config import Settings, get_settings
 from tvbf.cookies import clear_auth_cookies
+from tvbf.db import SessionLocal
 from tvbf.deps import get_current_user, get_session, require_csrf
 
 router = APIRouter(tags=["me"])
@@ -138,6 +142,32 @@ async def revoke_other_sessions(
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="auth_required")
     revoked = await session_service.revoke_others(db, user_id=user.id, current_session_id=current)
     return {"revoked": revoked}
+
+
+@router.get("/me/export")
+async def export_my_data(
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream the requesting user's account-level data as a JSON document.
+
+    We open a dedicated AsyncSession here (rather than depending on
+    `get_session`) because the `get_session` dependency closes its session as
+    soon as the route function returns — before the StreamingResponse body
+    starts being consumed. The session needs to outlive every `yield` in the
+    generator, so we own its lifecycle inline.
+    """
+
+    async def _body() -> AsyncIterator[str]:
+        async with SessionLocal() as db:
+            async for chunk in export_service.stream_export(db, user=user):
+                yield chunk
+
+    filename = f"tvbf-export-{datetime.now().date().isoformat()}.json"
+    return StreamingResponse(
+        _body(),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @router.delete(
