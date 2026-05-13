@@ -42,6 +42,17 @@ class Settings(BaseSettings):
     login_lockout_threshold: int = Field(default=5, alias="LOGIN_LOCKOUT_THRESHOLD")
     login_lockout_window_minutes: int = Field(default=15, alias="LOGIN_LOCKOUT_WINDOW_MINUTES")
 
+    # Email transport. `smtp` is the default for local dev (Mailpit on the
+    # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
+    # in production.
+    email_provider: str = Field(default="smtp", alias="EMAIL_PROVIDER")
+    email_from_address: str = Field(
+        default="TV BingeFriend <no-reply@tvbf.localhost>", alias="EMAIL_FROM_ADDRESS"
+    )
+    resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
+    smtp_host: str = Field(default="mailpit", alias="SMTP_HOST")
+    smtp_port: int = Field(default=1025, alias="SMTP_PORT")
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
