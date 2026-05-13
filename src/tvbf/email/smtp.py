@@ -7,12 +7,12 @@ import logging
 import smtplib
 from email.message import EmailMessage
 
-from tvbf.email.base import EmailSendError
+from tvbf.email.base import EmailClient, EmailSendError
 
 log = logging.getLogger(__name__)
 
 
-class SmtpEmailClient:
+class SmtpEmailClient(EmailClient):
     """Sends via plain SMTP. No TLS, no auth — intended for Mailpit in dev."""
 
     def __init__(

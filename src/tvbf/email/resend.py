@@ -6,14 +6,14 @@ import logging
 
 import httpx
 
-from tvbf.email.base import EmailSendError
+from tvbf.email.base import EmailClient, EmailSendError
 
 log = logging.getLogger(__name__)
 
 _RESEND_API_URL = "https://api.resend.com/emails"
 
 
-class ResendEmailClient:
+class ResendEmailClient(EmailClient):
     """Thin async wrapper around Resend's /emails endpoint."""
 
     def __init__(self, *, api_key: str, from_address: str, timeout_seconds: float = 10.0) -> None:
