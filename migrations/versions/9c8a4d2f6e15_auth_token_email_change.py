@@ -17,15 +17,14 @@ depends_on = None
 
 
 def upgrade() -> None:
-    # Postgres requires ALTER TYPE ... ADD VALUE outside a transaction block.
-    # Alembic runs each migration in its own transaction; we work around that
-    # by running the ADD VALUE on an AUTOCOMMIT connection.
-    bind = op.get_bind()
-    with bind.engine.connect() as conn:
-        conn = conn.execution_options(isolation_level="AUTOCOMMIT")
-        conn.execute(
-            sa.text("ALTER TYPE app.auth_token_purpose ADD VALUE IF NOT EXISTS 'email_change'")
-        )
+    # Postgres 12+ supports `ALTER TYPE ... ADD VALUE` inside a transaction
+    # provided the new value isn't *used* in the same transaction — and we
+    # don't, so this runs on Alembic's own connection. Earlier versions of
+    # this migration opened a separate AUTOCOMMIT connection from the pool;
+    # that breaks on fresh databases (e.g. CI), because the CREATE TYPE from
+    # the previous migration is still in Alembic's uncommitted transaction
+    # and isn't visible to a new pool connection yet.
+    op.execute("ALTER TYPE app.auth_token_purpose ADD VALUE IF NOT EXISTS 'email_change'")
 
     op.add_column(
         "auth_token",
