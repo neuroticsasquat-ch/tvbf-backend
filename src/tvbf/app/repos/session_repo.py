@@ -74,3 +74,21 @@ async def delete(db: AsyncSession, session_id: str) -> None:
 
 async def delete_all_for_user(db: AsyncSession, user_id: UUID) -> None:
     await db.execute(sa_delete(Session).where(Session.user_id == user_id))
+
+
+async def delete_for_user(db: AsyncSession, *, user_id: UUID, session_id: str) -> int:
+    """Delete a single session iff it belongs to `user_id`. Returns the rowcount
+    (0 if no row matched). Caller commits."""
+    result = await db.execute(
+        sa_delete(Session).where(Session.id == session_id, Session.user_id == user_id)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]
+
+
+async def delete_others_for_user(db: AsyncSession, *, user_id: UUID, except_session_id: str) -> int:
+    """Delete every session for `user_id` except the named one. Returns the
+    number of rows deleted. Caller commits."""
+    result = await db.execute(
+        sa_delete(Session).where(Session.user_id == user_id, Session.id != except_session_id)
+    )
+    return result.rowcount or 0  # type: ignore[attr-defined]

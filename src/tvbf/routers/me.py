@@ -33,6 +33,7 @@ from tvbf.app.services import (
     session_service,
 )
 from tvbf.config import Settings, get_settings
+from tvbf.cookies import clear_auth_cookies
 from tvbf.deps import get_current_user, get_session, require_csrf
 
 router = APIRouter(tags=["me"])
@@ -91,6 +92,52 @@ async def list_my_sessions(
     return await session_service.list_for_user(
         db, user_id=user.id, current_session_id=current_session_id
     )
+
+
+@router.delete(
+    "/me/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def revoke_session(
+    session_id: Annotated[str, Path()],
+    request: Request,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    try:
+        await session_service.revoke(db, user_id=user.id, session_id=session_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    # If the caller just revoked the session they're using, drop their cookies
+    # so subsequent requests aren't surprised by an invalidated session.
+    current = request.cookies.get(settings.session_cookie_name)
+    if current == session_id:
+        clear_auth_cookies(response, settings)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.post(
+    "/me/sessions/revoke-others",
+    dependencies=[Depends(require_csrf)],
+)
+async def revoke_other_sessions(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, int]:
+    current = request.cookies.get(settings.session_cookie_name)
+    if not current:
+        # Without a current session id we can't safely scope "others" — but
+        # we shouldn't be reachable here, since get_current_user already
+        # required a valid session cookie.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="auth_required")
+    revoked = await session_service.revoke_others(db, user_id=user.id, current_session_id=current)
+    return {"revoked": revoked}
 
 
 @router.delete(
