@@ -11,6 +11,7 @@ from tvbf.app.schemas import (
     AuthedUserOut,
     BulkSeasonResult,
     EpisodeWatchOut,
+    MeUpdateRequest,
     MyShowEntry,
     MyShowsSort,
     SeasonProgress,
@@ -37,6 +38,31 @@ async def me(
     user: User = Depends(get_current_user),
     settings: Settings = Depends(get_settings),
 ) -> AuthedUserOut:
+    csrf = request.cookies.get(settings.csrf_cookie_name, "")
+    return AuthedUserOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
+        csrf_token=csrf,
+    )
+
+
+@router.patch(
+    "/me",
+    response_model=AuthedUserOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def update_me(
+    payload: MeUpdateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AuthedUserOut:
+    user.display_name = payload.display_name
+    await db.commit()
     csrf = request.cookies.get(settings.csrf_cookie_name, "")
     return AuthedUserOut(
         id=user.id,

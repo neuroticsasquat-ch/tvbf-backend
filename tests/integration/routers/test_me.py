@@ -81,6 +81,56 @@ async def test_me_returns_401_when_no_session():
 
 
 @pytest.mark.asyncio
+async def test_patch_me_updates_display_name(authed_client, session):
+    r = await authed_client.patch("/me", json={"display_name": "New Name"})
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "New Name"
+
+    # GET reflects the change.
+    r2 = await authed_client.get("/me")
+    assert r2.json()["display_name"] == "New Name"
+
+
+@pytest.mark.asyncio
+async def test_patch_me_trims_whitespace(authed_client):
+    r = await authed_client.patch("/me", json={"display_name": "   Alice   "})
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "Alice"
+
+
+@pytest.mark.asyncio
+async def test_patch_me_rejects_empty_after_trim(authed_client):
+    r = await authed_client.patch("/me", json={"display_name": "   "})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_me_rejects_too_long(authed_client):
+    r = await authed_client.patch("/me", json={"display_name": "a" * 81})
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_patch_me_requires_csrf(authed_client):
+    r = await authed_client.patch(
+        "/me",
+        json={"display_name": "Whatever"},
+        headers={"X-CSRF-Token": ""},
+    )
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_patch_me_unauthed_request_rejected():
+    # No cookies → CSRF guard rejects with 403 before auth runs. Either 401
+    # or 403 would be acceptable from a security standpoint; this matches the
+    # existing DELETE /me behavior.
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as c:
+        r = await c.patch("/me", json={"display_name": "Whoever"})
+    assert r.status_code in (401, 403)
+
+
+@pytest.mark.asyncio
 async def test_delete_me_requires_password(authed_client):
     r = await authed_client.request(
         "DELETE",
