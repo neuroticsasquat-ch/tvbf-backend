@@ -20,6 +20,7 @@ async def signup(
     ttl_days: int,
     user_agent: str | None,
     ip: str | None,
+    frontend_base_url: str | None = None,
 ) -> tuple[User, str, str]:
     """Create a new user, open a session, and return (user, session_id, csrf_token).
     Requires a valid unconsumed invite code; raises InvalidInvite otherwise.
@@ -55,6 +56,15 @@ async def signup(
     )
     await db.commit()
     await db.refresh(user)
+
+    if frontend_base_url is not None:
+        # Best-effort send: a failure here must not 500 the signup.
+        from tvbf.app.services import email_verification_service
+
+        await email_verification_service.send_verification_email_best_effort(
+            db, user=user, frontend_base_url=frontend_base_url
+        )
+
     return user, sess_id, csrf
 
 
