@@ -60,6 +60,15 @@ class VerifyEmailRequest(BaseModel):
     token: str = Field(min_length=1, max_length=512)
 
 
+class EmailChangeRequest(BaseModel):
+    new_email: EmailStr
+    current_password: str
+
+
+class EmailChangeConfirmRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
+
+
 class MyShowEntry(BaseModel):
     show: ShowSummary
     watched_episode_count: int

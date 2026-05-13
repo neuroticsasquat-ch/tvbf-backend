@@ -30,3 +30,30 @@ def render_verification_email(*, display_name: str, verify_url: str) -> tuple[st
         "you can ignore this message.</p>"
     )
     return subject, html_body, text
+
+
+def render_email_change_email(
+    *, display_name: str, new_email: str, confirm_url: str
+) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the confirm-email-change message,
+    delivered to the **new** address."""
+    subject = "Confirm your new TV BingeFriend email"
+    safe_name = html.escape(display_name)
+    safe_new = html.escape(new_email)
+    safe_url = html.escape(confirm_url, quote=True)
+    text = (
+        f"Hi {display_name},\n\n"
+        f"Click the link below to confirm {new_email} as your new TV BingeFriend email:\n"
+        f"{confirm_url}\n\n"
+        "This link expires in 24 hours. If you didn't request this change,\n"
+        "you can ignore this message and your email will stay the same.\n"
+    )
+    html_body = (
+        f"<p>Hi {safe_name},</p>"
+        f"<p>Click the link below to confirm <strong>{safe_new}</strong> as your new "
+        "TV BingeFriend email:</p>"
+        f'<p><a href="{safe_url}">{safe_url}</a></p>'
+        "<p>This link expires in 24 hours. If you didn't request this change, "
+        "you can ignore this message and your email will stay the same.</p>"
+    )
+    return subject, html_body, text

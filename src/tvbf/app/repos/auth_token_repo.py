@@ -17,12 +17,14 @@ async def create(
     token_hash: str,
     purpose: str,
     expires_at: datetime,
+    payload: dict | None = None,
 ) -> AuthToken:
     token = AuthToken(
         user_id=user_id,
         token_hash=token_hash,
         purpose=purpose,
         expires_at=expires_at,
+        payload=payload,
     )
     db.add(token)
     await db.flush()
