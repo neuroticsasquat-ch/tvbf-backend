@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from abc import ABC, abstractmethod
 
 
 class EmailSendError(Exception):
     """A send failed at the transport layer. Callers should log and continue."""
 
 
-class EmailClient(Protocol):
+class EmailClient(ABC):
+    @abstractmethod
     async def send(
         self,
         *,
@@ -19,4 +20,3 @@ class EmailClient(Protocol):
         text: str,
     ) -> None:
         """Send a single email. Raises EmailSendError on transport failure."""
-        ...
