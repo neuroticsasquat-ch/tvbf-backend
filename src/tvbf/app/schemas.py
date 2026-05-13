@@ -2,7 +2,7 @@ from datetime import date, datetime
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
 
@@ -42,6 +42,17 @@ class PasswordChangeRequest(BaseModel):
 
 class AccountDeleteRequest(BaseModel):
     password: str
+
+
+class MeUpdateRequest(BaseModel):
+    """Body for PATCH /me. Only carries display_name today."""
+
+    display_name: str = Field(min_length=1, max_length=80)
+
+    @field_validator("display_name", mode="before")
+    @classmethod
+    def _strip(cls, v: object) -> object:
+        return v.strip() if isinstance(v, str) else v
 
 
 class UserOut(BaseModel):
