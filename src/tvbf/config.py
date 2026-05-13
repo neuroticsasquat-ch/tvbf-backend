@@ -53,6 +53,9 @@ class Settings(BaseSettings):
     smtp_host: str = Field(default="mailpit", alias="SMTP_HOST")
     smtp_port: int = Field(default=1025, alias="SMTP_PORT")
 
+    # Public base URL of the SPA. Used to build links in transactional emails.
+    frontend_base_url: str = Field(default="https://app.tvbf.localhost", alias="FRONTEND_BASE_URL")
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]

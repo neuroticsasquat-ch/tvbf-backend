@@ -49,10 +49,15 @@ class UserOut(BaseModel):
     email: str
     display_name: str
     created_at: datetime
+    email_verified_at: datetime | None = None
 
 
 class AuthedUserOut(UserOut):
     csrf_token: str
+
+
+class VerifyEmailRequest(BaseModel):
+    token: str = Field(min_length=1, max_length=512)
 
 
 class MyShowEntry(BaseModel):

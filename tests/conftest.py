@@ -43,6 +43,31 @@ async def test_engine():
     await engine.dispose()
 
 
+@pytest.fixture(autouse=True)
+def _stub_outbound_email():
+    """Replace the email sender with an in-memory capture so test runs never
+    hit Mailpit. Tests that need to assert can name this fixture explicitly.
+
+    Deliberately avoids the built-in `monkeypatch` fixture — having an autouse
+    fixture request `monkeypatch` would force `monkeypatch`'s teardown to run
+    after the `session` fixture's, which breaks admin tests that patch
+    `asyncio.create_task` (SQLAlchemy's AsyncSession close calls it).
+    """
+    from tvbf.app.services import email_verification_service
+
+    captured: list[dict[str, str]] = []
+
+    async def _fake(*, to: str, subject: str, html: str, text: str) -> None:
+        captured.append({"to": to, "subject": subject, "html": html, "text": text})
+
+    original = email_verification_service.send_email
+    email_verification_service.send_email = _fake  # type: ignore[assignment]
+    try:
+        yield captured
+    finally:
+        email_verification_service.send_email = original  # type: ignore[assignment]
+
+
 @pytest.fixture
 async def session(test_engine) -> AsyncIterator[AsyncSession]:
     maker = async_sessionmaker(test_engine, expire_on_commit=False)

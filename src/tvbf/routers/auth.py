@@ -76,6 +76,7 @@ async def signup(
             ttl_days=settings.session_ttl_days,
             user_agent=request.headers.get("user-agent"),
             ip=request.client.host if request.client else None,
+            frontend_base_url=settings.frontend_base_url,
         )
     except InvalidInvite as err:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid_invite") from err
@@ -87,6 +88,7 @@ async def signup(
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
     )
 
@@ -120,6 +122,7 @@ async def login(
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
     )
 
@@ -176,5 +179,6 @@ async def change_password(
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
     )

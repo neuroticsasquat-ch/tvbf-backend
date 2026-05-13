@@ -43,6 +43,7 @@ async def me(
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
     )
 
