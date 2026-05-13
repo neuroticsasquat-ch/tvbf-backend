@@ -44,6 +44,15 @@ class AccountDeleteRequest(BaseModel):
     password: str
 
 
+class SessionSummary(BaseModel):
+    id: str
+    device_label: str
+    ip: str | None
+    last_seen_at: datetime
+    created_at: datetime
+    is_current: bool
+
+
 class MeUpdateRequest(BaseModel):
     """Body for PATCH /me. Only carries display_name today."""
 

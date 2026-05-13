@@ -15,6 +15,7 @@ from tvbf.app.schemas import (
     MyShowEntry,
     MyShowsSort,
     SeasonProgress,
+    SessionSummary,
     UpcomingEntry,
     UpcomingSeasonEntry,
     UpcomingShowEntry,
@@ -25,7 +26,12 @@ from tvbf.app.schemas import (
     WatchNextEntry,
     WatchNextSort,
 )
-from tvbf.app.services import account_service, episode_service, my_shows_service
+from tvbf.app.services import (
+    account_service,
+    episode_service,
+    my_shows_service,
+    session_service,
+)
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf
 
@@ -71,6 +77,19 @@ async def update_me(
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+    )
+
+
+@router.get("/me/sessions", response_model=list[SessionSummary])
+async def list_my_sessions(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[SessionSummary]:
+    current_session_id = request.cookies.get(settings.session_cookie_name)
+    return await session_service.list_for_user(
+        db, user_id=user.id, current_session_id=current_session_id
     )
 
 
