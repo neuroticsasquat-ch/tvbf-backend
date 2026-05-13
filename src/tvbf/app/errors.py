@@ -45,3 +45,11 @@ class NotAConnectionParty(DomainError):
 
 class ConnectionWrongState(DomainError):
     """Operation is invalid for the connection's current state."""
+
+
+class InvalidAuthToken(DomainError):
+    """Token is unknown, expired, already consumed, or used for the wrong purpose."""
+
+
+class AuthTokenRateLimited(DomainError):
+    """The user has issued too many tokens for this purpose recently."""

@@ -28,6 +28,13 @@ connection_state_enum = PGEnum(
     schema="app",
 )
 
+auth_token_purpose_enum = PGEnum(
+    "email_verification",
+    "password_reset",
+    name="auth_token_purpose",
+    schema="app",
+)
+
 
 class User(Base):
     __tablename__ = "user"
@@ -194,3 +201,30 @@ class Connection(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class AuthToken(Base):
+    __tablename__ = "auth_token"
+    __table_args__ = (
+        Index("ix_auth_token_token_hash", "token_hash"),
+        Index("ix_auth_token_user_purpose_created", "user_id", "purpose", "created_at"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    purpose: Mapped[str] = mapped_column(auth_token_purpose_enum, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
