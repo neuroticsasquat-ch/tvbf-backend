@@ -326,6 +326,7 @@ def _show_model(
         image_original=None,
         network_id=network_id,
         web_channel_id=web_channel_id,
+        rating_average=None,
     )
 
 
