@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (  # noqa: I001
@@ -8,8 +9,10 @@ from sqlalchemy import (  # noqa: I001
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     PrimaryKeyConstraint,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
@@ -205,6 +208,74 @@ class Connection(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserShowRating(Base):
+    __tablename__ = "user_show_rating"
+    __table_args__ = (
+        CheckConstraint(
+            "stars IN (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0)",
+            name="ck_user_show_rating_stars",
+        ),
+        UniqueConstraint("user_id", "show_id", name="uq_user_show_rating"),
+        Index("ix_user_show_rating_user_id", "user_id"),
+        Index("ix_user_show_rating_show_id", "show_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    show_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tvmaze.show.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stars: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)
+    rated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UserEpisodeRating(Base):
+    __tablename__ = "user_episode_rating"
+    __table_args__ = (
+        CheckConstraint(
+            "stars IN (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0)",
+            name="ck_user_episode_rating_stars",
+        ),
+        UniqueConstraint("user_id", "episode_id", name="uq_user_episode_rating"),
+        Index("ix_user_episode_rating_user_id", "user_id"),
+        Index("ix_user_episode_rating_episode_id", "episode_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    episode_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tvmaze.episode.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stars: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)
+    rated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
 
 
 class AuthToken(Base):

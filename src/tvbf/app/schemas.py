@@ -1,4 +1,5 @@
 from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
@@ -228,3 +229,46 @@ class BlockedUserOut(BaseModel):
 class ShowFriendActivity(BaseModel):
     in_my_shows: list[UserBrief]
     watched: list[UserBrief]
+
+
+_VALID_STARS = {Decimal("0.5") * i for i in range(1, 11)}
+
+
+class ShowRatingIn(BaseModel):
+    stars: Decimal
+
+    @field_validator("stars")
+    @classmethod
+    def _validate(cls, v: Decimal) -> Decimal:
+        if v not in _VALID_STARS:
+            raise ValueError("stars must be one of 0.5, 1.0, ..., 5.0")
+        return v
+
+
+class ShowRatingOut(BaseModel):
+    show_id: int
+    stars: float
+    rated_at: datetime
+
+
+class EpisodeRatingIn(ShowRatingIn):
+    pass
+
+
+class EpisodeRatingOut(BaseModel):
+    episode_id: int
+    stars: float
+    rated_at: datetime
+
+
+class FriendRatingItem(BaseModel):
+    user_id: UUID
+    display_name: str
+    stars: float
+    rated_at: datetime
+
+
+class FriendRatingsResponse(BaseModel):
+    avg: float | None
+    count: int
+    items: list[FriendRatingItem]
