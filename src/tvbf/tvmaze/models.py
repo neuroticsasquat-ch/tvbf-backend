@@ -1,4 +1,5 @@
 from datetime import date, datetime, time
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -8,6 +9,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Numeric,
     PrimaryKeyConstraint,
     String,
     Text,
@@ -86,6 +88,8 @@ class Show(Base):
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
     akas_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    rating_average: Mapped[Decimal | None] = mapped_column(Numeric(3, 1))
+    ratings_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ShowAka(Base):
@@ -145,6 +149,7 @@ class Episode(Base):
     summary: Mapped[str | None] = mapped_column(Text)
     image_medium: Mapped[str | None] = mapped_column(Text)
     image_original: Mapped[str | None] = mapped_column(Text)
+    rating_average: Mapped[Decimal | None] = mapped_column(Numeric(3, 1))
 
 
 class ShowGenre(Base):

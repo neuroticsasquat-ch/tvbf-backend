@@ -90,6 +90,7 @@ class EpisodeOut(BaseModel):
     summary: str | None = None
     image_medium: str | None = None
     image_original: str | None = None
+    rating_average: float | None = None
     # Per-user watched flag. Populated by `/me/*` list endpoints so list rows
     # can render the watch checkbox without a per-show round trip. Null on
     # endpoints that have no user context (catalog browse).
@@ -112,6 +113,7 @@ class ShowSummary(BaseModel):
     web_channel: NetworkRef | None = None
     genres: list[str] = []
     matched_aka: str | None = None
+    rating_average: float | None = None
 
 
 class ShowDetail(ShowSummary):
@@ -152,6 +154,7 @@ def build_show_summary(
         web_channel=web_channel,
         genres=sorted(genre_names),
         matched_aka=matched_aka,
+        rating_average=float(show.rating_average) if show.rating_average is not None else None,
     )
 
 
@@ -201,4 +204,5 @@ def build_show_detail(show, seasons, genres, network, web_channel) -> "ShowDetai
         else None,
         tvmaze_updated=show.tvmaze_updated,
         seasons=season_dtos,
+        rating_average=float(show.rating_average) if show.rating_average is not None else None,
     )

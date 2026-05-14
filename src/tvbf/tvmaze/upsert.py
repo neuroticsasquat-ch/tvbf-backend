@@ -136,6 +136,7 @@ async def upsert_show(session: AsyncSession, show: TVMazeShow) -> int:
         "network_id": network_id,
         "web_channel_id": web_channel_id,
         "tvmaze_updated": show.updated,
+        "rating_average": show.rating_average,
     }
     stmt = (
         insert(m.Show)
@@ -189,6 +190,7 @@ async def upsert_episodes(
             "summary": ep.summary,
             "image_medium": ep.image.medium if ep.image else None,
             "image_original": ep.image.original if ep.image else None,
+            "rating_average": ep.rating_average,
         }
         for ep in episodes
     ]
@@ -240,4 +242,11 @@ async def mark_akas_synced(session: AsyncSession, *, show_id: int) -> None:
     """Set the show's akas_synced_at to now()."""
     await session.execute(
         update(m.Show).where(m.Show.id == show_id).values(akas_synced_at=datetime.now(UTC))
+    )
+
+
+async def mark_ratings_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Set the show's ratings_synced_at to now()."""
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(ratings_synced_at=datetime.now(UTC))
     )
