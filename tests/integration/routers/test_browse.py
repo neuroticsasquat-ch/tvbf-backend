@@ -261,10 +261,23 @@ async def test_list_networks_route(seeded):
     assert isinstance(out, list)
 
 
+@pytest.fixture
+async def viewer(make_user):
+    return await make_user(email="browse-direct@example.com", display_name="Browser")
+
+
+def _resp():
+    from fastapi import Response as _R
+
+    return _R()
+
+
 @pytest.mark.asyncio
-async def test_list_shows_route_returns_page(seeded):
+async def test_list_shows_route_returns_page(seeded, viewer):
     out = await browse_router.list_shows_route(
+        response=_resp(),
         session=seeded,
+        user=viewer,
         genre=[],
         network=[],
         page=1,
@@ -275,10 +288,12 @@ async def test_list_shows_route_returns_page(seeded):
 
 
 @pytest.mark.asyncio
-async def test_list_shows_route_raises_422_for_invalid_sort(seeded):
+async def test_list_shows_route_raises_422_for_invalid_sort(seeded, viewer):
     with pytest.raises(HTTPException) as ei:
         await browse_router.list_shows_route(
+            response=_resp(),
             session=seeded,
+            user=viewer,
             genre=[],
             network=[],
             sort="bogus",
@@ -289,40 +304,151 @@ async def test_list_shows_route_raises_422_for_invalid_sort(seeded):
 
 
 @pytest.mark.asyncio
-async def test_get_show_route_returns_detail_for_known_id(seeded):
-    out = await browse_router.get_show(show_id=9, session=seeded)
+async def test_get_show_route_returns_detail_for_known_id(seeded, viewer):
+    out = await browse_router.get_show(show_id=9, response=_resp(), session=seeded, user=viewer)
     assert out.id == 9
     assert out.name
 
 
 @pytest.mark.asyncio
-async def test_get_show_route_raises_404_for_unknown_id(seeded):
+async def test_get_show_route_raises_404_for_unknown_id(seeded, viewer):
     with pytest.raises(HTTPException) as ei:
-        await browse_router.get_show(show_id=99999, session=seeded)
+        await browse_router.get_show(show_id=99999, response=_resp(), session=seeded, user=viewer)
     assert ei.value.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_get_show_seasons_route_returns_seasons(seeded):
-    out = await browse_router.get_show_seasons_route(show_id=9, session=seeded)
+    out = await browse_router.get_show_seasons_route(show_id=9, response=_resp(), session=seeded)
     assert isinstance(out, list)
 
 
 @pytest.mark.asyncio
 async def test_get_show_seasons_route_raises_404_for_unknown_id(seeded):
     with pytest.raises(HTTPException) as ei:
-        await browse_router.get_show_seasons_route(show_id=99999, session=seeded)
+        await browse_router.get_show_seasons_route(show_id=99999, response=_resp(), session=seeded)
     assert ei.value.status_code == 404
 
 
 @pytest.mark.asyncio
-async def test_get_show_episodes_route_returns_episodes(seeded):
-    out = await browse_router.get_show_episodes_route(show_id=9, season=None, session=seeded)
+async def test_get_show_episodes_route_returns_episodes(seeded, viewer):
+    out = await browse_router.get_show_episodes_route(
+        show_id=9, season=None, response=_resp(), session=seeded, user=viewer
+    )
     assert isinstance(out, list)
 
 
 @pytest.mark.asyncio
-async def test_get_show_episodes_route_raises_404_for_unknown_id(seeded):
+async def test_get_show_episodes_route_raises_404_for_unknown_id(seeded, viewer):
     with pytest.raises(HTTPException) as ei:
-        await browse_router.get_show_episodes_route(show_id=99999, season=None, session=seeded)
+        await browse_router.get_show_episodes_route(
+            show_id=99999, season=None, response=_resp(), session=seeded, user=viewer
+        )
     assert ei.value.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# NEU-171: cache header downgrade + my_rating hydration
+# ---------------------------------------------------------------------------
+
+
+async def test_show_endpoints_set_short_private_cache(client):
+    """All show/episode browse endpoints carry private, max-age=60 (NEU-171)."""
+    short = "private, max-age=60"
+    assert (await client.get("/shows")).headers.get("cache-control") == short
+    assert (await client.get("/shows/1")).headers.get("cache-control") == short
+    assert (await client.get("/shows/1/seasons")).headers.get("cache-control") == short
+    assert (await client.get("/shows/1/episodes")).headers.get("cache-control") == short
+    # Pick the first episode id from /shows/1/episodes for the singleton route.
+    eps = (await client.get("/shows/1/episodes")).json()
+    assert eps, "seed must have episodes for show 1"
+    ep_id = eps[0]["id"]
+    assert (await client.get(f"/episodes/{ep_id}")).headers.get("cache-control") == short
+
+
+async def test_genres_networks_keep_long_private_cache(client):
+    long = "private, max-age=300"
+    assert (await client.get("/genres")).headers.get("cache-control") == long
+    assert (await client.get("/networks")).headers.get("cache-control") == long
+
+
+async def test_list_shows_hydrates_my_rating_for_caller(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+    from tvbf.tvmaze.models import Show
+
+    session.add(Show(id=77001, name="RatedShow1", tvmaze_updated=1))
+    session.add(Show(id=77002, name="RatedShow2", tvmaze_updated=1))
+    await session.flush()
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=77001, stars=Decimal("4.5")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/shows?search=RatedShow")
+    assert r.status_code == 200
+    items = {i["id"]: i for i in r.json()["items"]}
+    assert items[77001]["my_rating"] == 4.5
+    assert items[77002]["my_rating"] is None
+
+
+async def test_get_show_detail_hydrates_my_rating(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+    from tvbf.tvmaze.models import Show
+
+    session.add(Show(id=77003, name="RatedShow3", tvmaze_updated=1))
+    await session.flush()
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=77003, stars=Decimal("3.0")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/shows/77003")
+    assert r.status_code == 200
+    assert r.json()["my_rating"] == 3.0
+
+
+async def test_get_episode_hydrates_my_rating(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import episode_rating_repo
+    from tvbf.tvmaze.models import Episode, Show
+
+    session.add(Show(id=77004, name="ShowWithRatedEp", tvmaze_updated=1))
+    await session.flush()
+    session.add(Episode(id=77004001, show_id=77004, season=1, number=1))
+    await session.flush()
+    await episode_rating_repo.upsert(
+        session, user_id=authed_client.user.id, episode_id=77004001, stars=Decimal("4.0")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/episodes/77004001")
+    assert r.status_code == 200
+    assert r.json()["my_rating"] == 4.0
+
+
+async def test_get_show_episodes_list_hydrates_my_rating(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import episode_rating_repo
+    from tvbf.tvmaze.models import Episode, Show
+
+    session.add(Show(id=77005, name="ShowEpsList", tvmaze_updated=1))
+    await session.flush()
+    session.add(Episode(id=77005001, show_id=77005, season=1, number=1))
+    session.add(Episode(id=77005002, show_id=77005, season=1, number=2))
+    await session.flush()
+    await episode_rating_repo.upsert(
+        session, user_id=authed_client.user.id, episode_id=77005001, stars=Decimal("2.5")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/shows/77005/episodes")
+    assert r.status_code == 200
+    by_id = {e["id"]: e for e in r.json()}
+    assert by_id[77005001]["my_rating"] == 2.5
+    assert by_id[77005002]["my_rating"] is None

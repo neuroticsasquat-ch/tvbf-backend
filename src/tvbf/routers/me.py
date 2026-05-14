@@ -203,10 +203,13 @@ async def delete_me(
 async def list_my_shows_route(
     sort: Annotated[MyShowsSort, Query()] = "recent_activity",
     today: Annotated[date | None, Query()] = None,
+    rated_only: Annotated[bool, Query()] = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[MyShowEntry]:
-    return await my_shows_service.list_my_shows(db, user_id=user.id, sort=sort, today=today)
+    return await my_shows_service.list_my_shows(
+        db, user_id=user.id, sort=sort, today=today, rated_only=rated_only
+    )
 
 
 @router.put(

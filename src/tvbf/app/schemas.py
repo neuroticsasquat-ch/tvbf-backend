@@ -7,7 +7,14 @@ from pydantic import BaseModel, EmailStr, Field, field_validator
 
 from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
 
-MyShowsSort = Literal["recent_activity", "name_asc", "name_desc", "added"]
+MyShowsSort = Literal[
+    "recent_activity",
+    "name_asc",
+    "name_desc",
+    "added",
+    "my_rating_desc",
+    "my_rating_asc",
+]
 WatchNextSort = Literal[
     "airdate_desc", "unwatched_airdate_desc", "airdate_asc", "name_asc", "name_desc"
 ]
@@ -110,6 +117,7 @@ class MyShowEntry(BaseModel):
     first_watched_at: datetime | None = None
     next_episode: EpisodeOut | None = None
     added_at: datetime
+    my_rating: float | None = None
 
 
 class WatchNextEntry(BaseModel):
