@@ -91,6 +91,7 @@ class EpisodeOut(BaseModel):
     image_medium: str | None = None
     image_original: str | None = None
     rating_average: float | None = None
+    my_rating: float | None = None
     # Per-user watched flag. Populated by `/me/*` list endpoints so list rows
     # can render the watch checkbox without a per-show round trip. Null on
     # endpoints that have no user context (catalog browse).
@@ -114,6 +115,7 @@ class ShowSummary(BaseModel):
     genres: list[str] = []
     matched_aka: str | None = None
     rating_average: float | None = None
+    my_rating: float | None = None
 
 
 class ShowDetail(ShowSummary):
@@ -139,6 +141,7 @@ def build_show_summary(
     network: NetworkRef | None,
     web_channel: NetworkRef | None,
     matched_aka: str | None = None,
+    my_rating: float | None = None,
 ) -> ShowSummary:
     return ShowSummary(
         id=show.id,
@@ -155,10 +158,13 @@ def build_show_summary(
         genres=sorted(genre_names),
         matched_aka=matched_aka,
         rating_average=float(show.rating_average) if show.rating_average is not None else None,
+        my_rating=my_rating,
     )
 
 
-def build_show_detail(show, seasons, genres, network, web_channel) -> "ShowDetail":
+def build_show_detail(
+    show, seasons, genres, network, web_channel, my_rating: float | None = None
+) -> "ShowDetail":
     # Season-level network/web-channel refs are intentionally left as None in v1.
     # Season rows carry network_id / web_channel_id FKs; a future refactor can
     # populate them from a batch lookup when a UI actually needs them.
@@ -205,4 +211,5 @@ def build_show_detail(show, seasons, genres, network, web_channel) -> "ShowDetai
         tvmaze_updated=show.tvmaze_updated,
         seasons=season_dtos,
         rating_average=float(show.rating_average) if show.rating_average is not None else None,
+        my_rating=my_rating,
     )

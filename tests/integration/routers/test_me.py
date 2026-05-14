@@ -503,3 +503,107 @@ async def test_watch_next_route_invalid_today_returns_422(authed_client):
     """`?today=garbage` is rejected by FastAPI's date validator."""
     resp = await authed_client.get("/me/watch-next?today=not-a-date")
     assert resp.status_code == 422
+
+
+# ---------------------------------------------------------------------------
+# NEU-171: my_rating hydration + rated_only filter + rating sorts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_my_shows_hydrates_my_rating(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    a = await _seed_show(session, show_id=950001, name="RatedA")
+    b = await _seed_show(session, show_id=950002, name="UnratedB")
+    await session.commit()
+    await authed_client.put(f"/me/shows/{a.id}")
+    await authed_client.put(f"/me/shows/{b.id}")
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=a.id, stars=Decimal("4.5")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/me/shows")
+    body = {e["show"]["id"]: e for e in r.json()}
+    assert body[a.id]["my_rating"] == 4.5
+    assert body[b.id]["my_rating"] is None
+
+
+@pytest.mark.asyncio
+async def test_my_shows_rated_only_filters(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    a = await _seed_show(session, show_id=950003, name="RatedA")
+    b = await _seed_show(session, show_id=950004, name="UnratedB")
+    await session.commit()
+    await authed_client.put(f"/me/shows/{a.id}")
+    await authed_client.put(f"/me/shows/{b.id}")
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=a.id, stars=Decimal("3.0")
+    )
+    await session.commit()
+
+    r_all = await authed_client.get("/me/shows")
+    assert {e["show"]["id"] for e in r_all.json()} == {a.id, b.id}
+
+    r_rated = await authed_client.get("/me/shows?rated_only=true")
+    assert {e["show"]["id"] for e in r_rated.json()} == {a.id}
+
+
+@pytest.mark.asyncio
+async def test_my_shows_sort_my_rating_desc(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    a = await _seed_show(session, show_id=950011, name="A")
+    b = await _seed_show(session, show_id=950012, name="B")
+    c = await _seed_show(session, show_id=950013, name="C")
+    await session.commit()
+    await authed_client.put(f"/me/shows/{a.id}")
+    await authed_client.put(f"/me/shows/{b.id}")
+    await authed_client.put(f"/me/shows/{c.id}")
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=a.id, stars=Decimal("2.0")
+    )
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=b.id, stars=Decimal("4.5")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/me/shows?sort=my_rating_desc")
+    ids = [e["show"]["id"] for e in r.json()]
+    # B (4.5), A (2.0), then unrated C last.
+    assert ids == [b.id, a.id, c.id]
+
+
+@pytest.mark.asyncio
+async def test_my_shows_sort_my_rating_asc(authed_client, session):
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    a = await _seed_show(session, show_id=950021, name="A")
+    b = await _seed_show(session, show_id=950022, name="B")
+    c = await _seed_show(session, show_id=950023, name="C")
+    await session.commit()
+    await authed_client.put(f"/me/shows/{a.id}")
+    await authed_client.put(f"/me/shows/{b.id}")
+    await authed_client.put(f"/me/shows/{c.id}")
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=a.id, stars=Decimal("2.0")
+    )
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=b.id, stars=Decimal("4.5")
+    )
+    await session.commit()
+
+    r = await authed_client.get("/me/shows?sort=my_rating_asc")
+    ids = [e["show"]["id"] for e in r.json()]
+    # A (2.0), B (4.5), then unrated C last.
+    assert ids == [a.id, b.id, c.id]

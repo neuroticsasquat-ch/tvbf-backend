@@ -1,6 +1,9 @@
+from uuid import UUID
+
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.app.repos import episode_rating_repo, show_rating_repo
 from tvbf.sorting import SQL_LEADING_ARTICLE_PATTERN
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.schemas import ALLOWED_SORT_KEYS, ShowFilters
@@ -248,3 +251,20 @@ async def hydrate_show_refs(
             wcs_by_id[row.id] = row
 
     return genres_by_show, networks_by_id, wcs_by_id
+
+
+async def hydrate_my_ratings(
+    session: AsyncSession, *, viewer_id: UUID, show_ids: list[int]
+) -> dict[int, float]:
+    """Per-show: the viewer's own rating (stars) if any. Empty dict when no
+    inputs or no viewer ratings. Stars come back as float for JSON-friendliness."""
+    return await show_rating_repo.get_many_for_user(session, user_id=viewer_id, show_ids=show_ids)
+
+
+async def hydrate_my_episode_ratings(
+    session: AsyncSession, *, viewer_id: UUID, episode_ids: list[int]
+) -> dict[int, float]:
+    """Per-episode: the viewer's own rating (stars) if any."""
+    return await episode_rating_repo.get_many_for_user(
+        session, user_id=viewer_id, episode_ids=episode_ids
+    )

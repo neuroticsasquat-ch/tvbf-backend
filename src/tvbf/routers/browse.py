@@ -3,6 +3,7 @@ import math
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.app.models import User
 from tvbf.deps import get_current_user, get_session
 from tvbf.tvmaze import browse_queries
 from tvbf.tvmaze.schemas import (
@@ -46,9 +47,14 @@ async def list_networks(session: AsyncSession = Depends(get_session)) -> list:
     return await browse_queries.list_networks(session)
 
 
+_SHOW_EP_CACHE = "private, max-age=60"
+
+
 @router.get("/shows", response_model=ShowListPage)
 async def list_shows_route(
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
     search: str | None = None,
     status: str | None = None,
     genre: list[str] = Query(default_factory=list),
@@ -59,6 +65,7 @@ async def list_shows_route(
     page: int = Query(default=1, ge=1, le=1000),
     per_page: int = Query(default=50, ge=1, le=100),
 ) -> ShowListPage:
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
     if sort not in ALLOWED_SORT_KEYS:
         raise HTTPException(status_code=422, detail=f"invalid sort key: {sort}")
 
@@ -77,6 +84,9 @@ async def list_shows_route(
         session, rows
     )
     matched_aka_by_show = await browse_queries.hydrate_matched_aka(session, rows, search)
+    my_ratings = await browse_queries.hydrate_my_ratings(
+        session, viewer_id=user.id, show_ids=[s.id for s in rows]
+    )
 
     items: list[ShowSummary] = []
     for show in rows:
@@ -89,6 +99,7 @@ async def list_shows_route(
                 network=NetworkRef(id=net.id, name=net.name) if net else None,
                 web_channel=NetworkRef(id=wc.id, name=wc.name) if wc else None,
                 matched_aka=matched_aka_by_show.get(show.id),
+                my_rating=my_ratings.get(show.id),
             )
         )
 
@@ -104,20 +115,35 @@ async def list_shows_route(
 @router.get("/shows/{show_id}", response_model=ShowDetail)
 async def get_show(
     show_id: int,
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> ShowDetail:
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
     result = await browse_queries.get_show_with_seasons(session, show_id)
     if result is None:
         raise HTTPException(status_code=404, detail="show not found")
     show, seasons, genres, network, web_channel = result
-    return build_show_detail(show, seasons, genres, network, web_channel)
+    my_ratings = await browse_queries.hydrate_my_ratings(
+        session, viewer_id=user.id, show_ids=[show.id]
+    )
+    return build_show_detail(
+        show,
+        seasons,
+        genres,
+        network,
+        web_channel,
+        my_rating=my_ratings.get(show.id),
+    )
 
 
 @router.get("/shows/{show_id}/seasons", response_model=list[SeasonOut])
 async def get_show_seasons_route(
     show_id: int,
+    response: Response,
     session: AsyncSession = Depends(get_session),
 ) -> list:
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return await browse_queries.get_show_seasons(session, show_id)
@@ -126,20 +152,37 @@ async def get_show_seasons_route(
 @router.get("/episodes/{episode_id}", response_model=EpisodeOut)
 async def get_episode_route(
     episode_id: int,
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
 ) -> EpisodeOut:
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
     ep = await browse_queries.get_episode(session, episode_id)
     if ep is None:
         raise HTTPException(status_code=404, detail="episode not found")
-    return EpisodeOut.model_validate(ep)
+    my_ratings = await browse_queries.hydrate_my_episode_ratings(
+        session, viewer_id=user.id, episode_ids=[ep.id]
+    )
+    out = EpisodeOut.model_validate(ep)
+    return out.model_copy(update={"my_rating": my_ratings.get(ep.id)})
 
 
 @router.get("/shows/{show_id}/episodes", response_model=list[EpisodeOut])
 async def get_show_episodes_route(
     show_id: int,
+    response: Response,
     session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
     season: int | None = None,
 ) -> list:
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
-    return await browse_queries.get_show_episodes(session, show_id, season)
+    eps = await browse_queries.get_show_episodes(session, show_id, season)
+    my_ratings = await browse_queries.hydrate_my_episode_ratings(
+        session, viewer_id=user.id, episode_ids=[e.id for e in eps]
+    )
+    return [
+        EpisodeOut.model_validate(ep).model_copy(update={"my_rating": my_ratings.get(ep.id)})
+        for ep in eps
+    ]
