@@ -169,7 +169,7 @@ class IngestRun(Base):
     __tablename__ = "ingest_run"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('initial', 'update', 'akas_backfill')",
+            "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(
