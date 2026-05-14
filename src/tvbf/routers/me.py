@@ -12,12 +12,16 @@ from tvbf.app.schemas import (
     AccountDeleteRequest,
     AuthedUserOut,
     BulkSeasonResult,
+    EpisodeRatingIn,
+    EpisodeRatingOut,
     EpisodeWatchOut,
     MeUpdateRequest,
     MyShowEntry,
     MyShowsSort,
     SeasonProgress,
     SessionSummary,
+    ShowRatingIn,
+    ShowRatingOut,
     UpcomingEntry,
     UpcomingSeasonEntry,
     UpcomingShowEntry,
@@ -33,6 +37,7 @@ from tvbf.app.services import (
     episode_service,
     export_service,
     my_shows_service,
+    rating_service,
     session_service,
 )
 from tvbf.config import Settings, get_settings
@@ -428,4 +433,83 @@ async def bulk_unmark_show(
     db: AsyncSession = Depends(get_session),
 ) -> Response:
     await episode_service.bulk_unmark_show(db, user_id=user.id, show_id=show_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Ratings (show + episode)
+# ---------------------------------------------------------------------------
+
+
+@router.put(
+    "/me/shows/{show_id}/rating",
+    response_model=ShowRatingOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_show_rating(
+    payload: ShowRatingIn,
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ShowRatingOut:
+    try:
+        out = await rating_service.set_show_rating(
+            db, user_id=user.id, show_id=show_id, stars=payload.stars
+        )
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="show_not_found") from err
+    await db.commit()
+    return out
+
+
+@router.delete(
+    "/me/shows/{show_id}/rating",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def clear_show_rating(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await rating_service.clear_show_rating(db, user_id=user.id, show_id=show_id)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/me/episodes/{episode_id}/rating",
+    response_model=EpisodeRatingOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_episode_rating(
+    payload: EpisodeRatingIn,
+    episode_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> EpisodeRatingOut:
+    try:
+        out = await rating_service.set_episode_rating(
+            db, user_id=user.id, episode_id=episode_id, stars=payload.stars
+        )
+    except NotFound as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found"
+        ) from err
+    await db.commit()
+    return out
+
+
+@router.delete(
+    "/me/episodes/{episode_id}/rating",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def clear_episode_rating(
+    episode_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await rating_service.clear_episode_rating(db, user_id=user.id, episode_id=episode_id)
+    await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
