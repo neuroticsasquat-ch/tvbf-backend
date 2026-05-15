@@ -26,6 +26,7 @@ from tvbf.app.schemas import (
     WatchNextEntry,
     WatchNextSort,
 )
+from tvbf.app.services import activity_service
 from tvbf.sorting import show_name_sort_key
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
 from tvbf.tvmaze.models import Season, Show
@@ -177,12 +178,18 @@ async def add(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     if show is None:
         raise NotFound()
     await show_membership_repo.add(db, user_id=user_id, show_id=show_id)
+    await activity_service.emit(
+        db, actor_id=user_id, verb="added_show", target_type="show", target_id=show_id
+    )
     await db.commit()
 
 
 async def remove(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     """Remove membership row (idempotent), commit."""
     await show_membership_repo.remove(db, user_id=user_id, show_id=show_id)
+    await activity_service.cancel(
+        db, actor_id=user_id, verb="added_show", target_type="show", target_id=show_id
+    )
     await db.commit()
 
 

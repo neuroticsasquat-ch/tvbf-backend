@@ -18,6 +18,7 @@ from tvbf.app.schemas import (
     FriendRatingsResponse,
     ShowRatingOut,
 )
+from tvbf.app.services import activity_service
 
 
 async def _accepted_friend_ids(db: AsyncSession, user_id: UUID) -> set[UUID]:
@@ -31,11 +32,23 @@ async def set_show_rating(
     if await show_repo.get_by_id(db, show_id) is None:
         raise NotFound("show_not_found")
     row = await show_rating_repo.upsert(db, user_id=user_id, show_id=show_id, stars=stars)
+    await activity_service.emit(
+        db,
+        actor_id=user_id,
+        verb="rated_show",
+        target_type="show",
+        target_id=show_id,
+        payload={"stars": float(stars)},
+    )
     return ShowRatingOut(show_id=show_id, stars=float(row.stars), rated_at=row.rated_at)
 
 
 async def clear_show_rating(db: AsyncSession, *, user_id: UUID, show_id: int) -> int:
-    return await show_rating_repo.delete(db, user_id=user_id, show_id=show_id)
+    deleted = await show_rating_repo.delete(db, user_id=user_id, show_id=show_id)
+    await activity_service.cancel(
+        db, actor_id=user_id, verb="rated_show", target_type="show", target_id=show_id
+    )
+    return deleted
 
 
 async def set_episode_rating(
@@ -44,11 +57,27 @@ async def set_episode_rating(
     if await episode_repo.get_by_id(db, episode_id) is None:
         raise NotFound("episode_not_found")
     row = await episode_rating_repo.upsert(db, user_id=user_id, episode_id=episode_id, stars=stars)
+    await activity_service.emit(
+        db,
+        actor_id=user_id,
+        verb="rated_episode",
+        target_type="episode",
+        target_id=episode_id,
+        payload={"stars": float(stars)},
+    )
     return EpisodeRatingOut(episode_id=episode_id, stars=float(row.stars), rated_at=row.rated_at)
 
 
 async def clear_episode_rating(db: AsyncSession, *, user_id: UUID, episode_id: int) -> int:
-    return await episode_rating_repo.delete(db, user_id=user_id, episode_id=episode_id)
+    deleted = await episode_rating_repo.delete(db, user_id=user_id, episode_id=episode_id)
+    await activity_service.cancel(
+        db,
+        actor_id=user_id,
+        verb="rated_episode",
+        target_type="episode",
+        target_id=episode_id,
+    )
+    return deleted
 
 
 async def friend_show_ratings(
