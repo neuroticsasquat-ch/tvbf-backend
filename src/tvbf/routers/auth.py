@@ -50,6 +50,7 @@ async def signup(
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
         activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
@@ -85,6 +86,7 @@ async def login(
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
         activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
@@ -143,4 +145,5 @@ async def change_password(
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
         activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )

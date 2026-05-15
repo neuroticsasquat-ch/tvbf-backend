@@ -14,6 +14,7 @@ from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.routers import (
     admin,
+    admin_users,
     auth,
     browse,
     connections,
@@ -77,6 +78,7 @@ def create_app() -> FastAPI:
     )
     app.include_router(health.router)
     app.include_router(admin.router)
+    app.include_router(admin_users.router)
     app.include_router(invites_admin.router)
     app.include_router(browse.router)
     app.include_router(auth.router)
