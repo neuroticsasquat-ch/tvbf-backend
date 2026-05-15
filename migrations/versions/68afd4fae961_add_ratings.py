@@ -5,10 +5,9 @@ Revises: 9c8a4d2f6e15
 Create Date: 2026-05-14 20:17:53.256049+00:00
 
 """
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from sqlalchemy.dialects import postgresql
-
 
 revision = '68afd4fae961'
 down_revision = '9c8a4d2f6e15'
