@@ -278,6 +278,43 @@ class UserEpisodeRating(Base):
     )
 
 
+class ActivityEvent(Base):
+    __tablename__ = "activity_event"
+    __table_args__ = (
+        UniqueConstraint(
+            "actor_id",
+            "verb",
+            "target_type",
+            "target_id",
+            "season_number",
+            name="uq_activity_event",
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index("ix_activity_event_actor_created", "actor_id", "created_at"),
+        Index("ix_activity_event_target", "target_type", "target_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    actor_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    verb: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    season_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
 class AuthToken(Base):
     __tablename__ = "auth_token"
     __table_args__ = (

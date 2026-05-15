@@ -30,6 +30,16 @@ WatchedSort = Literal[
 WatchedStatusFilter = Literal["all", "finished", "in_progress"]
 WatchedStatus = Literal["finished", "in_progress"]
 
+ActivityVerb = Literal[
+    "added_show",
+    "watched_episode",
+    "watched_season",
+    "watched_show",
+    "rated_show",
+    "rated_episode",
+]
+ActivityTargetType = Literal["show", "season", "episode"]
+
 
 class SignupRequest(BaseModel):
     email: EmailStr
