@@ -16,6 +16,8 @@ from tvbf.app.schemas import (
     EpisodeRatingOut,
     EpisodeWatchOut,
     FeedPage,
+    HideFromActivityUpdate,
+    MePreferencesUpdate,
     MeUpdateRequest,
     MyShowEntry,
     MyShowsSort,
@@ -64,6 +66,7 @@ async def me(
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
     )
 
 
@@ -89,6 +92,7 @@ async def update_me(
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
     )
 
 
@@ -540,3 +544,50 @@ async def get_feed(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor"
         ) from err
+
+
+# ---------------------------------------------------------------------------
+# Privacy preferences (NEU-180)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/me/preferences", response_model=AuthedUserOut, dependencies=[Depends(require_csrf)])
+async def update_me_preferences(
+    payload: MePreferencesUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AuthedUserOut:
+    if payload.activity_feed_enabled is not None:
+        user.activity_feed_enabled = payload.activity_feed_enabled
+    await db.commit()
+    csrf = request.cookies.get(settings.csrf_cookie_name, "")
+    return AuthedUserOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
+        csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+    )
+
+
+@router.patch(
+    "/me/shows/{show_id}/hide-from-activity",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_hide_from_activity(
+    show_id: Annotated[int, Path()],
+    payload: HideFromActivityUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    updated = await my_shows_service.set_hide_from_activity(
+        db, user_id=user.id, show_id=show_id, value=payload.hide_from_activity
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_in_my_shows")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)

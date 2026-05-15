@@ -3,6 +3,7 @@ from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
 from sqlalchemy import select
+from sqlalchemy import update as sa_update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -58,3 +59,33 @@ async def list_with_added_at(db: AsyncSession, user_id: UUID) -> list[tuple[Show
         )
     ).all()
     return [(show, added_at) for show, added_at in rows]
+
+
+async def get_hide_flags(
+    db: AsyncSession, *, user_id: UUID, show_ids: list[int]
+) -> dict[int, bool]:
+    """Return `{show_id: hide_from_activity}` for the given shows in the user's My Shows."""
+    if not show_ids:
+        return {}
+    rows = (
+        await db.execute(
+            select(UserShowWatch.show_id, UserShowWatch.hide_from_activity).where(
+                UserShowWatch.user_id == user_id,
+                UserShowWatch.show_id.in_(show_ids),
+            )
+        )
+    ).all()
+    return {r.show_id: r.hide_from_activity for r in rows}
+
+
+async def set_hide_from_activity(
+    db: AsyncSession, *, user_id: UUID, show_id: int, value: bool
+) -> bool:
+    """Set hide_from_activity for a row in My Shows. Returns True if the row existed
+    (and was updated), False if no such membership row exists."""
+    result = await db.execute(
+        sa_update(UserShowWatch)
+        .where(UserShowWatch.user_id == user_id, UserShowWatch.show_id == show_id)
+        .values(hide_from_activity=value)
+    )
+    return result.rowcount > 0  # type: ignore[attr-defined]
