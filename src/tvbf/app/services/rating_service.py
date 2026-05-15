@@ -5,7 +5,6 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import NotFound
 from tvbf.app.repos import (
-    connection_repo,
     episode_rating_repo,
     episode_repo,
     show_rating_repo,
@@ -18,12 +17,7 @@ from tvbf.app.schemas import (
     FriendRatingsResponse,
     ShowRatingOut,
 )
-from tvbf.app.services import activity_service
-
-
-async def _accepted_friend_ids(db: AsyncSession, user_id: UUID) -> set[UUID]:
-    pairs = await connection_repo.list_accepted_for_user(db, user_id)
-    return {other for _, other in pairs}
+from tvbf.app.services import activity_service, connection_service
 
 
 async def set_show_rating(
@@ -85,7 +79,7 @@ async def friend_show_ratings(
 ) -> FriendRatingsResponse:
     if await show_repo.get_by_id(db, show_id) is None:
         raise NotFound("show_not_found")
-    friends = await _accepted_friend_ids(db, viewer_id)
+    friends = await connection_service.accepted_friend_ids(db, viewer_id)
     rows = await show_rating_repo.list_for_show(db, show_id=show_id, restrict_to=friends)
     users = await user_repo.get_many_by_ids(db, {r.user_id for r in rows})
     items = [
@@ -107,7 +101,7 @@ async def friend_episode_ratings(
 ) -> FriendRatingsResponse:
     if await episode_repo.get_by_id(db, episode_id) is None:
         raise NotFound("episode_not_found")
-    friends = await _accepted_friend_ids(db, viewer_id)
+    friends = await connection_service.accepted_friend_ids(db, viewer_id)
     rows = await episode_rating_repo.list_for_episode(
         db, episode_id=episode_id, restrict_to=friends
     )

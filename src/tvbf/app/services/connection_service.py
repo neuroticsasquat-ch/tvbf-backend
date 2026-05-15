@@ -123,6 +123,12 @@ async def is_blocked_either_way(db: AsyncSession, *, user_a: UUID, user_b: UUID)
     return row is not None and row.state == "blocked"
 
 
+async def accepted_friend_ids(db: AsyncSession, user_id: UUID) -> set[UUID]:
+    """Return the set of user ids with an accepted connection to `user_id`."""
+    pairs = await connection_repo.list_accepted_for_user(db, user_id)
+    return {other for _, other in pairs}
+
+
 async def are_connected(db: AsyncSession, user_a: UUID, user_b: UUID) -> bool:
     """True iff there is an `accepted` connection between the two users
     (either direction). Used as a permission gate on friend-scoped endpoints."""

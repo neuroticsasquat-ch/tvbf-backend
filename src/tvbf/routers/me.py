@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import InvalidCredentials, NotFound
+from tvbf.app.errors import InvalidCredentials, InvalidCursor, NotFound
 from tvbf.app.models import User
 from tvbf.app.schemas import (
     AccountDeleteRequest,
@@ -15,6 +15,7 @@ from tvbf.app.schemas import (
     EpisodeRatingIn,
     EpisodeRatingOut,
     EpisodeWatchOut,
+    FeedPage,
     MeUpdateRequest,
     MyShowEntry,
     MyShowsSort,
@@ -36,6 +37,7 @@ from tvbf.app.services import (
     account_service,
     episode_service,
     export_service,
+    feed_service,
     my_shows_service,
     rating_service,
     session_service,
@@ -516,3 +518,25 @@ async def clear_episode_rating(
     await rating_service.clear_episode_rating(db, user_id=user.id, episode_id=episode_id)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Friend activity feed
+# ---------------------------------------------------------------------------
+
+
+@router.get("/me/feed", response_model=FeedPage)
+async def get_feed(
+    response: Response,
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> FeedPage:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await feed_service.list_feed(db, viewer_id=user.id, cursor=cursor, limit=limit)
+    except InvalidCursor as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor"
+        ) from err
