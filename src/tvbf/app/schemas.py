@@ -290,3 +290,43 @@ class FriendRatingsResponse(BaseModel):
     avg: float | None
     count: int
     items: list[FriendRatingItem]
+
+
+FeedKind = Literal[
+    "added_show",
+    "watched_episode",
+    "watched_episode_run",
+    "watched_season",
+    "watched_show",
+    "rated_show",
+    "rated_episode",
+]
+
+
+class ShowMini(BaseModel):
+    id: int
+    name: str
+
+
+class EpisodeMini(BaseModel):
+    id: int
+    name: str | None
+    season: int
+    number: int
+
+
+class FeedItem(BaseModel):
+    id: str
+    actor: UserBrief
+    kind: FeedKind
+    show: ShowMini | None
+    episode: EpisodeMini | None
+    season_number: int | None
+    rollup_count: int | None
+    stars: float | None
+    occurred_at: datetime
+
+
+class FeedPage(BaseModel):
+    items: list[FeedItem]
+    next_cursor: str | None

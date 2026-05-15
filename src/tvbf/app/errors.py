@@ -57,3 +57,7 @@ class AuthTokenRateLimited(DomainError):
 
 class EmailChangePayloadMissing(DomainError):
     """Token has no payload — should be unreachable, but we surface it as 400."""
+
+
+class InvalidCursor(DomainError):
+    """Pagination cursor is malformed."""

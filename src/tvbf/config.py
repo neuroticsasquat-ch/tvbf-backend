@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     )
     ingest_stale_run_minutes: int = Field(default=15, alias="INGEST_STALE_RUN_MINUTES")
 
+    activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     cors_allowed_origins_raw: str = Field(
