@@ -93,6 +93,19 @@ class UserOut(BaseModel):
 class AuthedUserOut(UserOut):
     csrf_token: str
     activity_feed_enabled: bool
+    is_admin: bool
+
+
+class AdminUserOut(BaseModel):
+    id: UUID
+    email: str
+    display_name: str
+    created_at: datetime
+    is_admin: bool
+
+
+class AdminUserUpdateRequest(BaseModel):
+    is_admin: bool
 
 
 class MePreferencesUpdate(BaseModel):

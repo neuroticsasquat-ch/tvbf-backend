@@ -67,6 +67,7 @@ async def me(
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
         activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
@@ -93,6 +94,7 @@ async def update_me(
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
         activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
@@ -571,6 +573,7 @@ async def update_me_preferences(
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
         activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
