@@ -184,6 +184,19 @@ async def add(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     await db.commit()
 
 
+async def set_hide_from_activity(
+    db: AsyncSession, *, user_id: UUID, show_id: int, value: bool
+) -> bool:
+    """Update the hide_from_activity flag on a My Shows row. Returns True iff
+    the row existed; commits on success."""
+    updated = await show_membership_repo.set_hide_from_activity(
+        db, user_id=user_id, show_id=show_id, value=value
+    )
+    if updated:
+        await db.commit()
+    return updated
+
+
 async def remove(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     """Remove membership row (idempotent), commit."""
     await show_membership_repo.remove(db, user_id=user_id, show_id=show_id)
@@ -207,6 +220,9 @@ async def list_my_shows(
 
     show_ids_all = [show.id for show, _ in pairs]
     my_ratings = await show_rating_repo.get_many_for_user(
+        db, user_id=user_id, show_ids=show_ids_all
+    )
+    hide_flags = await show_membership_repo.get_hide_flags(
         db, user_id=user_id, show_ids=show_ids_all
     )
     if rated_only:
@@ -273,6 +289,7 @@ async def list_my_shows(
                 ),
                 added_at=added_at_by_show[show.id],
                 my_rating=my_ratings.get(show.id),
+                hide_from_activity=hide_flags.get(show.id, False),
             )
         )
 

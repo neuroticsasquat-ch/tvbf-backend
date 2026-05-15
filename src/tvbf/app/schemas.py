@@ -92,6 +92,19 @@ class UserOut(BaseModel):
 
 class AuthedUserOut(UserOut):
     csrf_token: str
+    activity_feed_enabled: bool
+
+
+class MePreferencesUpdate(BaseModel):
+    """Body for PATCH /me/preferences. Fields are optional (partial update)."""
+
+    activity_feed_enabled: bool | None = None
+
+
+class HideFromActivityUpdate(BaseModel):
+    """Body for PATCH /me/shows/{show_id}/hide-from-activity."""
+
+    hide_from_activity: bool
 
 
 class VerifyEmailRequest(BaseModel):
@@ -128,6 +141,7 @@ class MyShowEntry(BaseModel):
     next_episode: EpisodeOut | None = None
     added_at: datetime
     my_rating: float | None = None
+    hide_from_activity: bool = False
 
 
 class WatchNextEntry(BaseModel):

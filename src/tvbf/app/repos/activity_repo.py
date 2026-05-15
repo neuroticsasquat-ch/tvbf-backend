@@ -54,9 +54,19 @@ WITH joined AS (
             WHEN e.verb = 'rated_episode' THEN ep.show_id
         END AS resolved_show_id
     FROM app.activity_event e
+    JOIN app.user u ON u.id = e.actor_id AND u.activity_feed_enabled = TRUE
     LEFT JOIN tvmaze.episode ep
         ON e.target_type = 'episode' AND ep.id = e.target_id
+    LEFT JOIN app.user_show_watch usw
+        ON usw.user_id = e.actor_id
+       AND usw.show_id = CASE
+            WHEN e.verb = 'watched_episode' THEN ep.show_id
+            WHEN e.verb IN ('added_show','watched_season','watched_show','rated_show')
+                THEN e.target_id::int
+            WHEN e.verb = 'rated_episode' THEN ep.show_id
+        END
     WHERE e.actor_id = ANY(:friend_ids)
+      AND (usw.hide_from_activity IS NOT TRUE)
 ),
 gapped AS (
     SELECT

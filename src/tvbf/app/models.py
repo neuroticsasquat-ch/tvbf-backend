@@ -4,6 +4,7 @@ from uuid import UUID
 
 from sqlalchemy import (  # noqa: I001
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
@@ -61,6 +62,9 @@ class User(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+    activity_feed_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
 
 
 class Session(Base):
@@ -110,6 +114,9 @@ class UserShowWatch(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    hide_from_activity: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("FALSE")
     )
 
 
