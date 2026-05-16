@@ -1,19 +1,23 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID
 
 from sqlalchemy import (  # noqa: I001
     BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     PrimaryKeyConstraint,
     Text,
+    UniqueConstraint,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import CITEXT, INET
+from sqlalchemy.dialects.postgresql import CITEXT, INET, JSONB
 from sqlalchemy.dialects.postgresql import ENUM as PGEnum
 from sqlalchemy.dialects.postgresql import UUID as PGUUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -25,6 +29,14 @@ connection_state_enum = PGEnum(
     "accepted",
     "blocked",
     name="connection_state",
+    schema="app",
+)
+
+auth_token_purpose_enum = PGEnum(
+    "email_verification",
+    "password_reset",
+    "email_change",
+    name="auth_token_purpose",
     schema="app",
 )
 
@@ -41,12 +53,19 @@ class User(Base):
     email: Mapped[str] = mapped_column(CITEXT(), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
+    activity_feed_enabled: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
 
 
 class Session(Base):
@@ -96,6 +115,9 @@ class UserShowWatch(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    hide_from_activity: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("FALSE")
     )
 
 
@@ -194,3 +216,136 @@ class Connection(Base):
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class UserShowRating(Base):
+    __tablename__ = "user_show_rating"
+    __table_args__ = (
+        CheckConstraint(
+            "stars IN (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0)",
+            name="ck_user_show_rating_stars",
+        ),
+        UniqueConstraint("user_id", "show_id", name="uq_user_show_rating"),
+        Index("ix_user_show_rating_user_id", "user_id"),
+        Index("ix_user_show_rating_show_id", "show_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    show_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tvmaze.show.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stars: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)
+    rated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class UserEpisodeRating(Base):
+    __tablename__ = "user_episode_rating"
+    __table_args__ = (
+        CheckConstraint(
+            "stars IN (0.5,1.0,1.5,2.0,2.5,3.0,3.5,4.0,4.5,5.0)",
+            name="ck_user_episode_rating_stars",
+        ),
+        UniqueConstraint("user_id", "episode_id", name="uq_user_episode_rating"),
+        Index("ix_user_episode_rating_user_id", "user_id"),
+        Index("ix_user_episode_rating_episode_id", "episode_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    episode_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("tvmaze.episode.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    stars: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)
+    rated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
+class ActivityEvent(Base):
+    __tablename__ = "activity_event"
+    __table_args__ = (
+        UniqueConstraint(
+            "actor_id",
+            "verb",
+            "target_type",
+            "target_id",
+            "season_number",
+            name="uq_activity_event",
+            postgresql_nulls_not_distinct=True,
+        ),
+        Index("ix_activity_event_actor_created", "actor_id", "created_at"),
+        Index("ix_activity_event_target", "target_type", "target_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    actor_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    verb: Mapped[str] = mapped_column(Text, nullable=False)
+    target_type: Mapped[str] = mapped_column(Text, nullable=False)
+    target_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    season_number: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class AuthToken(Base):
+    __tablename__ = "auth_token"
+    __table_args__ = (
+        Index("ix_auth_token_token_hash", "token_hash"),
+        Index("ix_auth_token_user_purpose_created", "user_id", "purpose", "created_at"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    token_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    purpose: Mapped[str] = mapped_column(auth_token_purpose_enum, nullable=False)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
+    consumed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    payload: Mapped[dict | None] = mapped_column(JSONB, nullable=True)

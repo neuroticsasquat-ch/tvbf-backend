@@ -151,6 +151,20 @@ tasks:
         curl -sk https://api.tvbf.localhost/admin/backfill-akas/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  ratings:backfill:
+    desc: POST /admin/backfill-ratings
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-ratings
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  ratings:backfill:status:
+    desc: 'GET /admin/backfill-ratings/<id> — task ratings:backfill:status -- <uuid>'
+    cmds:
+      - >
+        curl -sk https://api.tvbf.localhost/admin/backfill-ratings/{{.CLI_ARGS}}
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
