@@ -2,6 +2,39 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.1.0] - 2026-05-16
+
+### Bug Fixes
+
+- Apply email_change enum value on alembic's own connection (#83)
+
+### Features
+
+- Add cookie-auth invite creation with email delivery and admin-scoped invite list (NEU-187) (#98)
+- Add is_admin column, require_admin_user dep, and admin user-management routes (NEU-185) (#97)
+- Add privacy columns, PATCH toggles, and feed filtering (NEU-180) (#96)
+- Add GET /me/feed with cursor pagination and read-time rollup (NEU-178) (#95)
+- Emit/cancel activity events from /me mutation services (NEU-174) (#94)
+- Add activity_event table and emit/cancel service (NEU-173) (#93)
+- Surface my_rating in browse and /me/shows; tighten browse cache (#92)
+- Add friend ratings endpoints (#91)
+- Add ratings backfill orchestrator and admin endpoints (#90)
+- Surface tvmaze rating_average through ingest and browse (#89)
+- Add user-rating tables and CRUD endpoints (#88)
+- Add GET /me/export streaming JSON endpoint (NEU-158) (#87)
+- Add session-revocation endpoints (NEU-155) (#86)
+- Add GET /me/sessions + debounce touch (NEU-152) (#85)
+- Add PATCH /me for display_name updates (NEU-149) (#84)
+- Add forgot-password + reset-password endpoints (NEU-146) (#82)
+- Add email-change request + confirm endpoints (NEU-143) (#81)
+- Add email-verification endpoints + signup auto-send (NEU-140) (#80)
+- Wire Resend + SMTP email provider module (#78)
+- Add auth_token table, repo, and service (#77)
+
+### Refactor
+
+- Make clients explicitly inherit from EmailClient protocol (#79)
+
 ## [2026-05-10] - 2026-05-10
 
 ### Bug Fixes
