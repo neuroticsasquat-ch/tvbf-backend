@@ -54,6 +54,39 @@ def render_password_reset_email(*, display_name: str, reset_url: str) -> tuple[s
     return subject, html_body, text
 
 
+def render_invite_email(*, code: str, email: str, signup_url: str) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the admin-issued invite message."""
+    subject = "You're invited to TV BingeFriend"
+    safe_email = html.escape(email)
+    safe_code = html.escape(code)
+    safe_url = html.escape(signup_url, quote=True)
+    text = (
+        f"Hi,\n\n"
+        f"You've been invited to TV BingeFriend. Use the link below to create\n"
+        f"your account — your invite code is prefilled:\n"
+        f"{signup_url}\n\n"
+        f"If the prefill doesn't take, sign up at the link above and enter the\n"
+        f"invite code manually:\n"
+        f"  Email: {email}\n"
+        f"  Invite code: {code}\n\n"
+        f"Invite codes never expire and are good for one use.\n"
+    )
+    html_body = (
+        f"<p>Hi,</p>"
+        f"<p>You've been invited to TV BingeFriend. Use the link below to create "
+        f"your account — your invite code is prefilled:</p>"
+        f'<p><a href="{safe_url}">{safe_url}</a></p>'
+        f"<p>If the prefill doesn't take, sign up at the link above and enter the "
+        f"invite code manually:</p>"
+        f"<ul>"
+        f"<li>Email: <strong>{safe_email}</strong></li>"
+        f"<li>Invite code: <strong>{safe_code}</strong></li>"
+        f"</ul>"
+        f"<p>Invite codes never expire and are good for one use.</p>"
+    )
+    return subject, html_body, text
+
+
 def render_email_change_email(
     *, display_name: str, new_email: str, confirm_url: str
 ) -> tuple[str, str, str]:

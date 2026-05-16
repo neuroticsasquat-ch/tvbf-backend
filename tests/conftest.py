@@ -58,13 +58,19 @@ def _stub_outbound_email():
         email_verification_service,
         password_reset_service,
     )
+    from tvbf.routers import admin_invites
 
     captured: list[dict[str, str]] = []
 
     async def _fake(*, to: str, subject: str, html: str, text: str) -> None:
         captured.append({"to": to, "subject": subject, "html": html, "text": text})
 
-    modules = (email_verification_service, email_change_service, password_reset_service)
+    modules = (
+        email_verification_service,
+        email_change_service,
+        password_reset_service,
+        admin_invites,
+    )
     originals = [m.send_email for m in modules]
     for m in modules:
         m.send_email = _fake  # type: ignore[assignment]
