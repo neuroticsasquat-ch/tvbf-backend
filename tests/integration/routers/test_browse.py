@@ -352,18 +352,19 @@ async def test_get_show_episodes_route_raises_404_for_unknown_id(seeded, viewer)
 # ---------------------------------------------------------------------------
 
 
-async def test_show_endpoints_set_short_private_cache(client):
-    """All show/episode browse endpoints carry private, max-age=60 (NEU-171)."""
-    short = "private, max-age=60"
-    assert (await client.get("/shows")).headers.get("cache-control") == short
-    assert (await client.get("/shows/1")).headers.get("cache-control") == short
-    assert (await client.get("/shows/1/seasons")).headers.get("cache-control") == short
-    assert (await client.get("/shows/1/episodes")).headers.get("cache-control") == short
-    # Pick the first episode id from /shows/1/episodes for the singleton route.
+async def test_show_endpoints_disable_browser_cache(client):
+    """Show/episode browse endpoints disable the browser HTTP cache so that
+    React Query refetches after rating/watch mutations don't read stale bodies
+    that revert the optimistic update."""
+    expected = "private, no-store"
+    assert (await client.get("/shows")).headers.get("cache-control") == expected
+    assert (await client.get("/shows/1")).headers.get("cache-control") == expected
+    assert (await client.get("/shows/1/seasons")).headers.get("cache-control") == expected
+    assert (await client.get("/shows/1/episodes")).headers.get("cache-control") == expected
     eps = (await client.get("/shows/1/episodes")).json()
     assert eps, "seed must have episodes for show 1"
     ep_id = eps[0]["id"]
-    assert (await client.get(f"/episodes/{ep_id}")).headers.get("cache-control") == short
+    assert (await client.get(f"/episodes/{ep_id}")).headers.get("cache-control") == expected
 
 
 async def test_genres_networks_keep_long_private_cache(client):

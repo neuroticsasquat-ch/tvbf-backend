@@ -47,7 +47,11 @@ async def list_networks(session: AsyncSession = Depends(get_session)) -> list:
     return await browse_queries.list_networks(session)
 
 
-_SHOW_EP_CACHE = "private, max-age=60"
+# These payloads carry per-user fields (my_rating, ...) that mutate via PUT
+# /me/... routes with no way to invalidate the browser HTTP cache. Any max-age
+# here causes React Query refetches after a rating change to read stale bodies
+# from the browser cache and revert the optimistic UI update.
+_SHOW_EP_CACHE = "private, no-store"
 
 
 @router.get("/shows", response_model=ShowListPage)
