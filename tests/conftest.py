@@ -56,6 +56,7 @@ def _stub_outbound_email():
     from tvbf.app.services import (
         email_change_service,
         email_verification_service,
+        feedback_service,
         password_reset_service,
     )
     from tvbf.routers import admin_invites
@@ -69,6 +70,7 @@ def _stub_outbound_email():
         email_verification_service,
         email_change_service,
         password_reset_service,
+        feedback_service,
         admin_invites,
     )
     originals = [m.send_email for m in modules]
