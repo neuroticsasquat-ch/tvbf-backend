@@ -23,6 +23,7 @@ from tvbf.routers import (
     connections,
     email_change,
     email_verification,
+    feedback,
     friend_engagement,
     health,
     invites_admin,
@@ -101,6 +102,7 @@ def create_app() -> FastAPI:
     app.include_router(me.router)
     app.include_router(email_verification.router)
     app.include_router(email_change.router)
+    app.include_router(feedback.router)
     app.include_router(password_reset.router)
     app.include_router(users.router)
     app.include_router(connections.router)
