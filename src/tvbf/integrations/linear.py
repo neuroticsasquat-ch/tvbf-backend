@@ -50,9 +50,13 @@ class LinearClient:
         self._http = http
 
     async def customer_upsert(self, *, external_id: str, name: str) -> str:
+        # Linear's CustomerUpsertInput uses `externalId` (singular string),
+        # not `externalIds` (plural array) — verified against prod after a
+        # 400 from the GraphQL endpoint citing "Field externalIds is not
+        # defined by type CustomerUpsertInput". Keep the singular form.
         data = await self._call(
             _CUSTOMER_UPSERT,
-            {"input": {"externalIds": [external_id], "name": name}},
+            {"input": {"externalId": external_id, "name": name}},
             "customerUpsert",
         )
         customer = data.get("customer") or {}

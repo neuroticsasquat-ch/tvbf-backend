@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 
 import httpx
@@ -39,8 +40,11 @@ async def test_customer_upsert_returns_id(http: httpx.AsyncClient) -> None:
     assert sent.headers["Content-Type"] == "application/json"
     body = sent.read().decode()
     assert "customerUpsert" in body
-    assert "tvbf-user-1" in body
-    assert "Alice" in body
+    # Pin the exact field name — Linear's CustomerUpsertInput uses
+    # `externalId` (singular). Plural `externalIds` is rejected with a
+    # 400 / GraphQL "Field externalIds is not defined" error in prod.
+    payload = json.loads(body)
+    assert payload["variables"]["input"] == {"externalId": "tvbf-user-1", "name": "Alice"}
 
 
 @respx.mock
