@@ -112,3 +112,29 @@ def render_email_change_email(
         "you can ignore this message and your email will stay the same.</p>"
     )
     return subject, html_body, text
+
+
+def render_feedback_notification(
+    *, from_email: str, from_display_name: str, subject: str, body: str, issue_url: str
+) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the maintainer notification sent
+    whenever a user submits feedback. Routed to FEEDBACK_NOTIFY_EMAIL."""
+    subject_line = f"[Feedback] {subject}"
+    safe_subject = html.escape(subject)
+    safe_body = html.escape(body)
+    safe_from_email = html.escape(from_email)
+    safe_from_name = html.escape(from_display_name)
+    safe_url = html.escape(issue_url, quote=True)
+    text = (
+        f"From: {from_display_name} <{from_email}>\n"
+        f"Subject: {subject}\n\n"
+        f"{body}\n\n"
+        f"Linear issue: {issue_url}\n"
+    )
+    html_body = (
+        f"<p><strong>From:</strong> {safe_from_name} &lt;{safe_from_email}&gt;</p>"
+        f"<p><strong>Subject:</strong> {safe_subject}</p>"
+        f'<pre style="white-space: pre-wrap; font-family: inherit;">{safe_body}</pre>'
+        f'<p><a href="{safe_url}">Open in Linear →</a></p>'
+    )
+    return subject_line, html_body, text

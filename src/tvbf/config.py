@@ -65,6 +65,13 @@ class Settings(BaseSettings):
     linear_team_id: str | None = Field(default=None, alias="LINEAR_TEAM_ID")
     linear_feedback_label_id: str | None = Field(default=None, alias="LINEAR_FEEDBACK_LABEL_ID")
 
+    # Optional recipient for a server-sent notification email each time a
+    # feedback issue is created. Linear itself suppresses notifications when
+    # the API actor is the recipient (i.e., when the personal API key is
+    # owned by the same human you'd want to notify), so this is a workaround
+    # without spinning up an OAuth app. Leave unset to disable.
+    feedback_notify_email: str | None = Field(default=None, alias="FEEDBACK_NOTIFY_EMAIL")
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]

@@ -26,7 +26,7 @@ _ISSUE_CREATE = """
 mutation IssueCreate($input: IssueCreateInput!) {
   issueCreate(input: $input) {
     success
-    issue { id }
+    issue { id url }
   }
 }
 """.strip()
@@ -72,7 +72,8 @@ class LinearClient:
         title: str,
         description: str,
         label_ids: list[str] | None = None,
-    ) -> str:
+    ) -> dict[str, str]:
+        """Returns `{"id": ..., "url": ...}` for the created issue."""
         payload: dict[str, Any] = {
             "teamId": team_id,
             "title": title,
@@ -83,9 +84,10 @@ class LinearClient:
         data = await self._call(_ISSUE_CREATE, {"input": payload}, "issueCreate")
         issue = data.get("issue") or {}
         iid = issue.get("id")
-        if not isinstance(iid, str):
-            raise LinearError("issueCreate returned no issue id")
-        return iid
+        iurl = issue.get("url")
+        if not isinstance(iid, str) or not isinstance(iurl, str):
+            raise LinearError("issueCreate returned no issue id/url")
+        return {"id": iid, "url": iurl}
 
     async def customer_need_create(
         self,

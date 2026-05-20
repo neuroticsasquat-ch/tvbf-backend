@@ -48,7 +48,7 @@ async def test_customer_upsert_returns_id(http: httpx.AsyncClient) -> None:
 
 
 @respx.mock
-async def test_issue_create_returns_id_with_labels(http: httpx.AsyncClient) -> None:
+async def test_issue_create_returns_id_and_url_with_labels(http: httpx.AsyncClient) -> None:
     respx.post("https://api.linear.app/graphql").mock(
         return_value=httpx.Response(
             200,
@@ -56,20 +56,23 @@ async def test_issue_create_returns_id_with_labels(http: httpx.AsyncClient) -> N
                 "data": {
                     "issueCreate": {
                         "success": True,
-                        "issue": {"id": "iss_456"},
+                        "issue": {
+                            "id": "iss_456",
+                            "url": "https://linear.app/example/issue/NEU-1",
+                        },
                     }
                 }
             },
         )
     )
     client = LinearClient(api_key="sk_test", http=http)
-    issue_id = await client.issue_create(
+    result = await client.issue_create(
         team_id="team_1",
         title="A subject",
         description="A body",
         label_ids=["lbl_1"],
     )
-    assert issue_id == "iss_456"
+    assert result == {"id": "iss_456", "url": "https://linear.app/example/issue/NEU-1"}
 
 
 @respx.mock

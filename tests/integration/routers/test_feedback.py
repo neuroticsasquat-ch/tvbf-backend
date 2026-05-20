@@ -19,6 +19,7 @@ class FakeLinear:
     calls: list[tuple[str, dict[str, Any]]] = field(default_factory=list)
     customer_upsert_id: str = "cust_123"
     issue_create_id: str = "iss_456"
+    issue_create_url: str = "https://linear.app/example/issue/NEU-1"
     raise_on: str | None = None
 
     async def customer_upsert(self, *, external_id: str, name: str) -> str:
@@ -34,7 +35,7 @@ class FakeLinear:
         title: str,
         description: str,
         label_ids: list[str] | None = None,
-    ) -> str:
+    ) -> dict[str, str]:
         self.calls.append(
             (
                 "issue_create",
@@ -48,7 +49,7 @@ class FakeLinear:
         )
         if self.raise_on == "issue_create":
             raise LinearError("boom")
-        return self.issue_create_id
+        return {"id": self.issue_create_id, "url": self.issue_create_url}
 
     async def customer_need_create(
         self, *, issue_id: str, customer_external_id: str, body: str
@@ -78,9 +79,11 @@ def feedback_enabled(fake_linear: FakeLinear):
     prior_enabled = settings.linear_feedback_enabled
     prior_team = settings.linear_team_id
     prior_label = settings.linear_feedback_label_id
+    prior_notify = settings.feedback_notify_email
     settings.linear_feedback_enabled = True
     settings.linear_team_id = "team_x"
     settings.linear_feedback_label_id = "lbl_x"
+    settings.feedback_notify_email = None
     app.dependency_overrides[get_linear_client] = lambda: fake_linear
     try:
         yield
@@ -88,6 +91,7 @@ def feedback_enabled(fake_linear: FakeLinear):
         settings.linear_feedback_enabled = prior_enabled
         settings.linear_team_id = prior_team
         settings.linear_feedback_label_id = prior_label
+        settings.feedback_notify_email = prior_notify
         app.dependency_overrides.pop(get_linear_client, None)
 
 
@@ -171,3 +175,34 @@ async def test_submit_feedback_disabled_returns_503(authed_client):
         assert r.status_code == 503
     finally:
         settings.linear_feedback_enabled = prior
+
+
+@pytest.mark.asyncio
+async def test_submit_feedback_sends_notification_email_when_configured(
+    authed_client, feedback_enabled, fake_linear, _stub_outbound_email
+):
+    settings = get_settings()
+    settings.feedback_notify_email = "tom@example.com"
+    r = await authed_client.post(
+        "/me/feedback",
+        json={"subject": "A subject", "body": "A body"},
+    )
+    assert r.status_code == 204, r.text
+    assert len(_stub_outbound_email) == 1
+    sent = _stub_outbound_email[0]
+    assert sent["to"] == "tom@example.com"
+    assert sent["subject"] == "[Feedback] A subject"
+    assert "A body" in sent["text"]
+    assert fake_linear.issue_create_url in sent["text"]
+
+
+@pytest.mark.asyncio
+async def test_submit_feedback_skips_notification_when_not_configured(
+    authed_client, feedback_enabled, _stub_outbound_email
+):
+    r = await authed_client.post(
+        "/me/feedback",
+        json={"subject": "A subject", "body": "A body"},
+    )
+    assert r.status_code == 204
+    assert _stub_outbound_email == []
