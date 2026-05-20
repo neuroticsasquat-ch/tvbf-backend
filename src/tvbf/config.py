@@ -58,6 +58,13 @@ class Settings(BaseSettings):
     # Public base URL of the SPA. Used to build links in transactional emails.
     frontend_base_url: str = Field(default="https://app.tvbf.localhost", alias="FRONTEND_BASE_URL")
 
+    # Linear feedback integration. Disabled by default; flip
+    # LINEAR_FEEDBACK_ENABLED=true once an API key + team id are configured.
+    linear_feedback_enabled: bool = Field(default=False, alias="LINEAR_FEEDBACK_ENABLED")
+    linear_api_key: str | None = Field(default=None, alias="LINEAR_API_KEY")
+    linear_team_id: str | None = Field(default=None, alias="LINEAR_TEAM_ID")
+    linear_feedback_label_id: str | None = Field(default=None, alias="LINEAR_FEEDBACK_LABEL_ID")
+
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
