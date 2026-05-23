@@ -7,6 +7,7 @@ from tvbf.app.models import User
 from tvbf.app.services import account_service
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
+from tvbf.integrations.linear import LinearClient
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
@@ -45,3 +46,20 @@ async def get_current_user(
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="auth_required")
     return user
+
+
+def require_admin_user(user: User = Depends(get_current_user)) -> User:
+    """Cookie-session admin gate. Distinct from `require_admin` (bearer-token)."""
+    if not user.is_admin:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="admin_required")
+    return user
+
+
+def get_linear_client(request: Request) -> LinearClient:
+    client = getattr(request.app.state, "linear_client", None)
+    if client is None:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Feedback is currently disabled.",
+        )
+    return client

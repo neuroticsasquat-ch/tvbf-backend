@@ -67,3 +67,34 @@ def test_settings_session_overrides_from_env(monkeypatch):
     assert s.session_ttl_days == 7
     assert s.cookie_secure is False
     assert s.cookie_samesite == "lax"
+
+
+def test_linear_settings_defaults(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    for key in (
+        "LINEAR_FEEDBACK_ENABLED",
+        "LINEAR_API_KEY",
+        "LINEAR_TEAM_ID",
+        "LINEAR_FEEDBACK_LABEL_ID",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.linear_feedback_enabled is False
+    assert s.linear_api_key is None
+    assert s.linear_team_id is None
+    assert s.linear_feedback_label_id is None
+
+
+def test_linear_settings_from_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("LINEAR_FEEDBACK_ENABLED", "true")
+    monkeypatch.setenv("LINEAR_API_KEY", "sk_x")
+    monkeypatch.setenv("LINEAR_TEAM_ID", "team_x")
+    monkeypatch.setenv("LINEAR_FEEDBACK_LABEL_ID", "lbl_x")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.linear_feedback_enabled is True
+    assert s.linear_api_key == "sk_x"
+    assert s.linear_team_id == "team_x"
+    assert s.linear_feedback_label_id == "lbl_x"

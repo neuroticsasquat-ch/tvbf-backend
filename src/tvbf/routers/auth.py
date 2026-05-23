@@ -11,51 +11,10 @@ from tvbf.app.schemas import (
 )
 from tvbf.app.services import account_service
 from tvbf.config import Settings, get_settings
+from tvbf.cookies import clear_auth_cookies, set_auth_cookies
 from tvbf.deps import get_current_user, get_session, require_csrf
 
 router = APIRouter(prefix="/auth", tags=["auth"])
-
-
-def _set_auth_cookies(
-    response: Response,
-    *,
-    session_id: str,
-    csrf: str,
-    settings: Settings,
-) -> None:
-    max_age = settings.session_ttl_days * 86400
-    response.set_cookie(
-        key=settings.session_cookie_name,
-        value=session_id,
-        max_age=max_age,
-        httponly=True,
-        secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite,  # type: ignore[arg-type]
-        path="/",
-        domain=settings.cookie_domain,
-    )
-    response.set_cookie(
-        key=settings.csrf_cookie_name,
-        value=csrf,
-        max_age=max_age,
-        httponly=False,
-        secure=settings.cookie_secure,
-        samesite=settings.cookie_samesite,  # type: ignore[arg-type]
-        path="/",
-        domain=settings.cookie_domain,
-    )
-
-
-def _clear_auth_cookies(response: Response, settings: Settings) -> None:
-    for name in (settings.session_cookie_name, settings.csrf_cookie_name):
-        response.delete_cookie(
-            key=name,
-            path="/",
-            secure=settings.cookie_secure,
-            samesite=settings.cookie_samesite,  # type: ignore[arg-type]
-            httponly=name == settings.session_cookie_name,
-            domain=settings.cookie_domain,
-        )
 
 
 @router.post("/signup", status_code=status.HTTP_201_CREATED, response_model=AuthedUserOut)
@@ -76,18 +35,22 @@ async def signup(
             ttl_days=settings.session_ttl_days,
             user_agent=request.headers.get("user-agent"),
             ip=request.client.host if request.client else None,
+            frontend_base_url=settings.frontend_base_url,
         )
     except InvalidInvite as err:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid_invite") from err
     except EmailInUse as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email_in_use") from err
-    _set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
+    set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
     return AuthedUserOut(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
@@ -114,13 +77,16 @@ async def login(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials"
         ) from err
-    _set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
+    set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
     return AuthedUserOut(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )
 
 
@@ -138,7 +104,7 @@ async def logout(
     sess_id = request.cookies.get(settings.session_cookie_name)
     if sess_id:
         await account_service.logout(db, session_id=sess_id)
-    _clear_auth_cookies(response, settings)
+    clear_auth_cookies(response, settings)
     response.status_code = status.HTTP_204_NO_CONTENT
     return response
 
@@ -170,11 +136,14 @@ async def change_password(
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials"
         ) from err
-    _set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
+    set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
     return AuthedUserOut(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
     )

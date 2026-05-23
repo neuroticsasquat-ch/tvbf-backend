@@ -10,6 +10,7 @@ from tvbf.app.repos import (
     episode_watch_repo,
     season_repo,
     show_membership_repo,
+    show_rating_repo,
     show_repo,
 )
 from tvbf.app.schemas import (
@@ -25,6 +26,7 @@ from tvbf.app.schemas import (
     WatchNextEntry,
     WatchNextSort,
 )
+from tvbf.app.services import activity_service
 from tvbf.sorting import show_name_sort_key
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
 from tvbf.tvmaze.models import Season, Show
@@ -89,6 +91,27 @@ def sort_my_shows(
         return sorted(entries, key=lambda e: show_name_sort_key(e.show.name), reverse=True)
     if sort == "added":
         return sorted(entries, key=lambda e: e.added_at, reverse=True)
+    if sort == "my_rating_desc":
+        # Rated rows first (rating not None) sorted by stars desc; unrated last;
+        # tie-break by name asc.
+        return sorted(
+            entries,
+            key=lambda e: (
+                0 if e.my_rating is not None else 1,
+                -(e.my_rating or 0.0),
+                show_name_sort_key(e.show.name),
+            ),
+        )
+    if sort == "my_rating_asc":
+        # Rated rows first sorted by stars asc; unrated last; tie-break by name asc.
+        return sorted(
+            entries,
+            key=lambda e: (
+                0 if e.my_rating is not None else 1,
+                e.my_rating if e.my_rating is not None else 0.0,
+                show_name_sort_key(e.show.name),
+            ),
+        )
     # recent_activity (default)
     return sorted(
         entries,
@@ -155,12 +178,31 @@ async def add(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     if show is None:
         raise NotFound()
     await show_membership_repo.add(db, user_id=user_id, show_id=show_id)
+    await activity_service.emit(
+        db, actor_id=user_id, verb="added_show", target_type="show", target_id=show_id
+    )
     await db.commit()
+
+
+async def set_hide_from_activity(
+    db: AsyncSession, *, user_id: UUID, show_id: int, value: bool
+) -> bool:
+    """Update the hide_from_activity flag on a My Shows row. Returns True iff
+    the row existed; commits on success."""
+    updated = await show_membership_repo.set_hide_from_activity(
+        db, user_id=user_id, show_id=show_id, value=value
+    )
+    if updated:
+        await db.commit()
+    return updated
 
 
 async def remove(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     """Remove membership row (idempotent), commit."""
     await show_membership_repo.remove(db, user_id=user_id, show_id=show_id)
+    await activity_service.cancel(
+        db, actor_id=user_id, verb="added_show", target_type="show", target_id=show_id
+    )
     await db.commit()
 
 
@@ -170,10 +212,23 @@ async def list_my_shows(
     user_id: UUID,
     sort: MyShowsSort = "recent_activity",
     today: date | None = None,
+    rated_only: bool = False,
 ) -> list[MyShowEntry]:
     pairs = await show_membership_repo.list_with_added_at(db, user_id)
     if not pairs:
         return []
+
+    show_ids_all = [show.id for show, _ in pairs]
+    my_ratings = await show_rating_repo.get_many_for_user(
+        db, user_id=user_id, show_ids=show_ids_all
+    )
+    hide_flags = await show_membership_repo.get_hide_flags(
+        db, user_id=user_id, show_ids=show_ids_all
+    )
+    if rated_only:
+        pairs = [(show, added) for (show, added) in pairs if show.id in my_ratings]
+        if not pairs:
+            return []
 
     shows = [show for show, _added in pairs]
     show_ids = [show.id for show in shows]
@@ -233,6 +288,8 @@ async def list_my_shows(
                     else None
                 ),
                 added_at=added_at_by_show[show.id],
+                my_rating=my_ratings.get(show.id),
+                hide_from_activity=hide_flags.get(show.id, False),
             )
         )
 

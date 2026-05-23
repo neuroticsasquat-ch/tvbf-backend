@@ -72,6 +72,7 @@ def _my_show(
     total: int = 0,
     next_ep: EpisodeOut | None = None,
     added_at: datetime | None = None,
+    my_rating: float | None = None,
 ) -> MyShowEntry:
     return MyShowEntry(
         show=_show_summary(id=id, name=name),
@@ -79,6 +80,7 @@ def _my_show(
         total_episode_count=total,
         next_episode=next_ep,
         added_at=added_at or datetime(2026, 1, 1, tzinfo=UTC),
+        my_rating=my_rating,
     )
 
 
@@ -173,6 +175,38 @@ def test_sort_my_shows_strips_leading_articles_for_alpha_sort():
     out = sort_my_shows(entries, "name_asc", latest_aired={})
     # Stripped keys: "awkward show", "lost", "office", "team"
     assert [e.show.id for e in out] == [4, 2, 1, 3]
+
+
+def test_sort_my_shows_my_rating_desc_rated_first_then_unrated():
+    entries = [
+        _my_show(id=1, name="A", my_rating=2.0),
+        _my_show(id=2, name="B", my_rating=4.5),
+        _my_show(id=3, name="C", my_rating=None),
+    ]
+    out = sort_my_shows(entries, "my_rating_desc", latest_aired={})
+    assert [e.show.id for e in out] == [2, 1, 3]
+
+
+def test_sort_my_shows_my_rating_asc_rated_first_then_unrated():
+    entries = [
+        _my_show(id=1, name="A", my_rating=2.0),
+        _my_show(id=2, name="B", my_rating=4.5),
+        _my_show(id=3, name="C", my_rating=None),
+    ]
+    out = sort_my_shows(entries, "my_rating_asc", latest_aired={})
+    assert [e.show.id for e in out] == [1, 2, 3]
+
+
+def test_sort_my_shows_my_rating_desc_ties_break_by_name_asc():
+    entries = [
+        _my_show(id=1, name="bravo", my_rating=4.0),
+        _my_show(id=2, name="alpha", my_rating=4.0),
+        _my_show(id=3, name="charlie", my_rating=None),
+        _my_show(id=4, name="delta", my_rating=None),
+    ]
+    out = sort_my_shows(entries, "my_rating_desc", latest_aired={})
+    # Rated (alpha, bravo same stars, name asc), then unrated (charlie, delta name asc).
+    assert [e.show.id for e in out] == [2, 1, 3, 4]
 
 
 def test_sort_my_shows_does_not_strip_articles_without_following_space():
@@ -326,6 +360,7 @@ def _show_model(
         image_original=None,
         network_id=network_id,
         web_channel_id=web_channel_id,
+        rating_average=None,
     )
 
 

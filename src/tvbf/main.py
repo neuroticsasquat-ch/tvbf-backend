@@ -3,6 +3,7 @@ import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+import httpx
 import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -12,15 +13,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
+from tvbf.integrations.linear import LinearClient
 from tvbf.routers import (
     admin,
+    admin_invites,
+    admin_users,
     auth,
     browse,
     connections,
+    email_change,
+    email_verification,
+    feedback,
     friend_engagement,
     health,
     invites_admin,
     me,
+    password_reset,
     users,
 )
 from tvbf.tvmaze.runs import mark_stale_runs_cancelled
@@ -58,7 +66,19 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     async with SessionLocal() as session:
         await run_startup_cleanup(session, stale_after_minutes=settings.ingest_stale_run_minutes)
         await session.commit()
-    yield
+
+    linear_http: httpx.AsyncClient | None = None
+    if settings.linear_feedback_enabled and settings.linear_api_key:
+        linear_http = httpx.AsyncClient(timeout=10.0)
+        app.state.linear_client = LinearClient(api_key=settings.linear_api_key, http=linear_http)
+    else:
+        app.state.linear_client = None
+
+    try:
+        yield
+    finally:
+        if linear_http is not None:
+            await linear_http.aclose()
 
 
 def create_app() -> FastAPI:
@@ -69,15 +89,21 @@ def create_app() -> FastAPI:
         CORSMiddleware,
         allow_origins=settings.cors_allowed_origins,
         allow_credentials=True,
-        allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+        allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
         allow_headers=["Content-Type", "X-CSRF-Token"],
     )
     app.include_router(health.router)
     app.include_router(admin.router)
+    app.include_router(admin_users.router)
+    app.include_router(admin_invites.router)
     app.include_router(invites_admin.router)
     app.include_router(browse.router)
     app.include_router(auth.router)
     app.include_router(me.router)
+    app.include_router(email_verification.router)
+    app.include_router(email_change.router)
+    app.include_router(feedback.router)
+    app.include_router(password_reset.router)
     app.include_router(users.router)
     app.include_router(connections.router)
     app.include_router(friend_engagement.router)
