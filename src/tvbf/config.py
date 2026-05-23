@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     )
     ingest_stale_run_minutes: int = Field(default=15, alias="INGEST_STALE_RUN_MINUTES")
 
+    activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
+
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")
 
     cors_allowed_origins_raw: str = Field(
@@ -41,6 +43,34 @@ class Settings(BaseSettings):
 
     login_lockout_threshold: int = Field(default=5, alias="LOGIN_LOCKOUT_THRESHOLD")
     login_lockout_window_minutes: int = Field(default=15, alias="LOGIN_LOCKOUT_WINDOW_MINUTES")
+
+    # Email transport. `smtp` is the default for local dev (Mailpit on the
+    # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
+    # in production.
+    email_provider: str = Field(default="smtp", alias="EMAIL_PROVIDER")
+    email_from_address: str = Field(
+        default="TV BingeFriend <no-reply@tvbf.localhost>", alias="EMAIL_FROM_ADDRESS"
+    )
+    resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
+    smtp_host: str = Field(default="mailpit", alias="SMTP_HOST")
+    smtp_port: int = Field(default=1025, alias="SMTP_PORT")
+
+    # Public base URL of the SPA. Used to build links in transactional emails.
+    frontend_base_url: str = Field(default="https://app.tvbf.localhost", alias="FRONTEND_BASE_URL")
+
+    # Linear feedback integration. Disabled by default; flip
+    # LINEAR_FEEDBACK_ENABLED=true once an API key + team id are configured.
+    linear_feedback_enabled: bool = Field(default=False, alias="LINEAR_FEEDBACK_ENABLED")
+    linear_api_key: str | None = Field(default=None, alias="LINEAR_API_KEY")
+    linear_team_id: str | None = Field(default=None, alias="LINEAR_TEAM_ID")
+    linear_feedback_label_id: str | None = Field(default=None, alias="LINEAR_FEEDBACK_LABEL_ID")
+
+    # Optional recipient for a server-sent notification email each time a
+    # feedback issue is created. Linear itself suppresses notifications when
+    # the API actor is the recipient (i.e., when the personal API key is
+    # owned by the same human you'd want to notify), so this is a workaround
+    # without spinning up an OAuth app. Leave unset to disable.
+    feedback_notify_email: str | None = Field(default=None, alias="FEEDBACK_NOTIFY_EMAIL")
 
     @property
     def cors_allowed_origins(self) -> list[str]:

@@ -84,7 +84,11 @@ class TVMazeClient:
             resp.raise_for_status()
             return resp
 
-    async def get_show(self, show_id: int) -> dict:
+    async def get_show(self, show_id: int, *, embed: list[str] | None = None) -> dict:
+        # `embed` is accepted for duck-typing with the ratings_backfill stub; the
+        # real client always embeds episodes + seasons since that's what the
+        # ingest/update/backfill paths need.
+        del embed
         url = f"{self._base_url}/shows/{show_id}"
         resp = await self._request(
             "GET", url, params=[("embed[]", "episodes"), ("embed[]", "seasons")]

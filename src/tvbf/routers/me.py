@@ -1,19 +1,30 @@
-from datetime import date
+from collections.abc import AsyncIterator
+from datetime import date, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Response, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import InvalidCredentials, NotFound
+from tvbf.app.errors import InvalidCredentials, InvalidCursor, NotFound
 from tvbf.app.models import User
 from tvbf.app.schemas import (
     AccountDeleteRequest,
     AuthedUserOut,
     BulkSeasonResult,
+    EpisodeRatingIn,
+    EpisodeRatingOut,
     EpisodeWatchOut,
+    FeedPage,
+    HideFromActivityUpdate,
+    MePreferencesUpdate,
+    MeUpdateRequest,
     MyShowEntry,
     MyShowsSort,
     SeasonProgress,
+    SessionSummary,
+    ShowRatingIn,
+    ShowRatingOut,
     UpcomingEntry,
     UpcomingSeasonEntry,
     UpcomingShowEntry,
@@ -24,8 +35,18 @@ from tvbf.app.schemas import (
     WatchNextEntry,
     WatchNextSort,
 )
-from tvbf.app.services import account_service, episode_service, my_shows_service
+from tvbf.app.services import (
+    account_service,
+    episode_service,
+    export_service,
+    feed_service,
+    my_shows_service,
+    rating_service,
+    session_service,
+)
 from tvbf.config import Settings, get_settings
+from tvbf.cookies import clear_auth_cookies
+from tvbf.db import SessionLocal
 from tvbf.deps import get_current_user, get_session, require_csrf
 
 router = APIRouter(tags=["me"])
@@ -43,7 +64,122 @@ async def me(
         email=user.email,
         display_name=user.display_name,
         created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
         csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
+    )
+
+
+@router.patch(
+    "/me",
+    response_model=AuthedUserOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def update_me(
+    payload: MeUpdateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AuthedUserOut:
+    user.display_name = payload.display_name
+    await db.commit()
+    csrf = request.cookies.get(settings.csrf_cookie_name, "")
+    return AuthedUserOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
+        csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
+    )
+
+
+@router.get("/me/sessions", response_model=list[SessionSummary])
+async def list_my_sessions(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> list[SessionSummary]:
+    current_session_id = request.cookies.get(settings.session_cookie_name)
+    return await session_service.list_for_user(
+        db, user_id=user.id, current_session_id=current_session_id
+    )
+
+
+@router.delete(
+    "/me/sessions/{session_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def revoke_session(
+    session_id: Annotated[str, Path()],
+    request: Request,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> Response:
+    try:
+        await session_service.revoke(db, user_id=user.id, session_id=session_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    # If the caller just revoked the session they're using, drop their cookies
+    # so subsequent requests aren't surprised by an invalidated session.
+    current = request.cookies.get(settings.session_cookie_name)
+    if current == session_id:
+        clear_auth_cookies(response, settings)
+    response.status_code = status.HTTP_204_NO_CONTENT
+    return response
+
+
+@router.post(
+    "/me/sessions/revoke-others",
+    dependencies=[Depends(require_csrf)],
+)
+async def revoke_other_sessions(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> dict[str, int]:
+    current = request.cookies.get(settings.session_cookie_name)
+    if not current:
+        # Without a current session id we can't safely scope "others" — but
+        # we shouldn't be reachable here, since get_current_user already
+        # required a valid session cookie.
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="auth_required")
+    revoked = await session_service.revoke_others(db, user_id=user.id, current_session_id=current)
+    return {"revoked": revoked}
+
+
+@router.get("/me/export")
+async def export_my_data(
+    user: User = Depends(get_current_user),
+) -> StreamingResponse:
+    """Stream the requesting user's account-level data as a JSON document.
+
+    We open a dedicated AsyncSession here (rather than depending on
+    `get_session`) because the `get_session` dependency closes its session as
+    soon as the route function returns — before the StreamingResponse body
+    starts being consumed. The session needs to outlive every `yield` in the
+    generator, so we own its lifecycle inline.
+    """
+
+    async def _body() -> AsyncIterator[str]:
+        async with SessionLocal() as db:
+            async for chunk in export_service.stream_export(db, user=user):
+                yield chunk
+
+    filename = f"tvbf-export-{datetime.now().date().isoformat()}.json"
+    return StreamingResponse(
+        _body(),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -75,10 +211,13 @@ async def delete_me(
 async def list_my_shows_route(
     sort: Annotated[MyShowsSort, Query()] = "recent_activity",
     today: Annotated[date | None, Query()] = None,
+    rated_only: Annotated[bool, Query()] = False,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session),
 ) -> list[MyShowEntry]:
-    return await my_shows_service.list_my_shows(db, user_id=user.id, sort=sort, today=today)
+    return await my_shows_service.list_my_shows(
+        db, user_id=user.id, sort=sort, today=today, rated_only=rated_only
+    )
 
 
 @router.put(
@@ -305,4 +444,153 @@ async def bulk_unmark_show(
     db: AsyncSession = Depends(get_session),
 ) -> Response:
     await episode_service.bulk_unmark_show(db, user_id=user.id, show_id=show_id)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Ratings (show + episode)
+# ---------------------------------------------------------------------------
+
+
+@router.put(
+    "/me/shows/{show_id}/rating",
+    response_model=ShowRatingOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_show_rating(
+    payload: ShowRatingIn,
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> ShowRatingOut:
+    try:
+        out = await rating_service.set_show_rating(
+            db, user_id=user.id, show_id=show_id, stars=payload.stars
+        )
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="show_not_found") from err
+    await db.commit()
+    return out
+
+
+@router.delete(
+    "/me/shows/{show_id}/rating",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def clear_show_rating(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await rating_service.clear_show_rating(db, user_id=user.id, show_id=show_id)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.put(
+    "/me/episodes/{episode_id}/rating",
+    response_model=EpisodeRatingOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_episode_rating(
+    payload: EpisodeRatingIn,
+    episode_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> EpisodeRatingOut:
+    try:
+        out = await rating_service.set_episode_rating(
+            db, user_id=user.id, episode_id=episode_id, stars=payload.stars
+        )
+    except NotFound as err:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="episode_not_found"
+        ) from err
+    await db.commit()
+    return out
+
+
+@router.delete(
+    "/me/episodes/{episode_id}/rating",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def clear_episode_rating(
+    episode_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    await rating_service.clear_episode_rating(db, user_id=user.id, episode_id=episode_id)
+    await db.commit()
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+# ---------------------------------------------------------------------------
+# Friend activity feed
+# ---------------------------------------------------------------------------
+
+
+@router.get("/me/feed", response_model=FeedPage)
+async def get_feed(
+    response: Response,
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> FeedPage:
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await feed_service.list_feed(db, viewer_id=user.id, cursor=cursor, limit=limit)
+    except InvalidCursor as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor"
+        ) from err
+
+
+# ---------------------------------------------------------------------------
+# Privacy preferences (NEU-180)
+# ---------------------------------------------------------------------------
+
+
+@router.patch("/me/preferences", response_model=AuthedUserOut, dependencies=[Depends(require_csrf)])
+async def update_me_preferences(
+    payload: MePreferencesUpdate,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AuthedUserOut:
+    if payload.activity_feed_enabled is not None:
+        user.activity_feed_enabled = payload.activity_feed_enabled
+    await db.commit()
+    csrf = request.cookies.get(settings.csrf_cookie_name, "")
+    return AuthedUserOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
+        csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
+    )
+
+
+@router.patch(
+    "/me/shows/{show_id}/hide-from-activity",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_hide_from_activity(
+    show_id: Annotated[int, Path()],
+    payload: HideFromActivityUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    updated = await my_shows_service.set_hide_from_activity(
+        db, user_id=user.id, show_id=show_id, value=payload.hide_from_activity
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_in_my_shows")
     return Response(status_code=status.HTTP_204_NO_CONTENT)

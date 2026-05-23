@@ -58,6 +58,12 @@ class TVMazeImage(BaseModel):
     original: str | None = None
 
 
+class TVMazeRating(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    average: float | None = None
+
+
 class TVMazeEpisode(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
@@ -70,6 +76,11 @@ class TVMazeEpisode(BaseModel):
     runtime: int | None = None
     summary: str | None = None
     image: TVMazeImage | None = None
+    rating: TVMazeRating | None = None
+
+    @property
+    def rating_average(self) -> float | None:
+        return self.rating.average if self.rating else None
 
 
 class TVMazeSeason(BaseModel):
@@ -121,4 +132,9 @@ class TVMazeShow(BaseModel):
     webChannel: TVMazeNetwork | None = None
     genres: list[str] = Field(default_factory=list)
     updated: int
+    rating: TVMazeRating | None = None
     embedded: TVMazeEmbedded = Field(default_factory=TVMazeEmbedded, alias="_embedded")
+
+    @property
+    def rating_average(self) -> float | None:
+        return self.rating.average if self.rating else None
