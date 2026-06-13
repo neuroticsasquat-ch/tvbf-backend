@@ -14,7 +14,7 @@ dependencies = [
     "httpx>=0.28",
     "argon2-cffi>=25.1.0",
     "email-validator>=2.0.0",
-    "sentry-sdk[fastapi]>=2.61.1",
+    "sentry-sdk[fastapi]>=2.62.0",
 ]
 
 [project.optional-dependencies]
@@ -23,7 +23,7 @@ dev = [
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=6.0",
     "respx>=0.23.1",
-    "ruff>=0.15.16",
+    "ruff>=0.15.17",
     "pyright>=1.1.410",
     "httpx>=0.28",
 ]
