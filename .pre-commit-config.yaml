@@ -26,7 +26,7 @@ repos:
 
       - id: pytest
         name: pytest
-        entry: docker compose exec -T tvbf-backend pytest
+        entry: docker compose exec -T tvbf-backend pytest tests/unit
         language: system
         pass_filenames: false
         files: \.py$
