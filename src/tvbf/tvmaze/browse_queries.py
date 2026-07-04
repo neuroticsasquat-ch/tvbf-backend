@@ -1,6 +1,7 @@
+import unicodedata
 from uuid import UUID
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import false, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.repos import episode_rating_repo, show_rating_repo
@@ -118,6 +119,29 @@ async def get_show_episodes(
     return list(result.scalars().all())
 
 
+def _fold(expr):
+    """Accent- and punctuation-folded form of a text SQL expression or value.
+
+    Strips punctuation and whitespace (preserving letters of every script),
+    lowercases, then removes diacritics via the ``unaccent`` extension. Applied
+    identically to the searched column and to the query token so both sides of
+    the comparison normalize under the same rules — "shogun" matches "Shōgun"
+    and "spiderman" matches "Spider-Man", while non-Latin scripts pass through
+    unchanged so native-title search keeps working.
+    """
+    stripped = func.regexp_replace(expr, "[[:punct:][:space:]]+", "", "g")
+    return func.immutable_unaccent(func.lower(stripped))
+
+
+def _strip_punct_space(token: str) -> str:
+    """Token with punctuation and whitespace removed. Used only to detect tokens
+    that fold to nothing (e.g. "--"): ``unaccent`` never maps a non-empty letter
+    to empty, so emptiness depends solely on the punctuation/space strip."""
+    return "".join(
+        c for c in token if not (unicodedata.category(c)[0] in ("P", "Z") or c.isspace())
+    )
+
+
 async def list_shows(
     session: AsyncSession,
     filters: ShowFilters,
@@ -130,15 +154,19 @@ async def list_shows(
 
     base = select(m.Show)
     if filters.search:
-        # Token-based AND match: every whitespace-separated token must appear
-        # as a substring (case-insensitive) of the show name OR any of its AKAs.
-        # Lets "alien earth" match "Alien: Earth", "the office us" match
-        # "The Office (US)", and "tokyo revengers" match a Japanese-titled show
-        # whose English AKA is "Tokyo Revengers".
-        for token in filters.search.split():
-            needle = f"%{token}%"
-            aka_subq = select(m.ShowAka.show_id).where(m.ShowAka.name.ilike(needle))
-            base = base.where(or_(m.Show.name.ilike(needle), m.Show.id.in_(aka_subq)))
+        # Token-based AND match against an accent- and punctuation-folded form of
+        # the show name OR any of its AKAs. Folding both the column and the token
+        # lets "shogun" match "Shōgun" and "spiderman" match "Spider-Man", while
+        # whitespace tokenization keeps "alien earth" matching "Alien: Earth" and
+        # non-Latin titles ("進撃") still match natively.
+        usable = [t for t in filters.search.split() if _strip_punct_space(t)]
+        if not usable:
+            # Search was all punctuation/whitespace — match nothing, not everything.
+            base = base.where(false())
+        for token in usable:
+            needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
+            aka_subq = select(m.ShowAka.show_id).where(_fold(m.ShowAka.name).like(needle))
+            base = base.where(or_(_fold(m.Show.name).like(needle), m.Show.id.in_(aka_subq)))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:
@@ -184,27 +212,35 @@ async def hydrate_matched_aka(
     if not search or not shows:
         return {}
 
-    tokens = search.split()
+    tokens = [t for t in search.split() if _strip_punct_space(t)]
     if not tokens:
         return {}
 
     show_ids = [s.id for s in shows]
 
+    # Best (shortest) AKA per show that matches every folded token.
     aka_query = select(m.ShowAka.show_id, m.ShowAka.name).where(m.ShowAka.show_id.in_(show_ids))
     for token in tokens:
-        aka_query = aka_query.where(m.ShowAka.name.ilike(f"%{token}%"))
-
+        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
+        aka_query = aka_query.where(_fold(m.ShowAka.name).like(needle))
     aka_rows = (await session.execute(aka_query)).all()
     best_by_show: dict[int, str] = {}
     for sid, aname in aka_rows:
         if sid not in best_by_show or len(aname) < len(best_by_show[sid]):
             best_by_show[sid] = aname
 
+    # Which shows matched on their own (folded) name? Determined in SQL so the
+    # rule is identical to list_shows — a Python unaccent would diverge on
+    # characters like ł/ø that NFKD does not decompose.
+    name_query = select(m.Show.id).where(m.Show.id.in_(show_ids))
+    for token in tokens:
+        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
+        name_query = name_query.where(_fold(m.Show.name).like(needle))
+    name_matched_ids = set((await session.execute(name_query)).scalars().all())
+
     result: dict[int, str | None] = {}
-    lower_tokens = [t.lower() for t in tokens]
     for show in shows:
-        name_lower = (show.name or "").lower()
-        if all(t in name_lower for t in lower_tokens):
+        if show.id in name_matched_ids:
             result[show.id] = None
         else:
             result[show.id] = best_by_show.get(show.id)

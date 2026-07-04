@@ -35,6 +35,16 @@ async def test_engine():
         await conn.execute(text("CREATE SCHEMA app"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
+        await conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
+        await conn.execute(
+            text("""
+            CREATE OR REPLACE FUNCTION immutable_unaccent(text)
+            RETURNS text
+            LANGUAGE sql
+            IMMUTABLE STRICT
+            AS $$ SELECT public.unaccent($1) $$
+        """)
+        )
         await conn.run_sync(Base.metadata.create_all)
     yield engine
     async with engine.begin() as conn:

@@ -1,5 +1,8 @@
 name: Daily TV Maze update
 
+# Required configuration (repo Settings → Secrets and variables → Actions):
+#   secret  TVBF_ADMIN_TOKEN  — must match the API's ADMIN_TOKEN
+
 on:
   schedule:
     - cron: '0 9 * * *'  # 09:00 UTC daily
