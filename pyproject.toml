@@ -15,6 +15,13 @@ dependencies = [
     "argon2-cffi>=25.1.0",
     "email-validator>=2.0.0",
     "sentry-sdk[fastapi]>=2.63.0",
+    "opentelemetry-distro",
+    "opentelemetry-exporter-otlp-proto-http",
+    "opentelemetry-instrumentation-fastapi",
+    "opentelemetry-instrumentation-sqlalchemy",
+    "opentelemetry-instrumentation-asyncpg",
+    "opentelemetry-instrumentation-httpx",
+    "opentelemetry-instrumentation-logging",
 ]
 
 [project.optional-dependencies]
