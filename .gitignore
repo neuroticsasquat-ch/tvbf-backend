@@ -175,3 +175,17 @@ $RECYCLE.BIN/
 .directory
 .Trash-*
 .nfs*
+
+# =============================================================================
+# One-off data imports (scripts/import_next_episode/)
+# =============================================================================
+# Generated per run, and full of real user data: staging.sql embeds every show
+# title and watch mark from the export, and review.csv lists the titles an
+# account tracks. Both are reproducible from the export plus
+# manual_resolutions.sql, so there is nothing to preserve and a real privacy
+# reason not to commit them.
+scripts/import_next_episode/staging.sql
+scripts/import_next_episode/review.csv
+# Raw exports and pre-write DB snapshots, if anyone parks them here.
+scripts/import_next_episode/*.json.html
+scripts/import_next_episode/*snapshot*/
