@@ -11,6 +11,7 @@ from tvbf.tvmaze.api_payloads import (
     TVMazeCharacter,
     TVMazeCrewEntry,
     TVMazeEpisode,
+    TVMazeGuestCastCredit,
     TVMazeNetwork,
     TVMazePerson,
     TVMazeSeason,
@@ -441,4 +442,93 @@ async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
     """Set the show's credits_synced_at to now()."""
     await session.execute(
         update(m.Show).where(m.Show.id == show_id).values(credits_synced_at=datetime.now(UTC))
+    )
+
+
+async def insert_missing_characters(
+    session: AsyncSession, characters: list[TVMazeCharacter]
+) -> None:
+    """Create character rows that don't exist yet, leaving existing ones alone.
+
+    Deliberately NOT `upsert_characters`. A guest credit only carries a
+    character's id and name, never its image, so upserting would null the
+    `image_medium` / `image_original` the show axis wrote from the full
+    embedded object — and a link with no name would overwrite a real name with
+    "". Same reasoning that keeps pass C off `castcredits`: the show side is
+    authoritative for anything the person side sees only a link to.
+    """
+    if not characters:
+        return
+    seen: dict[int, TVMazeCharacter] = {c.id: c for c in characters}
+    rows = [{"id": c.id, "name": c.name} for c in seen.values()]
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        await session.execute(
+            insert(m.Character)
+            .values(rows[start : start + _CREDIT_BATCH_SIZE])
+            .on_conflict_do_nothing(index_elements=[m.Character.id])
+        )
+
+
+async def upsert_person_guest_cast(
+    session: AsyncSession, *, person_id: int, credits: list[TVMazeGuestCastCredit]
+) -> None:
+    """Replace this PERSON's guest-cast rows. Caller owns the transaction.
+
+    The grain is per-person, not per-episode. Guest credits are only reachable
+    from the person side, and every row on an episode belongs to a different
+    person, so deleting by episode would wipe other people's credits on the
+    same episode. This is the single easiest thing to get wrong here.
+
+    Credits missing either link id are skipped — there is nothing to point the
+    FKs at. Credits pointing at an episode we don't mirror raise on the FK
+    rather than being dropped: ~6% of guest-credited episodes are specials, so
+    a nonzero rate of these means pass A never landed and the run should stop,
+    not quietly write a partial person and stamp the watermark.
+    """
+    await session.execute(
+        delete(m.EpisodeGuestCast).where(m.EpisodeGuestCast.person_id == person_id)
+    )
+    # Resolve both link ids up front so the rest of the function works with
+    # plain ints rather than re-parsing the hrefs on every access.
+    usable: list[tuple[int, int, TVMazeGuestCastCredit]] = []
+    for credit in credits:
+        episode_id, character_id = credit.episode_id, credit.character_id
+        if episode_id is None or character_id is None:
+            continue
+        usable.append((episode_id, character_id, credit))
+    if not usable:
+        return
+
+    await insert_missing_characters(
+        session,
+        [TVMazeCharacter(id=cid, name=c.character_name or "") for _, cid, c in usable],
+    )
+
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[int, int]] = set()
+    for episode_id, character_id, c in usable:
+        key = (episode_id, character_id)
+        if key in seen:
+            continue  # the same credit sent twice upstream is one credit
+        seen.add(key)
+        rows.append(
+            {
+                "episode_id": episode_id,
+                "person_id": person_id,
+                "character_id": character_id,
+                "is_self": c.is_self,
+                "is_voice": c.is_voice,
+                "sort_order": len(rows),
+            }
+        )
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        await session.execute(
+            insert(m.EpisodeGuestCast).values(rows[start : start + _CREDIT_BATCH_SIZE])
+        )
+
+
+async def mark_person_credits_synced(session: AsyncSession, *, person_id: int) -> None:
+    """Set the person's credits_synced_at to now() — pass C's watermark."""
+    await session.execute(
+        update(m.Person).where(m.Person.id == person_id).values(credits_synced_at=datetime.now(UTC))
     )
