@@ -1,3 +1,4 @@
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
@@ -5,6 +6,12 @@ from sqlalchemy import desc, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
+
+# Run kinds that share one `last_update_cursor` lineage. Each ingest axis has
+# its own: the initial ingest sets the cursor and the daily delta advances it,
+# so the two kinds must be read together. Axes must NOT see each other's.
+SHOW_CURSOR_KINDS: tuple[str, ...] = ("initial", "update")
+PERSON_CURSOR_KINDS: tuple[str, ...] = ("person_initial", "person_update")
 
 
 async def create_run(session: AsyncSession, kind: str) -> UUID:
@@ -46,10 +53,31 @@ async def finalize_run(
     await session.execute(update(m.IngestRun).where(m.IngestRun.id == run_id).values(**values))
 
 
-async def get_last_successful_cursor(session: AsyncSession) -> int | None:
+async def get_last_successful_cursor(
+    session: AsyncSession, *, kinds: Sequence[str] = SHOW_CURSOR_KINDS
+) -> int | None:
+    """Latest `last_update_cursor` across a cursor lineage.
+
+    Scoped to a lineage on purpose. `ingest_run.last_update_cursor` is one
+    column shared by every run kind, so an unscoped query returns whichever
+    run finished most recently regardless of what produced it. Once a second
+    axis stores a watermark there too, each delta would resume from the
+    other's position — and since every cursor is a TV Maze epoch, nothing
+    errors: work is just silently skipped.
+
+    Scoped by lineage rather than by a single kind because the initial ingest
+    hands its cursor to the first daily delta (see `ingest.py`, which
+    finalizes an `initial` run with `last_update_cursor`). Narrowing to
+    `kind == "update"` would break that handoff and make the first delta after
+    an ingest re-fetch the whole catalog.
+    """
     result = await session.execute(
         select(m.IngestRun.last_update_cursor)
-        .where(m.IngestRun.status == "succeeded", m.IngestRun.last_update_cursor.is_not(None))
+        .where(
+            m.IngestRun.kind.in_(tuple(kinds)),
+            m.IngestRun.status == "succeeded",
+            m.IngestRun.last_update_cursor.is_not(None),
+        )
         .order_by(desc(m.IngestRun.finished_at))
         .limit(1)
     )
