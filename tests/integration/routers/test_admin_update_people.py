@@ -27,8 +27,31 @@ async def admin_client(session, monkeypatch):
         yield client
 
 
+@pytest.fixture
+def inert_background_delta(monkeypatch):
+    """Give the route an inert coroutine to spawn instead of the real delta.
+
+    Without this the spawned task outlives the test — `@respx.mock` only covers
+    the test function's own lifetime — so it reaches the real TV Maze API and
+    writes to the test database while later tests are running. That surfaces as
+    a deadlock against the conftest's teardown `TRUNCATE`, several files away
+    from the test that caused it.
+
+    Patching `_background_person_update` rather than `asyncio.create_task`:
+    the latter is the real asyncio module, which SQLAlchemy's session teardown
+    also calls (`asyncio.shield`), so stubbing it breaks the request itself.
+    """
+
+    async def _noop(run_id, settings) -> None:
+        return None
+
+    monkeypatch.setattr("tvbf.routers.admin._background_person_update", _noop)
+
+
 @respx.mock
-async def test_update_people_post_returns_202_and_creates_run(admin_client, session):
+async def test_update_people_post_returns_202_and_creates_run(
+    admin_client, session, inert_background_delta
+):
     resp = await admin_client.post("/admin/update-people", headers={"Authorization": "Bearer shh"})
     assert resp.status_code == 202, resp.text
     run_id = uuid.UUID(resp.json()["run_id"])
