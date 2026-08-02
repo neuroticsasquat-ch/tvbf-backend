@@ -15,6 +15,7 @@ from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.ratings_backfill import run_ratings_backfill
 from tvbf.tvmaze.runs import create_run, finalize_run
+from tvbf.tvmaze.show_refresh import run_show_refresh
 from tvbf.tvmaze.update import run_update
 
 log = logging.getLogger(__name__)
@@ -109,6 +110,27 @@ async def _background_backfill_ratings(run_id: UUID, settings: Settings) -> None
             await s.commit()
 
 
+async def _background_show_refresh(run_id: UUID, settings: Settings) -> None:
+    try:
+        async with TVMazeClient(
+            base_url=settings.tvmaze_base_url,
+            rate_calls=settings.tvmaze_rate_limit_requests,
+            rate_window=settings.tvmaze_rate_limit_window_seconds,
+            retry_max_attempts=settings.tvmaze_retry_max_attempts,
+        ) as client:
+            await run_show_refresh(
+                session_factory=_session_factory,
+                client=client,
+                run_id=run_id,
+                failure_threshold=settings.ingest_consecutive_failure_threshold,
+            )
+    except Exception as e:
+        log.exception("background show refresh crashed")
+        async with SessionLocal() as s:
+            await finalize_run(s, run_id, status="failed", error=str(e))
+            await s.commit()
+
+
 def _serialize_run(row: m.IngestRun) -> dict:
     return {
         "id": str(row.id),
@@ -197,5 +219,28 @@ async def get_backfill_ratings_status(
         await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))
     ).scalar_one_or_none()
     if row is None or row.kind != "ratings_backfill":
+        raise HTTPException(status_code=404, detail="run not found")
+    return _serialize_run(row)
+
+
+@router.post("/refresh-shows", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_show_refresh(
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    run_id = await create_run(session, kind="show_refresh")
+    await session.commit()
+    asyncio.create_task(_background_show_refresh(run_id, settings))
+    return {"run_id": str(run_id)}
+
+
+@router.get("/refresh-shows/{run_id}")
+async def get_show_refresh_status(
+    run_id: UUID, session: AsyncSession = Depends(get_session)
+) -> dict:
+    row = (
+        await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))
+    ).scalar_one_or_none()
+    if row is None or row.kind != "show_refresh":
         raise HTTPException(status_code=404, detail="run not found")
     return _serialize_run(row)
