@@ -14,6 +14,8 @@ from tvbf.tvmaze.schemas import (
     GenreOut,
     NetworkOut,
     NetworkRef,
+    PersonCreditsOut,
+    PersonOut,
     SeasonOut,
     ShowDetail,
     ShowFilters,
@@ -21,6 +23,7 @@ from tvbf.tvmaze.schemas import (
     ShowSummary,
     build_cast_member,
     build_crew_member,
+    build_person_credits,
     build_show_detail,
     build_show_summary,
 )
@@ -188,6 +191,38 @@ async def get_show_crew_route(
         build_crew_member(person, role)
         for person, role in await browse_queries.list_show_crew(session, show_id)
     ]
+
+
+# Person routes carry no per-user fields, so both take the router-level
+# `private, max-age=300` rather than the `no-store` the show/episode routes need.
+@router.get("/people/{person_id}", response_model=PersonOut)
+async def get_person_route(
+    person_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> PersonOut:
+    person = await browse_queries.get_person(session, person_id)
+    if person is None:
+        raise HTTPException(status_code=404, detail="person not found")
+    return PersonOut.model_validate(person)
+
+
+# Filmography is split off from the detail route for the same reason show cast
+# is: it's unbounded (Zachary Levi has 61 guest credits alone) while the detail
+# payload renders a header card.
+@router.get("/people/{person_id}/credits", response_model=PersonCreditsOut)
+async def get_person_credits_route(
+    person_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> PersonCreditsOut:
+    # Plenty of people in the mirror have no credits at all, so an empty result
+    # can't stand in for a missing person. Check existence explicitly.
+    if not await browse_queries.person_exists(session, person_id):
+        raise HTTPException(status_code=404, detail="person not found")
+    return build_person_credits(
+        await browse_queries.list_person_cast_credits(session, person_id),
+        await browse_queries.list_person_crew_credits(session, person_id),
+        await browse_queries.list_person_guest_credits(session, person_id),
+    )
 
 
 @router.get("/episodes/{episode_id}", response_model=EpisodeOut)
