@@ -207,15 +207,30 @@ async def upsert_episodes(
         await session.execute(stmt)
 
 
-async def upsert_show_payload(session: AsyncSession, show: TVMazeShow) -> int:
+async def upsert_show_payload(
+    session: AsyncSession,
+    show: TVMazeShow,
+    *,
+    episodes: list[TVMazeEpisode] | None = None,
+) -> int:
     """Upsert a complete show payload (show + its genres + seasons + episodes) in order.
+
+    `episodes` supplements the embedded episode list. `embed[]=episodes`
+    silently omits specials (episodes with a null `number`), so callers pass the
+    `/shows/{id}/episodes?specials=1` result here instead. The two lists are
+    merged on episode id with `episodes` winning, which means a caller that
+    skips the embed entirely can pass the full list, and a caller whose specials
+    fetch failed still writes whatever the embed carried.
 
     Caller owns transaction boundaries (commit/rollback).
     """
     await upsert_show(session, show)
     for season in show.embedded.seasons:
         await upsert_season(session, show_id=show.id, season=season)
-    await upsert_episodes(session, show_id=show.id, episodes=show.embedded.episodes)
+    merged: dict[int, TVMazeEpisode] = {ep.id: ep for ep in show.embedded.episodes}
+    if episodes is not None:
+        merged.update({ep.id: ep for ep in episodes})
+    await upsert_episodes(session, show_id=show.id, episodes=list(merged.values()))
     return show.id
 
 
