@@ -108,6 +108,11 @@ async def get_episode(session: AsyncSession, episode_id: int) -> m.Episode | Non
     return result.scalar_one_or_none()
 
 
+async def episode_exists(session: AsyncSession, episode_id: int) -> bool:
+    result = await session.execute(select(m.Episode.id).where(m.Episode.id == episode_id))
+    return result.scalar_one_or_none() is not None
+
+
 async def get_show_episodes(
     session: AsyncSession, show_id: int, season: int | None
 ) -> list[m.Episode]:
@@ -149,6 +154,26 @@ async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Pe
     )
     result = await session.execute(stmt)
     return list(result.tuples().all())
+
+
+async def list_episode_guest_cast(
+    session: AsyncSession, episode_id: int
+) -> list[tuple[m.EpisodeGuestCast, m.Person, m.Character]]:
+    """Guest-cast credits for one episode in upstream billing order.
+
+    Covered by ix_egc_episode_id_sort. The credit id breaks ties:
+    the credit tables carry no unique constraint by design, so one episode can
+    hold several rows at the same `sort_order` and the order would otherwise be
+    nondeterministic across requests.
+    """
+    stmt = (
+        select(m.EpisodeGuestCast, m.Person, m.Character)
+        .join(m.Person, m.Person.id == m.EpisodeGuestCast.person_id)
+        .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
+        .where(m.EpisodeGuestCast.episode_id == episode_id)
+        .order_by(m.EpisodeGuestCast.sort_order.asc(), m.EpisodeGuestCast.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
 
 
 async def get_person(session: AsyncSession, person_id: int) -> m.Person | None:

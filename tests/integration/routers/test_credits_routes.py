@@ -1,4 +1,5 @@
-"""Integration tests for the show cast/crew browse routes (NEU-940)."""
+"""Integration tests for the credit browse routes: show cast/crew (NEU-940) and
+episode guest cast (NEU-949)."""
 
 import httpx
 import pytest
@@ -135,4 +136,104 @@ async def test_crew_cache_header_is_private(seeded_credits):
 async def test_crew_requires_auth():
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get("/shows/1/crew")
+    assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /episodes/{id}/guest-cast
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+async def seeded_guest_cast(client, session):
+    """Guest credits on episodes 1011 and 1021 — two episodes of the same show,
+    so the route has to scope by episode and not by show. Episode 1012 is left
+    bare: 96% of the catalog has no guest cast at all.
+
+    Rows are inserted out of billing order so the tests prove the route sorts by
+    `sort_order` rather than falling back on insertion or id order.
+    """
+    session.add_all(
+        [
+            m.Person(id=70, name="Guest Third", tvmaze_updated=1),
+            m.Person(id=71, name="Guest Lead", tvmaze_updated=1),
+            m.Person(id=72, name="Guest Second", tvmaze_updated=1),
+            m.Character(id=80, name="Bartender", image_medium="http://img/bartender.jpg"),
+            m.Character(id=81, name="Herself"),
+            m.Character(id=82, name="Neighbour"),
+        ]
+    )
+    await session.flush()
+    session.add_all(
+        [
+            m.EpisodeGuestCast(episode_id=1011, person_id=70, character_id=80, sort_order=2),
+            m.EpisodeGuestCast(
+                episode_id=1011,
+                person_id=71,
+                character_id=81,
+                sort_order=0,
+                is_self=True,
+                is_voice=True,
+            ),
+            m.EpisodeGuestCast(episode_id=1011, person_id=72, character_id=82, sort_order=1),
+            m.EpisodeGuestCast(episode_id=1021, person_id=70, character_id=82, sort_order=0),
+        ]
+    )
+    await session.commit()
+    return client
+
+
+async def test_guest_cast_returns_billing_order(seeded_guest_cast):
+    r = await seeded_guest_cast.get("/episodes/1011/guest-cast")
+    assert r.status_code == 200
+    assert [c["person"]["name"] for c in r.json()] == [
+        "Guest Lead",
+        "Guest Second",
+        "Guest Third",
+    ]
+
+
+async def test_guest_cast_entry_shape(seeded_guest_cast):
+    r = await seeded_guest_cast.get("/episodes/1011/guest-cast")
+    body = r.json()
+    assert body[0] == {
+        "person": {"id": 71, "name": "Guest Lead", "image_medium": None},
+        "character": {"id": 81, "name": "Herself", "image_medium": None},
+        "self": True,
+        "voice": True,
+    }
+    # Defaults come through as false, and character images are carried.
+    assert body[2]["self"] is False and body[2]["voice"] is False
+    assert body[2]["character"]["image_medium"] == "http://img/bartender.jpg"
+
+
+async def test_guest_cast_is_scoped_to_one_episode(seeded_guest_cast):
+    # Episode 1021 belongs to the same show as 1011 and has one guest credit of
+    # its own, so a route scoped to the show rather than the episode would
+    # return four entries here instead of one.
+    r = await seeded_guest_cast.get("/episodes/1021/guest-cast")
+    assert r.status_code == 200
+    assert [c["person"]["name"] for c in r.json()] == ["Guest Third"]
+
+
+async def test_episode_with_no_guest_cast_returns_empty_list_not_404(seeded_guest_cast):
+    # 96% of episodes have zero guest cast. Empty is normal, not an error.
+    r = await seeded_guest_cast.get("/episodes/1012/guest-cast")
+    assert r.status_code == 200
+    assert r.json() == []
+
+
+async def test_unknown_episode_404s_for_guest_cast(client):
+    r = await client.get("/episodes/999999/guest-cast")
+    assert r.status_code == 404
+
+
+async def test_guest_cast_cache_header_is_private(seeded_guest_cast):
+    r = await seeded_guest_cast.get("/episodes/1011/guest-cast")
+    assert r.headers["Cache-Control"] == "private, max-age=300"
+
+
+async def test_guest_cast_requires_auth():
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get("/episodes/1011/guest-cast")
     assert r.status_code == 401
