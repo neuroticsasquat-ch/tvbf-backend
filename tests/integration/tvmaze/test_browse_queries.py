@@ -1,4 +1,5 @@
 from tests.fixtures.browse.seed import GENRES, seed
+from tvbf.tvmaze import models as m
 from tvbf.tvmaze.browse_queries import (
     get_show_episodes,
     get_show_seasons,
@@ -7,7 +8,7 @@ from tvbf.tvmaze.browse_queries import (
     list_networks,
     list_shows,
 )
-from tvbf.tvmaze.schemas import ShowFilters
+from tvbf.tvmaze.schemas import EpisodeOut, ShowFilters
 
 
 async def test_list_genres_returns_all_in_name_order(session):
@@ -62,6 +63,22 @@ async def test_get_show_episodes_filters_by_season(session):
     eps = await get_show_episodes(session, 1, season=2)
     assert len(eps) == 2
     assert all(e.season == 2 for e in eps)
+
+
+async def test_get_show_episodes_returns_specials_after_their_season(session):
+    """Specials carry a null `number` (NEU-933). The read path must return them
+    rather than drop or choke on them; Postgres sorts NULLs last on ASC, so a
+    special lands at the end of its own season."""
+    await seed(session)
+    session.add(m.Episode(id=9001, show_id=1, season=1, number=None, name="Special"))
+    await session.commit()
+
+    eps = await get_show_episodes(session, 1, season=None)
+    assert [(e.season, e.number) for e in eps] == [(1, 1), (1, 2), (1, None), (2, 1), (2, 2)]
+
+    # The public response model tolerates the null number.
+    special = EpisodeOut.model_validate(next(e for e in eps if e.id == 9001))
+    assert special.number is None
 
 
 # Task 11: base pagination

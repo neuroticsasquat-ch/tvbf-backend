@@ -97,6 +97,19 @@ class TVMazeClient:
         resp = await self._request("GET", url, params=[("embed[]", e) for e in embeds])
         return resp.json()
 
+    async def get_show_episodes(self, show_id: int, *, specials: bool = True) -> list[dict]:
+        """Full episode list for a show, including specials by default.
+
+        `embed[]=episodes` silently omits specials (episodes with a null
+        `number`) and ignores a `specials=1` query param, so specials are only
+        reachable here. This endpoint returns ALL episodes, so a caller using it
+        does not also need `embed[]=episodes`.
+        """
+        url = f"{self._base_url}/shows/{show_id}/episodes"
+        params = [("specials", "1")] if specials else []
+        resp = await self._request("GET", url, params=params)
+        return resp.json()
+
     async def get_show_updates(self) -> dict[int, int]:
         url = f"{self._base_url}/updates/shows"
         resp = await self._request("GET", url)

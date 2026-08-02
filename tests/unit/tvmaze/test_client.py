@@ -125,6 +125,35 @@ async def test_client_does_not_retry_on_404():
 
 
 @respx.mock
+async def test_get_show_episodes_asks_for_specials():
+    """The episodes endpoint is the only source of specials, and only with
+    specials=1 — the embed form omits them and ignores the flag."""
+    respx.get("https://api.tvmaze.com/shows/168/episodes").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": 12, "season": 4, "number": 1, "name": "Chuck Versus the Anniversary"},
+                {"id": 153062, "season": 4, "number": None, "name": "Buy Hard"},
+            ],
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        episodes = await c.get_show_episodes(168)
+    assert respx.calls.last.request.url.params.get_list("specials") == ["1"]
+    assert [e["number"] for e in episodes] == [1, None]
+
+
+@respx.mock
+async def test_get_show_episodes_omits_the_specials_param_when_disabled():
+    respx.get("https://api.tvmaze.com/shows/168/episodes").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        await c.get_show_episodes(168, specials=False)
+    assert respx.calls.last.request.url.params.get_list("specials") == []
+
+
+@respx.mock
 async def test_get_akas_returns_list_of_dicts():
     route = respx.get("https://api.tvmaze.com/shows/123/akas").mock(
         return_value=httpx.Response(
