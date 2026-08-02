@@ -119,6 +119,38 @@ async def get_show_episodes(
     return list(result.scalars().all())
 
 
+async def list_show_cast(
+    session: AsyncSession, show_id: int
+) -> list[tuple[m.ShowCast, m.Person, m.Character]]:
+    """Cast credits for one show in upstream billing order.
+
+    Covered by ix_show_cast_show_id_sort. Single-show route, so unlike
+    `hydrate_show_refs` there is no N+1 to batch away.
+    """
+    stmt = (
+        select(m.ShowCast, m.Person, m.Character)
+        .join(m.Person, m.Person.id == m.ShowCast.person_id)
+        .join(m.Character, m.Character.id == m.ShowCast.character_id)
+        .where(m.ShowCast.show_id == show_id)
+        .order_by(m.ShowCast.sort_order)
+    )
+    result = await session.execute(stmt)
+    return list(result.tuples().all())
+
+
+async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Person, m.CrewRole]]:
+    """Crew credits for one show in upstream order. Covered by ix_show_crew_show_id_sort."""
+    stmt = (
+        select(m.Person, m.CrewRole)
+        .join(m.ShowCrew, m.ShowCrew.person_id == m.Person.id)
+        .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
+        .where(m.ShowCrew.show_id == show_id)
+        .order_by(m.ShowCrew.sort_order)
+    )
+    result = await session.execute(stmt)
+    return list(result.tuples().all())
+
+
 def _fold(expr):
     """Accent- and punctuation-folded form of a text SQL expression or value.
 

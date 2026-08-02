@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import date, time
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 ALLOWED_SORT_KEYS = {
     "name",
@@ -135,6 +135,40 @@ class ShowListPage(BaseModel):
     total_pages: int
 
 
+class PersonRef(BaseModel):
+    """Compact person reference used inside credit payloads."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    image_medium: str | None = None
+
+
+class CharacterRef(BaseModel):
+    """Compact character reference used inside cast payloads."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    image_medium: str | None = None
+
+
+class CastMemberOut(BaseModel):
+    person: PersonRef
+    character: CharacterRef
+    # `self` is a Python keyword, so the attribute is `self_credit` and only the
+    # serialized key matches upstream's naming.
+    self_credit: bool = Field(False, serialization_alias="self")
+    voice: bool = False
+
+
+class CrewMemberOut(BaseModel):
+    person: PersonRef
+    role: str
+
+
 def build_show_summary(
     show,
     genre_names: list[str],
@@ -213,3 +247,16 @@ def build_show_detail(
         rating_average=float(show.rating_average) if show.rating_average is not None else None,
         my_rating=my_rating,
     )
+
+
+def build_cast_member(credit, person, character) -> CastMemberOut:
+    return CastMemberOut(
+        person=PersonRef.model_validate(person),
+        character=CharacterRef.model_validate(character),
+        self_credit=credit.is_self,
+        voice=credit.is_voice,
+    )
+
+
+def build_crew_member(person, role) -> CrewMemberOut:
+    return CrewMemberOut(person=PersonRef.model_validate(person), role=role.name)

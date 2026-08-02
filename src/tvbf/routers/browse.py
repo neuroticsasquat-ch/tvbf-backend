@@ -8,6 +8,8 @@ from tvbf.deps import get_current_user, get_session
 from tvbf.tvmaze import browse_queries
 from tvbf.tvmaze.schemas import (
     ALLOWED_SORT_KEYS,
+    CastMemberOut,
+    CrewMemberOut,
     EpisodeOut,
     GenreOut,
     NetworkOut,
@@ -17,6 +19,8 @@ from tvbf.tvmaze.schemas import (
     ShowFilters,
     ShowListPage,
     ShowSummary,
+    build_cast_member,
+    build_crew_member,
     build_show_detail,
     build_show_summary,
 )
@@ -151,6 +155,39 @@ async def get_show_seasons_route(
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return await browse_queries.get_show_seasons(session, show_id)
+
+
+# Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded
+# (The Simpsons has 1,420 cast and 533 crew rows), and the detail route serves a
+# card. Separate routes keep that payload bounded and let the SPA lazy-load.
+# Both take the router-level `private, max-age=300` — no per-user fields here,
+# so no no-store override.
+@router.get("/shows/{show_id}/cast", response_model=list[CastMemberOut])
+async def get_show_cast_route(
+    show_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    # A show with no cast is 27% of the catalog, not an error — so an empty
+    # result can't stand in for a missing show. Check existence explicitly.
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    return [
+        build_cast_member(credit, person, character)
+        for credit, person, character in await browse_queries.list_show_cast(session, show_id)
+    ]
+
+
+@router.get("/shows/{show_id}/crew", response_model=list[CrewMemberOut])
+async def get_show_crew_route(
+    show_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    return [
+        build_crew_member(person, role)
+        for person, role in await browse_queries.list_show_crew(session, show_id)
+    ]
 
 
 @router.get("/episodes/{episode_id}", response_model=EpisodeOut)
