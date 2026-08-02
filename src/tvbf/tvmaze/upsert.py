@@ -7,8 +7,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.api_payloads import (
     TVMazeAka,
+    TVMazeCastEntry,
+    TVMazeCharacter,
+    TVMazeCrewEntry,
     TVMazeEpisode,
     TVMazeNetwork,
+    TVMazePerson,
     TVMazeSeason,
     TVMazeShow,
 )
@@ -249,4 +253,177 @@ async def mark_ratings_synced(session: AsyncSession, *, show_id: int) -> None:
     """Set the show's ratings_synced_at to now()."""
     await session.execute(
         update(m.Show).where(m.Show.id == show_id).values(ratings_synced_at=datetime.now(UTC))
+    )
+
+
+# Postgres caps bind parameters per query at 32767 — the same ceiling that
+# forced _EPISODE_BATCH_SIZE. show_cast binds 6 columns per row and show_crew
+# 4, but persons and characters upsert in the same transaction, so the credit
+# path keeps its own 1000-row batch rather than a tighter per-table bound.
+# The Simpsons (1,420 cast rows, 533 crew) exceeds a single batch.
+_CREDIT_BATCH_SIZE = 1000
+
+
+async def upsert_persons(session: AsyncSession, people: list[TVMazePerson]) -> None:
+    """Upsert person rows by upstream id.
+
+    Never touches credits_synced_at — a person created here still needs the
+    person axis (pass C) to fetch their own credits.
+    """
+    if not people:
+        return
+    # Last write wins within one payload: the same person can appear twice.
+    seen: dict[int, TVMazePerson] = {p.id: p for p in people}
+    rows = [
+        {
+            "id": p.id,
+            "name": p.name,
+            "country_code": p.country_code,
+            "country_name": p.country_name,
+            "timezone": p.timezone,
+            "birthday": p.birthday,
+            "deathday": p.deathday,
+            "gender": p.gender,
+            "image_medium": p.image.medium if p.image else None,
+            "image_original": p.image.original if p.image else None,
+            "tvmaze_updated": p.updated,
+        }
+        for p in seen.values()
+    ]
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        chunk = rows[start : start + _CREDIT_BATCH_SIZE]
+        stmt = insert(m.Person).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[m.Person.id],
+            set_={c: getattr(stmt.excluded, c) for c in chunk[0] if c != "id"},
+        )
+        await session.execute(stmt)
+
+
+async def upsert_characters(session: AsyncSession, characters: list[TVMazeCharacter]) -> None:
+    if not characters:
+        return
+    seen: dict[int, TVMazeCharacter] = {c.id: c for c in characters}
+    rows = [
+        {
+            "id": c.id,
+            "name": c.name,
+            "image_medium": c.image.medium if c.image else None,
+            "image_original": c.image.original if c.image else None,
+        }
+        for c in seen.values()
+    ]
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        chunk = rows[start : start + _CREDIT_BATCH_SIZE]
+        stmt = insert(m.Character).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[m.Character.id],
+            set_={c: getattr(stmt.excluded, c) for c in chunk[0] if c != "id"},
+        )
+        await session.execute(stmt)
+
+
+async def resolve_crew_role(session: AsyncSession, name: str) -> int:
+    """Resolve-or-insert a crew role id. Mirrors upsert_genre_by_name.
+
+    Upstream sends crew type as free text with no id, exactly like genre.
+
+    Deliberately not cached across shows, despite the spec suggesting a
+    run-lifetime cache: credits are written in per-show transactions and a
+    per-show failure rolls back without aborting the run, so a cached id for a
+    role inserted inside a transaction that later rolled back would produce an
+    FK violation on show_crew.role_id for every subsequent show using it.
+    Crew types per show are of the same order as genres, so the lookup cost
+    matches the pattern this mirrors.
+    """
+    existing = (
+        await session.execute(select(m.CrewRole.id).where(m.CrewRole.name == name))
+    ).scalar_one_or_none()
+    if existing is not None:
+        return existing
+    stmt = (
+        insert(m.CrewRole)
+        .values(name=name)
+        .on_conflict_do_nothing(index_elements=[m.CrewRole.name])
+        .returning(m.CrewRole.id)
+    )
+    result = (await session.execute(stmt)).scalar_one_or_none()
+    if result is not None:
+        return result
+    return (
+        await session.execute(select(m.CrewRole.id).where(m.CrewRole.name == name))
+    ).scalar_one()
+
+
+async def upsert_show_cast(
+    session: AsyncSession, *, show_id: int, entries: list[TVMazeCastEntry]
+) -> None:
+    """Replace this show's cast rows. Caller owns the transaction.
+
+    Delete-then-insert, same reasoning as upsert_akas: TV Maze both adds and
+    removes entries, and there is no upstream row id to upsert against.
+    Insertion follows the upstream array, which is billing order.
+    """
+    await session.execute(delete(m.ShowCast).where(m.ShowCast.show_id == show_id))
+    if not entries:
+        return
+
+    await upsert_persons(session, [e.person for e in entries])
+    await upsert_characters(session, [e.character for e in entries])
+
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[int, int]] = set()
+    for e in entries:
+        key = (e.person.id, e.character.id)
+        if key in seen:
+            continue  # the same credit sent twice upstream is one credit
+        seen.add(key)
+        rows.append(
+            {
+                "show_id": show_id,
+                "person_id": e.person.id,
+                "character_id": e.character.id,
+                "is_self": e.is_self,
+                "is_voice": e.is_voice,
+                "sort_order": len(rows),
+            }
+        )
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        await session.execute(insert(m.ShowCast).values(rows[start : start + _CREDIT_BATCH_SIZE]))
+
+
+async def upsert_show_crew(
+    session: AsyncSession, *, show_id: int, entries: list[TVMazeCrewEntry]
+) -> None:
+    """Replace this show's crew rows. Caller owns the transaction."""
+    await session.execute(delete(m.ShowCrew).where(m.ShowCrew.show_id == show_id))
+    if not entries:
+        return
+
+    await upsert_persons(session, [e.person for e in entries])
+    role_ids = {t: await resolve_crew_role(session, t) for t in {e.type for e in entries}}
+
+    rows: list[dict[str, object]] = []
+    seen: set[tuple[int, int]] = set()
+    for e in entries:
+        key = (e.person.id, role_ids[e.type])
+        if key in seen:
+            continue
+        seen.add(key)
+        rows.append(
+            {
+                "show_id": show_id,
+                "person_id": e.person.id,
+                "role_id": role_ids[e.type],
+                "sort_order": len(rows),
+            }
+        )
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        await session.execute(insert(m.ShowCrew).values(rows[start : start + _CREDIT_BATCH_SIZE]))
+
+
+async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Set the show's credits_synced_at to now()."""
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(credits_synced_at=datetime.now(UTC))
     )

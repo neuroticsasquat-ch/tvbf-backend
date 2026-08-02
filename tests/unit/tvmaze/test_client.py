@@ -30,6 +30,36 @@ async def test_client_fetches_show_with_embeds():
 
 
 @respx.mock
+async def test_client_honours_an_explicit_embed_list():
+    respx.get("https://api.tvmaze.com/shows/168").mock(
+        return_value=httpx.Response(
+            200, json={"id": 168, "name": "Chuck", "updated": 1, "genres": []}
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        await c.get_show(168, embed=["episodes", "seasons", "cast", "crew"])
+    # All four combine in one upstream request, in the order given.
+    assert respx.calls.last.request.url.params.get_list("embed[]") == [
+        "episodes",
+        "seasons",
+        "cast",
+        "crew",
+    ]
+
+
+@respx.mock
+async def test_client_embeds_nothing_for_an_empty_embed_list():
+    respx.get("https://api.tvmaze.com/shows/168").mock(
+        return_value=httpx.Response(
+            200, json={"id": 168, "name": "Chuck", "updated": 1, "genres": []}
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        await c.get_show(168, embed=[])
+    assert respx.calls.last.request.url.params.get_list("embed[]") == []
+
+
+@respx.mock
 async def test_client_fetches_updates_shows():
     respx.get("https://api.tvmaze.com/updates/shows").mock(
         return_value=httpx.Response(200, json={"1": 100, "2": 200})
