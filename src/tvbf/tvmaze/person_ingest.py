@@ -1,5 +1,5 @@
 import logging
-from collections.abc import AsyncIterator, Callable
+from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from typing import Any
@@ -77,6 +77,37 @@ async def run_person_ingest(
         )
     todo = sorted(pid for pid in updates if pid not in synced)
 
+    return await process_people(
+        session_factory=session_factory,
+        client=client,
+        run_id=run_id,
+        todo=todo,
+        failure_threshold=failure_threshold,
+        cursor_on_success=cursor,
+        # `finalize_run(status="failed")` publishes no cursor, and a delta
+        # inheriting one from an aborted run would skip every person this run
+        # never reached — so the aborted result must report none either.
+        cursor_on_abort=None,
+    )
+
+
+async def process_people(
+    *,
+    session_factory: SessionFactory,
+    client: Any,  # duck-typed: needs `get_person(id)`
+    run_id: UUID,
+    todo: Sequence[int],
+    failure_threshold: int,
+    cursor_on_success: int | None,
+    cursor_on_abort: int | None,
+) -> PersonIngestResult:
+    """Fetch and write each person in `todo`, one transaction apiece.
+
+    Shared by the initial pass and the daily delta (`person_update.py`): the two
+    differ only in how they build the todo list and what watermark they publish,
+    and at 487k people the cost of the two loops drifting apart is a 75-hour
+    re-run.
+    """
     processed = 0
     failed = 0
     consecutive_failures = 0
@@ -84,8 +115,8 @@ async def run_person_ingest(
     async def _record_failure(detail: str | None = None) -> bool:
         """Count one failed person; True if the run aborted on the threshold.
 
-        Pass A open-codes this three times over; at 487k people the cost of a
-        divergence between the three arms is a 75-hour re-run, so it lives in
+        Pass A open-codes this three times over; the cost of a divergence
+        between the three arms is a re-run of the whole pass, so it lives in
         one place here.
         """
         nonlocal failed, consecutive_failures
@@ -110,18 +141,12 @@ async def run_person_ingest(
         except httpx.HTTPStatusError as e:
             log.warning("person ingest: skipping person %d after http error: %s", person_id, e)
             if await _record_failure():
-                # No cursor: `finalize_run(status="failed")` publishes none, and a
-                # delta inheriting one from an aborted run would skip every person
-                # this run never reached.
-                return PersonIngestResult(processed, failed, None)
+                return PersonIngestResult(processed, failed, cursor_on_abort)
             continue
         except Exception as e:
             log.exception("person ingest: unexpected error for person %d", person_id)
             if await _record_failure(str(e)):
-                # No cursor: `finalize_run(status="failed")` publishes none, and a
-                # delta inheriting one from an aborted run would skip every person
-                # this run never reached.
-                return PersonIngestResult(processed, failed, None)
+                return PersonIngestResult(processed, failed, cursor_on_abort)
             continue
 
         try:
@@ -139,13 +164,10 @@ async def run_person_ingest(
         except Exception as e:
             log.exception("person ingest: write failed for person %d", person_id)
             if await _record_failure(str(e)):
-                # No cursor: `finalize_run(status="failed")` publishes none, and a
-                # delta inheriting one from an aborted run would skip every person
-                # this run never reached.
-                return PersonIngestResult(processed, failed, None)
+                return PersonIngestResult(processed, failed, cursor_on_abort)
 
     async with _owned_session(session_factory) as s:
-        await finalize_run(s, run_id, status="succeeded", last_update_cursor=cursor)
+        await finalize_run(s, run_id, status="succeeded", last_update_cursor=cursor_on_success)
         await s.commit()
 
-    return PersonIngestResult(processed, failed, cursor)
+    return PersonIngestResult(processed, failed, cursor_on_success)

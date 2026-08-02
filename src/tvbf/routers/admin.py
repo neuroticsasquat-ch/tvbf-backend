@@ -14,6 +14,7 @@ from tvbf.tvmaze.akas_backfill import run_akas_backfill
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.person_ingest import run_person_ingest
+from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.ratings_backfill import run_ratings_backfill
 from tvbf.tvmaze.runs import create_run, finalize_run
 from tvbf.tvmaze.show_refresh import run_show_refresh
@@ -148,6 +149,27 @@ async def _background_person_ingest(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("background person ingest crashed")
+        async with SessionLocal() as s:
+            await finalize_run(s, run_id, status="failed", error=str(e))
+            await s.commit()
+
+
+async def _background_person_update(run_id: UUID, settings: Settings) -> None:
+    try:
+        async with TVMazeClient(
+            base_url=settings.tvmaze_base_url,
+            rate_calls=settings.tvmaze_rate_limit_requests,
+            rate_window=settings.tvmaze_rate_limit_window_seconds,
+            retry_max_attempts=settings.tvmaze_retry_max_attempts,
+        ) as client:
+            await run_person_update(
+                session_factory=_session_factory,
+                client=client,
+                run_id=run_id,
+                failure_threshold=settings.ingest_consecutive_failure_threshold,
+            )
+    except Exception as e:
+        log.exception("background person update crashed")
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()
@@ -289,3 +311,14 @@ async def get_person_ingest_status(
     if row is None or row.kind != "person_initial":
         raise HTTPException(status_code=404, detail="run not found")
     return _serialize_run(row)
+
+
+@router.post("/update-people", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_person_update(
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    run_id = await create_run(session, kind="person_update")
+    await session.commit()
+    asyncio.create_task(_background_person_update(run_id, settings))
+    return {"run_id": str(run_id)}

@@ -27,8 +27,31 @@ async def admin_client(session, monkeypatch):
         yield client
 
 
+@pytest.fixture
+def inert_background_ingest(monkeypatch):
+    """Give the route an inert coroutine to spawn instead of the real pass C.
+
+    `@respx.mock` only covers the test function's own lifetime, so a task
+    spawned by the route outlives it and reaches the real TV Maze API — then
+    writes people into the test database underneath whatever test is running by
+    then. It surfaces as a deadlock against the conftest's teardown `TRUNCATE`,
+    in an unrelated file.
+
+    Patching `_background_person_ingest` rather than `asyncio.create_task`:
+    the latter is the real asyncio module, which SQLAlchemy's session teardown
+    also calls (`asyncio.shield`), so stubbing it breaks the request itself.
+    """
+
+    async def _noop(run_id, settings) -> None:
+        return None
+
+    monkeypatch.setattr("tvbf.routers.admin._background_person_ingest", _noop)
+
+
 @respx.mock
-async def test_ingest_people_post_returns_202_and_creates_run(admin_client, session):
+async def test_ingest_people_post_returns_202_and_creates_run(
+    admin_client, session, inert_background_ingest
+):
     resp = await admin_client.post("/admin/ingest-people", headers={"Authorization": "Bearer shh"})
     assert resp.status_code == 202, resp.text
     body = resp.json()
