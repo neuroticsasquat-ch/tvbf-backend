@@ -166,8 +166,50 @@ async def test_a_credit_for_an_unmirrored_episode_raises(session, catalog):
     landed, and pass C's per-person error handling counts each one."""
     with pytest.raises(IntegrityError):
         await upsert_person_guest_cast(session, person_id=10, credits=[guest_credit(999999, 909)])
-        await session.flush()
     await session.rollback()
+
+
+async def test_a_character_written_by_the_show_axis_is_not_degraded(session, catalog):
+    """Guest links carry only an id and a name. Upserting them would null the
+    images pass A wrote from the full embedded character object, and a link
+    with no name would overwrite a real name with ""."""
+    session.add(
+        m.Character(
+            id=910,
+            name="Detective Ramirez",
+            image_medium="https://static.tvmaze.com/cm.jpg",
+            image_original="https://static.tvmaze.com/co.jpg",
+        )
+    )
+    await session.commit()
+
+    await upsert_person_guest_cast(
+        session,
+        person_id=10,
+        credits=[
+            TVMazeGuestCastCredit.model_validate(
+                {
+                    "_links": {
+                        "episode": {"href": "https://api.tvmaze.com/episodes/500"},
+                        "character": {"href": "https://api.tvmaze.com/characters/910"},
+                    }
+                }
+            )
+        ],
+    )
+    await session.commit()
+
+    character = (
+        await session.execute(
+            select(m.Character)
+            .where(m.Character.id == 910)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert character.name == "Detective Ramirez"
+    assert character.image_medium == "https://static.tvmaze.com/cm.jpg"
+    assert character.image_original == "https://static.tvmaze.com/co.jpg"
+    assert [r.character_id for r in await _guest_rows(session, 10)] == [910]
 
 
 async def test_mark_person_credits_synced_stamps_the_watermark(session, catalog):

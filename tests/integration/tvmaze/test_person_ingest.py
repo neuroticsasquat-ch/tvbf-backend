@@ -315,7 +315,7 @@ async def test_an_aborted_run_does_not_publish_a_cursor(session, run_id):
         async def get_person(self, person_id: int) -> dict:
             raise _http_error(person_id)
 
-    await run_person_ingest(
+    result = await run_person_ingest(
         session_factory=lambda: session,
         client=FailingClient({60: 1700000000}),
         run_id=run_id,
@@ -325,3 +325,5 @@ async def test_an_aborted_run_does_not_publish_a_cursor(session, run_id):
     run = await _refreshed_run(session, run_id)
     assert run.status == "failed"
     assert run.last_update_cursor is None
+    # The return value must agree with what was persisted.
+    assert result.last_update_cursor is None

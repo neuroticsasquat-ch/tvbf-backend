@@ -445,6 +445,30 @@ async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
     )
 
 
+async def insert_missing_characters(
+    session: AsyncSession, characters: list[TVMazeCharacter]
+) -> None:
+    """Create character rows that don't exist yet, leaving existing ones alone.
+
+    Deliberately NOT `upsert_characters`. A guest credit only carries a
+    character's id and name, never its image, so upserting would null the
+    `image_medium` / `image_original` the show axis wrote from the full
+    embedded object — and a link with no name would overwrite a real name with
+    "". Same reasoning that keeps pass C off `castcredits`: the show side is
+    authoritative for anything the person side sees only a link to.
+    """
+    if not characters:
+        return
+    seen: dict[int, TVMazeCharacter] = {c.id: c for c in characters}
+    rows = [{"id": c.id, "name": c.name} for c in seen.values()]
+    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+        await session.execute(
+            insert(m.Character)
+            .values(rows[start : start + _CREDIT_BATCH_SIZE])
+            .on_conflict_do_nothing(index_elements=[m.Character.id])
+        )
+
+
 async def upsert_person_guest_cast(
     session: AsyncSession, *, person_id: int, credits: list[TVMazeGuestCastCredit]
 ) -> None:
@@ -475,7 +499,7 @@ async def upsert_person_guest_cast(
     if not usable:
         return
 
-    await upsert_characters(
+    await insert_missing_characters(
         session,
         [TVMazeCharacter(id=cid, name=c.character_name or "") for _, cid, c in usable],
     )

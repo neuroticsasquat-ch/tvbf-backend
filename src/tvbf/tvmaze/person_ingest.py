@@ -110,12 +110,18 @@ async def run_person_ingest(
         except httpx.HTTPStatusError as e:
             log.warning("person ingest: skipping person %d after http error: %s", person_id, e)
             if await _record_failure():
-                return PersonIngestResult(processed, failed, cursor)
+                # No cursor: `finalize_run(status="failed")` publishes none, and a
+                # delta inheriting one from an aborted run would skip every person
+                # this run never reached.
+                return PersonIngestResult(processed, failed, None)
             continue
         except Exception as e:
             log.exception("person ingest: unexpected error for person %d", person_id)
             if await _record_failure(str(e)):
-                return PersonIngestResult(processed, failed, cursor)
+                # No cursor: `finalize_run(status="failed")` publishes none, and a
+                # delta inheriting one from an aborted run would skip every person
+                # this run never reached.
+                return PersonIngestResult(processed, failed, None)
             continue
 
         try:
@@ -133,7 +139,10 @@ async def run_person_ingest(
         except Exception as e:
             log.exception("person ingest: write failed for person %d", person_id)
             if await _record_failure(str(e)):
-                return PersonIngestResult(processed, failed, cursor)
+                # No cursor: `finalize_run(status="failed")` publishes none, and a
+                # delta inheriting one from an aborted run would skip every person
+                # this run never reached.
+                return PersonIngestResult(processed, failed, None)
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=cursor)
