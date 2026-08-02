@@ -6,7 +6,12 @@ import httpx
 from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import IngestResult, SessionFactory, _owned_session
-from tvbf.tvmaze.runs import finalize_run, get_last_successful_cursor, record_progress
+from tvbf.tvmaze.runs import (
+    SHOW_CURSOR_KINDS,
+    finalize_run,
+    get_last_successful_cursor,
+    record_progress,
+)
 from tvbf.tvmaze.upsert import mark_akas_synced, upsert_akas, upsert_show_payload
 
 log = logging.getLogger(__name__)
@@ -20,7 +25,7 @@ async def run_update(
     failure_threshold: int = 10,
 ) -> IngestResult:
     async with _owned_session(session_factory) as s:
-        cursor = await get_last_successful_cursor(s) or 0
+        cursor = await get_last_successful_cursor(s, kinds=SHOW_CURSOR_KINDS) or 0
 
     updates = await client.get_show_updates()
     todo = sorted(sid for sid, epoch in updates.items() if epoch > cursor)
