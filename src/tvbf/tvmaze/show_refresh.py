@@ -10,13 +10,24 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.api_payloads import TVMazeShow
+from tvbf.tvmaze.api_payloads import TVMazeEpisode, TVMazeShow
 from tvbf.tvmaze.runs import finalize_run, record_progress
-from tvbf.tvmaze.upsert import mark_ratings_synced, upsert_show_payload
+from tvbf.tvmaze.upsert import (
+    mark_credits_synced,
+    mark_ratings_synced,
+    upsert_show_cast,
+    upsert_show_crew,
+    upsert_show_payload,
+)
 
 log = logging.getLogger(__name__)
 
 SessionFactory = Callable[[], AsyncSession]
+
+# `episodes` is deliberately absent. /shows/{id}/episodes?specials=1 returns the
+# full episode list including specials, so embedding episodes would ship a
+# redundant copy of it on every one of ~87k requests.
+_REFRESH_EMBEDS = ["seasons", "cast", "crew"]
 
 
 @dataclass
@@ -32,25 +43,39 @@ async def _owned_session(session_factory: SessionFactory) -> AsyncIterator[Async
         yield s
 
 
-async def run_ratings_backfill(
+async def run_show_refresh(
     *,
     session_factory: SessionFactory,
-    client: Any,  # duck-typed: needs `async get_show(show_id, *, embed=...) -> dict`
+    client: Any,  # duck-typed: needs `get_show(id, *, embed=...)` + `get_show_episodes(id)`
     run_id: UUID,
     failure_threshold: int = 10,
 ) -> BackfillResult:
-    """Iterate every show with ratings_synced_at IS NULL; fetch + upsert ratings.
+    """Pass A: re-fetch every show for cast, crew, externals, ratings and specials.
+
+    Iterates every show with `credits_synced_at IS NULL`, two requests each:
+
+    1. `/shows/{id}?embed[]=seasons&embed[]=cast&embed[]=crew`
+    2. `/shows/{id}/episodes?specials=1`
+
+    Cast and crew are the point; `externals_tvdb` (NEU-922), `rating.average`
+    (NEU-161) and specials (NEU-933) ride along because this pass re-fetches
+    every show anyway and each would otherwise cost its own 13.5h of the shared
+    rate-limit budget.
 
     Each show runs in its own transaction so a crash mid-run leaves earlier
-    shows synced. Per-show failures (HTTP/parse errors) bump shows_failed and
-    abort the run after `failure_threshold` consecutive failures, mirroring
-    the AKAs backfill pattern.
+    shows synced. Per-show failures bump `shows_failed` and abort the run after
+    `failure_threshold` consecutive failures, mirroring the AKAs backfill.
+
+    Unlike the ongoing ingest paths, a failed episodes fetch fails the *show*
+    rather than falling back — the watermark is what makes this pass resumable,
+    so stamping it on a show whose specials never arrived would strand them
+    until someone spent another 27 hours.
     """
     async with _owned_session(session_factory) as s:
         todo = (
             (
                 await s.execute(
-                    select(m.Show.id).where(m.Show.ratings_synced_at.is_(None)).order_by(m.Show.id)
+                    select(m.Show.id).where(m.Show.credits_synced_at.is_(None)).order_by(m.Show.id)
                 )
             )
             .scalars()
@@ -63,12 +88,10 @@ async def run_ratings_backfill(
 
     for show_id in todo:
         try:
-            # Both embeds are required: upsert_show_payload writes seasons and
-            # then resolves each episode's season_id from them. `get_show`
-            # honours this list, so dropping `seasons` would null season_id.
-            payload = await client.get_show(show_id, embed=["episodes", "seasons"])
+            payload = await client.get_show(show_id, embed=_REFRESH_EMBEDS)
+            episodes_payload = await client.get_show_episodes(show_id, specials=True)
         except httpx.HTTPStatusError as e:
-            log.warning("ratings backfill: skipping show %d after http error: %s", show_id, e)
+            log.warning("show refresh: skipping show %d after http error: %s", show_id, e)
             failed += 1
             consecutive_failures += 1
             async with _owned_session(session_factory) as s:
@@ -86,7 +109,7 @@ async def run_ratings_backfill(
                 return BackfillResult(processed, failed)
             continue
         except Exception as e:
-            log.exception("ratings backfill: unexpected error for show %d", show_id)
+            log.exception("show refresh: unexpected error for show %d", show_id)
             failed += 1
             consecutive_failures += 1
             async with _owned_session(session_factory) as s:
@@ -107,14 +130,20 @@ async def run_ratings_backfill(
         try:
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
-                await upsert_show_payload(s, show)
-                await mark_ratings_synced(s, show_id=show_id)
+                episodes = [TVMazeEpisode.model_validate(e) for e in episodes_payload]
+                await upsert_show_payload(s, show, episodes=episodes)
+                await upsert_show_cast(s, show_id=show.id, entries=show.embedded.cast)
+                await upsert_show_crew(s, show_id=show.id, entries=show.embedded.crew)
+                await mark_credits_synced(s, show_id=show.id)
+                # NEU-161's ratings backfill is believed complete in prod, but
+                # stamping here is free and makes a re-run a no-op either way.
+                await mark_ratings_synced(s, show_id=show.id)
                 await record_progress(s, run_id, processed_delta=1)
                 await s.commit()
             processed += 1
             consecutive_failures = 0
         except Exception as e:
-            log.exception("ratings backfill: upsert failed for show %d", show_id)
+            log.exception("show refresh: write failed for show %d", show_id)
             failed += 1
             consecutive_failures += 1
             async with _owned_session(session_factory) as s:

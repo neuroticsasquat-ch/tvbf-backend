@@ -30,6 +30,36 @@ async def test_client_fetches_show_with_embeds():
 
 
 @respx.mock
+async def test_client_honours_an_explicit_embed_list():
+    respx.get("https://api.tvmaze.com/shows/168").mock(
+        return_value=httpx.Response(
+            200, json={"id": 168, "name": "Chuck", "updated": 1, "genres": []}
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        await c.get_show(168, embed=["episodes", "seasons", "cast", "crew"])
+    # All four combine in one upstream request, in the order given.
+    assert respx.calls.last.request.url.params.get_list("embed[]") == [
+        "episodes",
+        "seasons",
+        "cast",
+        "crew",
+    ]
+
+
+@respx.mock
+async def test_client_embeds_nothing_for_an_empty_embed_list():
+    respx.get("https://api.tvmaze.com/shows/168").mock(
+        return_value=httpx.Response(
+            200, json={"id": 168, "name": "Chuck", "updated": 1, "genres": []}
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        await c.get_show(168, embed=[])
+    assert respx.calls.last.request.url.params.get_list("embed[]") == []
+
+
+@respx.mock
 async def test_client_fetches_updates_shows():
     respx.get("https://api.tvmaze.com/updates/shows").mock(
         return_value=httpx.Response(200, json={"1": 100, "2": 200})
@@ -92,6 +122,35 @@ async def test_client_does_not_retry_on_404():
     ) as c:
         with pytest.raises(httpx.HTTPStatusError):
             await c.get_show(9999)
+
+
+@respx.mock
+async def test_get_show_episodes_asks_for_specials():
+    """The episodes endpoint is the only source of specials, and only with
+    specials=1 — the embed form omits them and ignores the flag."""
+    respx.get("https://api.tvmaze.com/shows/168/episodes").mock(
+        return_value=httpx.Response(
+            200,
+            json=[
+                {"id": 12, "season": 4, "number": 1, "name": "Chuck Versus the Anniversary"},
+                {"id": 153062, "season": 4, "number": None, "name": "Buy Hard"},
+            ],
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        episodes = await c.get_show_episodes(168)
+    assert respx.calls.last.request.url.params.get_list("specials") == ["1"]
+    assert [e["number"] for e in episodes] == [1, None]
+
+
+@respx.mock
+async def test_get_show_episodes_omits_the_specials_param_when_disabled():
+    respx.get("https://api.tvmaze.com/shows/168/episodes").mock(
+        return_value=httpx.Response(200, json=[])
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        await c.get_show_episodes(168, specials=False)
+    assert respx.calls.last.request.url.params.get_list("specials") == []
 
 
 @respx.mock

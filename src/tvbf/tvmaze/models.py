@@ -4,10 +4,12 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     PrimaryKeyConstraint,
@@ -16,6 +18,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -90,6 +93,7 @@ class Show(Base):
     akas_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rating_average: Mapped[Decimal | None] = mapped_column(Numeric(3, 1))
     ratings_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ShowAka(Base):
@@ -165,11 +169,131 @@ class ShowGenre(Base):
     genre_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.genre.id"), nullable=False)
 
 
+class Person(Base):
+    __tablename__ = "person"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[str | None] = mapped_column(Text)
+    country_name: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str | None] = mapped_column(Text)
+    birthday: Mapped[date | None] = mapped_column(Date)
+    deathday: Mapped[date | None] = mapped_column(Date)
+    gender: Mapped[str | None] = mapped_column(Text)
+    image_medium: Mapped[str | None] = mapped_column(Text)
+    image_original: Mapped[str | None] = mapped_column(Text)
+    tvmaze_updated: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # Pass C watermark. Set only when this person's credits have been fetched —
+    # a person row created from a show's cast embed has credits_synced_at NULL.
+    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class Character(Base):
+    __tablename__ = "character"
+    __table_args__ = {"schema": SCHEMA}
+    # No show_id: upstream provides none (/characters/{id} has no show link),
+    # and the character->show relationship is carried by the credit rows.
+    # A character is not owned by one person — The Simpsons credits both
+    # Hank Azaria and Harry Shearer as Carl Carlson.
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    image_medium: Mapped[str | None] = mapped_column(Text)
+    image_original: Mapped[str | None] = mapped_column(Text)
+
+
+class CrewRole(Base):
+    __tablename__ = "crew_role"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_crew_role_name"),
+        {"schema": SCHEMA},
+    )
+    # Upstream sends crew type as a bare string with no id, exactly like genre.
+    # Modeled on Genre: local autoincrement id, unique name.
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ShowCast(Base):
+    __tablename__ = "show_cast"
+    __table_args__ = (
+        Index("ix_show_cast_show_id_sort", "show_id", "sort_order"),
+        Index("ix_show_cast_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+    # No UNIQUE(show_id, person_id, character_id) — deliberate. Refresh is
+    # delete-then-insert, so there is nothing to conflict on, and a uniqueness
+    # assumption over upstream data is what broke ingestion on tvmaze.season.
+    # sort_order preserves upstream billing order.
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"), nullable=False)
+    is_self: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    is_voice: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ShowCrew(Base):
+    __tablename__ = "show_crew"
+    __table_args__ = (
+        Index("ix_show_crew_show_id_sort", "show_id", "sort_order"),
+        Index("ix_show_crew_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    role_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.crew_role.id"), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class EpisodeGuestCast(Base):
+    __tablename__ = "episode_guest_cast"
+    __table_args__ = (
+        Index("ix_egc_episode_id_sort", "episode_id", "sort_order"),
+        Index("ix_egc_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+    # Written by the PERSON axis, not the show axis. Refresh grain is
+    # WHERE person_id = ? — never per-episode. See ADR-0001.
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"), nullable=False)
+    is_self: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    is_voice: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class IngestRun(Base):
     __tablename__ = "ingest_run"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill')",
+            "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
+            "'show_refresh', 'person_initial', 'person_update')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(
@@ -180,7 +304,7 @@ class IngestRun(Base):
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False

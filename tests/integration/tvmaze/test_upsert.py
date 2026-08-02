@@ -144,7 +144,7 @@ async def test_upsert_show_inserts_with_genres_and_network(session):
             "officialSite": "https://example.com",
             "summary": "<p>ok</p>",
             "image": {"medium": "m", "original": "o"},
-            "externals": {"imdb": "tt1475582", "tvdb": 176941, "tvrage": 19718},
+            "externals": {"imdb": "tt1475582", "thetvdb": 176941, "tvrage": 19718},
             "network": {"id": 12, "name": "BBC One", "country": {"code": "GB"}},
             "webChannel": None,
             "genres": ["Drama", "Crime", "Mystery"],
@@ -160,6 +160,8 @@ async def test_upsert_show_inserts_with_genres_and_network(session):
     assert row.network_id == 12
     assert row.web_channel_id is None
     assert row.externals_imdb == "tt1475582"
+    assert row.externals_tvdb == 176941
+    assert row.externals_tvrage == 19718
     assert row.tvmaze_updated == 1700000000
 
     links = (
@@ -330,3 +332,76 @@ async def test_upsert_show_payload_inserts_everything(session):
     eps = (await session.execute(select(m.Episode).where(m.Episode.show_id == 400))).scalars().all()
     assert len(eps) == 4
     assert all(e.season_id is not None for e in eps)
+
+
+async def test_upsert_show_payload_merges_supplied_episodes_including_specials(session):
+    """The `episodes` argument carries the /shows/{id}/episodes?specials=1 result.
+
+    It is a superset of the embed's list, so the merge keys on episode id: the
+    show ends up with the embed's numbered episodes plus the special the embed
+    silently dropped, and the special's null `number` round-trips.
+    """
+    payload = TVMazeShow.model_validate(
+        {
+            "id": 401,
+            "name": "Chuck",
+            "type": "Scripted",
+            "genres": [],
+            "updated": 1700000000,
+            "network": None,
+            "webChannel": None,
+            "_embedded": {
+                "seasons": [{"id": 10100, "number": 4, "name": "S4", "episodeOrder": 24}],
+                "episodes": [{"id": 20100, "season": 4, "number": 1, "name": "E1"}],
+            },
+        }
+    )
+    episodes = [
+        TVMazeEpisode.model_validate({"id": 20100, "season": 4, "number": 1, "name": "E1"}),
+        TVMazeEpisode.model_validate(
+            {
+                "id": 153062,
+                "season": 4,
+                "number": None,
+                "name": "Buy Hard: The Jeff and Lester Story",
+                "airdate": "",
+            }
+        ),
+    ]
+
+    await upsert_show_payload(session, payload, episodes=episodes)
+    await session.commit()
+
+    eps = (await session.execute(select(m.Episode).where(m.Episode.show_id == 401))).scalars().all()
+    assert {e.id for e in eps} == {20100, 153062}
+
+    special = next(e for e in eps if e.id == 153062)
+    assert special.number is None
+    assert special.airdate is None
+    # Specials still resolve their season FK — they belong to a real season.
+    assert special.season_id == 10100
+
+
+async def test_upsert_show_payload_falls_back_to_the_embed_when_episodes_is_none(session):
+    """A failed specials fetch passes None, which must not wipe the embed's episodes."""
+    payload = TVMazeShow.model_validate(
+        {
+            "id": 402,
+            "name": "Fallback",
+            "type": "Scripted",
+            "genres": [],
+            "updated": 1700000000,
+            "network": None,
+            "webChannel": None,
+            "_embedded": {
+                "seasons": [{"id": 10200, "number": 1, "name": "S1", "episodeOrder": 1}],
+                "episodes": [{"id": 20200, "season": 1, "number": 1, "name": "E1"}],
+            },
+        }
+    )
+
+    await upsert_show_payload(session, payload, episodes=None)
+    await session.commit()
+
+    eps = (await session.execute(select(m.Episode).where(m.Episode.show_id == 402))).scalars().all()
+    assert {e.id for e in eps} == {20200}

@@ -5,7 +5,7 @@ import httpx
 
 from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.client import TVMazeClient
-from tvbf.tvmaze.ingest import IngestResult, SessionFactory, _owned_session
+from tvbf.tvmaze.ingest import IngestResult, SessionFactory, _fetch_episodes, _owned_session
 from tvbf.tvmaze.runs import (
     SHOW_CURSOR_KINDS,
     finalize_run,
@@ -57,6 +57,8 @@ async def run_update(
                 return IngestResult(processed, failed, cursor)
             continue
 
+        episodes = await _fetch_episodes(client, show_id)
+
         try:
             akas_payload = await client.get_akas(show_id)
         except Exception as e:
@@ -70,7 +72,7 @@ async def run_update(
         try:
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
-                await upsert_show_payload(s, show)
+                await upsert_show_payload(s, show, episodes=episodes)
                 if akas_payload is not None:
                     akas = [TVMazeAka.model_validate(a) for a in akas_payload]
                     await upsert_akas(s, show_id=show.id, akas=akas)

@@ -98,11 +98,76 @@ class TVMazeSeason(BaseModel):
     summary: str | None = None
 
 
+class TVMazePerson(BaseModel):
+    """A person as embedded in a show's cast/crew.
+
+    The embedded object is complete — same shape as `/people/{id}` — so the
+    show axis populates `tvmaze.person` fully as a side effect of pass A.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    name: str
+    country: dict | None = None
+    birthday: OptionalDate = None
+    deathday: OptionalDate = None
+    gender: str | None = None
+    image: TVMazeImage | None = None
+    # Required, like TVMazeShow.updated. Defaulting it to 0 would let a payload
+    # missing `updated` silently reset a person's watermark on re-upsert, which
+    # is the person delta's ordering key.
+    updated: int
+
+    @property
+    def country_code(self) -> str | None:
+        return (self.country or {}).get("code")
+
+    @property
+    def country_name(self) -> str | None:
+        return (self.country or {}).get("name")
+
+    @property
+    def timezone(self) -> str | None:
+        return (self.country or {}).get("timezone")
+
+
+class TVMazeCharacter(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    name: str
+    image: TVMazeImage | None = None
+
+
+class TVMazeCastEntry(BaseModel):
+    # `self` can't be a field name, so both flags are aliased for symmetry.
+    # `character` is never null upstream (286/286 sampled), including pure
+    # "self" appearances, so it is modelled non-nullable.
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    person: TVMazePerson
+    character: TVMazeCharacter
+    is_self: bool = Field(False, alias="self")
+    is_voice: bool = Field(False, alias="voice")
+
+
+class TVMazeCrewEntry(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    type: str
+    person: TVMazePerson
+
+
 class TVMazeExternals(BaseModel):
+    # Alias only, deliberately without `populate_by_name`: `thetvdb` is the sole
+    # key TV Maze sends for this field, and accepting the field name too would
+    # let a fabricated fixture pass while real payloads parse to None — which is
+    # exactly how this went unnoticed through the original ingest.
     model_config = ConfigDict(extra="ignore")
 
     imdb: str | None = None
-    tvdb: int | None = None
+    tvdb: int | None = Field(None, alias="thetvdb")
     tvrage: int | None = None
 
 
@@ -111,6 +176,8 @@ class TVMazeEmbedded(BaseModel):
 
     episodes: list[TVMazeEpisode] = Field(default_factory=list)
     seasons: list[TVMazeSeason] = Field(default_factory=list)
+    cast: list[TVMazeCastEntry] = Field(default_factory=list)
+    crew: list[TVMazeCrewEntry] = Field(default_factory=list)
 
 
 class TVMazeShow(BaseModel):
