@@ -170,7 +170,8 @@ class CrewMemberOut(BaseModel):
 
 
 class PersonOut(BaseModel):
-    """Person detail for GET /people/{id}."""
+    """A person, as returned by GET /people/{id} and as each item of a
+    GET /people search page."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -183,6 +184,18 @@ class PersonOut(BaseModel):
     gender: str | None = None
     image_medium: str | None = None
     image_original: str | None = None
+
+
+class PersonListPage(BaseModel):
+    """Paginated person search results. Items are the same shape as person
+    detail — a person row is small, and one person shape keeps the frontend from
+    needing a second fetch to render anything beyond a name."""
+
+    items: list[PersonOut]
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
 
 
 class ShowRef(BaseModel):

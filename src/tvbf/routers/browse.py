@@ -15,6 +15,7 @@ from tvbf.tvmaze.schemas import (
     NetworkOut,
     NetworkRef,
     PersonCreditsOut,
+    PersonListPage,
     PersonOut,
     SeasonOut,
     ShowDetail,
@@ -193,8 +194,29 @@ async def get_show_crew_route(
     ]
 
 
-# Person routes carry no per-user fields, so both take the router-level
+# Person routes carry no per-user fields, so they take the router-level
 # `private, max-age=300` rather than the `no-store` the show/episode routes need.
+@router.get("/people", response_model=PersonListPage)
+async def search_people_route(
+    session: AsyncSession = Depends(get_session),
+    # Required: this is a search endpoint, not a browse-all-people one. 487k
+    # people paginated alphabetically is not a feature anyone asked for, and
+    # serving it would sort the whole table per request. A blank or
+    # punctuation-only term is accepted and matches nothing.
+    search: str = Query(),
+    page: int = Query(default=1, ge=1, le=1000),
+    per_page: int = Query(default=50, ge=1, le=100),
+) -> PersonListPage:
+    rows, total = await browse_queries.search_people(session, search, page=page, per_page=per_page)
+    return PersonListPage(
+        items=[PersonOut.model_validate(person) for person in rows],
+        page=page,
+        per_page=per_page,
+        total=total,
+        total_pages=max(1, math.ceil(total / per_page)),
+    )
+
+
 @router.get("/people/{person_id}", response_model=PersonOut)
 async def get_person_route(
     person_id: int,
