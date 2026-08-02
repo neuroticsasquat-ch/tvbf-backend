@@ -191,3 +191,28 @@ async def test_get_akas_empty_list_for_shows_with_no_akas():
     ) as c:
         akas = await c.get_akas(999)
     assert akas == []
+
+
+@respx.mock
+async def test_get_person_embeds_only_guest_cast_credits():
+    """castcredits/crewcredits are deliberately not requested — they duplicate
+    the show axis and carry no billing order (NEU-942)."""
+    respx.get("https://api.tvmaze.com/people/30856").mock(
+        return_value=httpx.Response(
+            200, json={"id": 30856, "name": "Zachary Levi", "updated": 1, "_embedded": {}}
+        )
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        payload = await c.get_person(30856)
+    assert payload["id"] == 30856
+    assert respx.calls.last.request.url.params.get_list("embed[]") == ["guestcastcredits"]
+
+
+@respx.mock
+async def test_client_fetches_updates_people():
+    respx.get("https://api.tvmaze.com/updates/people").mock(
+        return_value=httpx.Response(200, json={"1": 100, "2": 200})
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        updates = await c.get_person_updates()
+    assert updates == {1: 100, 2: 200}
