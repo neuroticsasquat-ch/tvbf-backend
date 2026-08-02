@@ -160,10 +160,14 @@ class TVMazeCrewEntry(BaseModel):
 
 
 class TVMazeExternals(BaseModel):
+    # Alias only, deliberately without `populate_by_name`: `thetvdb` is the sole
+    # key TV Maze sends for this field, and accepting the field name too would
+    # let a fabricated fixture pass while real payloads parse to None — which is
+    # exactly how this went unnoticed through the original ingest.
     model_config = ConfigDict(extra="ignore")
 
     imdb: str | None = None
-    tvdb: int | None = None
+    tvdb: int | None = Field(None, alias="thetvdb")
     tvrage: int | None = None
 
 

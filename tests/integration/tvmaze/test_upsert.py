@@ -144,7 +144,7 @@ async def test_upsert_show_inserts_with_genres_and_network(session):
             "officialSite": "https://example.com",
             "summary": "<p>ok</p>",
             "image": {"medium": "m", "original": "o"},
-            "externals": {"imdb": "tt1475582", "tvdb": 176941, "tvrage": 19718},
+            "externals": {"imdb": "tt1475582", "thetvdb": 176941, "tvrage": 19718},
             "network": {"id": 12, "name": "BBC One", "country": {"code": "GB"}},
             "webChannel": None,
             "genres": ["Drama", "Crime", "Mystery"],
@@ -160,6 +160,8 @@ async def test_upsert_show_inserts_with_genres_and_network(session):
     assert row.network_id == 12
     assert row.web_channel_id is None
     assert row.externals_imdb == "tt1475582"
+    assert row.externals_tvdb == 176941
+    assert row.externals_tvrage == 19718
     assert row.tvmaze_updated == 1700000000
 
     links = (
