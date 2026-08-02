@@ -63,7 +63,10 @@ async def run_ratings_backfill(
 
     for show_id in todo:
         try:
-            payload = await client.get_show(show_id, embed=["episodes"])
+            # Both embeds are required: upsert_show_payload writes seasons and
+            # then resolves each episode's season_id from them. `get_show`
+            # honours this list, so dropping `seasons` would null season_id.
+            payload = await client.get_show(show_id, embed=["episodes", "seasons"])
         except httpx.HTTPStatusError as e:
             log.warning("ratings backfill: skipping show %d after http error: %s", show_id, e)
             failed += 1

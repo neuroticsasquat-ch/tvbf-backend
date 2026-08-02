@@ -66,8 +66,9 @@ async def test_backfill_processes_unsynced_shows(session, two_unsynced_shows):
         session_factory=lambda: session, client=client, run_id=run.id
     )
     assert sorted(c[0] for c in client.calls) == [1001, 1002]
-    # Every call requested the episodes embed.
-    assert all("episodes" in c[1] for c in client.calls)
+    # Every call requested both embeds. `seasons` is not optional: episodes
+    # resolve their season_id from the seasons upserted in the same payload.
+    assert all(set(c[1]) == {"episodes", "seasons"} for c in client.calls)
     assert result.shows_processed == 2
     assert result.shows_failed == 0
 

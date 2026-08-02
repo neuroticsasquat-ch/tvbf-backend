@@ -84,15 +84,17 @@ class TVMazeClient:
             resp.raise_for_status()
             return resp
 
+    _DEFAULT_EMBEDS = ("episodes", "seasons")
+
     async def get_show(self, show_id: int, *, embed: list[str] | None = None) -> dict:
-        # `embed` is accepted for duck-typing with the ratings_backfill stub; the
-        # real client always embeds episodes + seasons since that's what the
-        # ingest/update/backfill paths need.
-        del embed
+        """Fetch a show, embedding `embed` (default: episodes + seasons).
+
+        `episodes`, `seasons`, `cast` and `crew` all combine in one request.
+        Passing an empty list embeds nothing.
+        """
+        embeds = tuple(embed) if embed is not None else self._DEFAULT_EMBEDS
         url = f"{self._base_url}/shows/{show_id}"
-        resp = await self._request(
-            "GET", url, params=[("embed[]", "episodes"), ("embed[]", "seasons")]
-        )
+        resp = await self._request("GET", url, params=[("embed[]", e) for e in embeds])
         return resp.json()
 
     async def get_show_updates(self) -> dict[int, int]:
