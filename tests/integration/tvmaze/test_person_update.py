@@ -9,7 +9,6 @@ performer's rename never touches a show, so nothing else would re-fetch them.
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
-import httpx
 import pytest
 from sqlalchemy import select
 
@@ -17,15 +16,7 @@ from tvbf.tvmaze import models as m
 from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.runs import PERSON_CURSOR_KINDS, get_last_successful_cursor
 
-from .test_person_ingest import FakeClient, guest_credit, person_payload
-
-
-def _http_error(person_id: int) -> httpx.HTTPStatusError:
-    return httpx.HTTPStatusError(
-        "boom",
-        request=httpx.Request("GET", f"https://api.tvmaze.com/people/{person_id}"),
-        response=httpx.Response(500),
-    )
+from .test_person_ingest import FakeClient, _http_error, guest_credit, person_payload
 
 
 @pytest.fixture
@@ -246,6 +237,28 @@ async def test_a_failure_is_non_fatal_and_counted_on_the_run(session, run_id):
     run = await _refreshed_run(session, run_id)
     assert run.status == "succeeded"
     assert run.shows_failed == 1
+
+
+async def test_the_watermark_advances_past_a_non_fatally_failed_person(session, run_id):
+    """Inherited from `update.py`, and pinned here because it is a real gap:
+    `max_epoch` is computed over the whole todo list, so a person who failed
+    without tripping the abort threshold is behind the new watermark and isn't
+    retried until upstream bumps them again. The safety net is pass C, whose
+    todo list is `credits_synced_at IS NULL` rather than epoch-driven.
+    """
+
+    class OneFailingClient(FakeClient):
+        async def get_person(self, person_id: int) -> dict:
+            if person_id == 83:
+                raise _http_error(person_id)
+            return await super().get_person(person_id)
+
+    client = OneFailingClient({83: 1700000900, 84: 1700000100}, {84: person_payload(84)})
+    result = await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert result.persons_failed == 1
+    assert result.last_update_cursor == 1700000900
+    assert (await _refreshed_run(session, run_id)).last_update_cursor == 1700000900
 
 
 async def test_aborts_after_consecutive_failure_threshold(session, run_id):
