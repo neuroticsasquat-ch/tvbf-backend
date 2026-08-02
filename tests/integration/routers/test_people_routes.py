@@ -219,3 +219,94 @@ async def test_credits_requires_auth():
     async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get(f"/people/{TRIPLE}/credits")
     assert r.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# /people?search=  (NEU-950)
+# ---------------------------------------------------------------------------
+
+
+async def test_search_folds_accents(seeded_people):
+    r = await seeded_people.get("/people", params={"search": "visnjic"})
+    assert r.status_code == 200
+    body = r.json()
+    assert [p["id"] for p in body["items"]] == [TRIPLE]
+    assert body["total"] == 1
+
+
+async def test_search_items_carry_full_person_detail(seeded_people):
+    r = await seeded_people.get("/people", params={"search": "visnjic"})
+    assert r.json()["items"][0] == {
+        "id": TRIPLE,
+        "name": "Goran Višnjić",
+        "country_code": "HR",
+        "country_name": "Croatia",
+        "birthday": "1972-09-09",
+        "deathday": None,
+        "gender": "Male",
+        "image_medium": "http://img/goran-m.jpg",
+        "image_original": "http://img/goran-o.jpg",
+    }
+
+
+async def test_search_tokens_are_anded(seeded_people):
+    hit = await seeded_people.get("/people", params={"search": "goran visnjic"})
+    assert [p["id"] for p in hit.json()["items"]] == [TRIPLE]
+
+    miss = await seeded_people.get("/people", params={"search": "goran levi"})
+    assert miss.json() == {
+        "items": [],
+        "page": 1,
+        "per_page": 50,
+        "total": 0,
+        "total_pages": 1,
+    }
+
+
+async def test_punctuation_only_search_returns_nothing(seeded_people):
+    r = await seeded_people.get("/people", params={"search": "--"})
+    assert r.status_code == 200
+    assert r.json()["items"] == [] and r.json()["total"] == 0
+
+
+async def test_search_paginates(seeded_people):
+    # "o" hits all three seeded people (Goran, Crew Only, No Credits); ask for
+    # one at a time.
+    params = {"search": "o", "per_page": 1}
+    first = await seeded_people.get("/people", params={**params, "page": 1})
+    body = first.json()
+    assert body["total"] == 3
+    assert body["total_pages"] == 3
+    assert body["page"] == 1 and body["per_page"] == 1
+    assert len(body["items"]) == 1
+
+    second = await seeded_people.get("/people", params={**params, "page": 2})
+    assert second.json()["items"][0]["id"] != body["items"][0]["id"]
+
+
+async def test_search_param_is_required(seeded_people):
+    # /people is a search endpoint, not a browse-all-people one.
+    assert (await seeded_people.get("/people")).status_code == 422
+
+
+async def test_blank_search_matches_nothing(seeded_people):
+    r = await seeded_people.get("/people", params={"search": ""})
+    assert r.status_code == 200
+    assert r.json()["items"] == [] and r.json()["total"] == 0
+
+
+async def test_search_rejects_out_of_range_pagination(seeded_people):
+    base = {"search": "visnjic"}
+    assert (await seeded_people.get("/people", params={**base, "page": 0})).status_code == 422
+    assert (await seeded_people.get("/people", params={**base, "per_page": 101})).status_code == 422
+
+
+async def test_search_cache_header_is_private(seeded_people):
+    r = await seeded_people.get("/people", params={"search": "visnjic"})
+    assert r.headers["Cache-Control"] == "private, max-age=300"
+
+
+async def test_search_requires_auth():
+    async with httpx.AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
+        r = await c.get("/people", params={"search": "visnjic"})
+    assert r.status_code == 401

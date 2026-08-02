@@ -304,6 +304,54 @@ async def list_shows(
     return rows, total
 
 
+async def search_people(
+    session: AsyncSession,
+    search: str | None,
+    page: int,
+    per_page: int,
+) -> tuple[list[m.Person], int]:
+    """Paginated person search — the same query shape as show search, pointed at
+    a different table.
+
+    Deliberately a separate entity search rather than a third OR branch in
+    `list_shows`: a cast member's name is not a name of the show, and folding
+    ~1.3M crew names into the title predicate would make "smith" return most of
+    the catalog. `list_shows` is untouched by this.
+
+    Reuses `_fold` so the column and each query token normalize under identical
+    rules, which matters more for names than for titles — "visnjic" has to reach
+    "Goran Višnjić" because nobody types the diacritics. Backed by
+    `ix_person_name_folded_trgm`.
+
+    Search-only by design: with no usable token there is nothing to match, so
+    this returns an empty page rather than the whole table. There is no
+    browse-all-people surface, and at ~487k rows an unfiltered listing would
+    sort the entire table on every request off the back of an index that only
+    covers the folded name.
+    """
+    # Token-AND, same as show search: "zachary levi" matches, "zachary garcia"
+    # doesn't. A query that folds to nothing ("--", "") matches nothing — never
+    # everything.
+    usable = [t for t in (search or "").split() if _strip_punct_space(t)]
+    if not usable:
+        return [], 0
+
+    base = select(m.Person)
+    for token in usable:
+        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
+        base = base.where(_fold(m.Person.name).like(needle))
+
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    stmt = (
+        base.order_by(func.lower(m.Person.name).asc(), m.Person.id.asc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    return rows, total
+
+
 async def hydrate_matched_aka(
     session: AsyncSession, shows: list[m.Show], search: str | None
 ) -> dict[int, str | None]:
