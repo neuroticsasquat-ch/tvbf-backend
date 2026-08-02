@@ -265,6 +265,27 @@ async def get_episode_route(
     return out.model_copy(update={"my_rating": my_ratings.get(ep.id)})
 
 
+# Guest cast is the episode-level counterpart of /shows/{id}/cast and shares its
+# shape, so it reuses CastMemberOut. It carries no per-user fields, so it takes
+# the router-level `private, max-age=300` rather than the `no-store` the episode
+# detail route needs for `my_rating`.
+@router.get("/episodes/{episode_id}/guest-cast", response_model=list[CastMemberOut])
+async def get_episode_guest_cast_route(
+    episode_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    # 96% of episodes have zero guest cast, so an empty result can't stand in
+    # for a missing episode. Check existence explicitly.
+    if not await browse_queries.episode_exists(session, episode_id):
+        raise HTTPException(status_code=404, detail="episode not found")
+    return [
+        build_cast_member(credit, person, character)
+        for credit, person, character in await browse_queries.list_episode_guest_cast(
+            session, episode_id
+        )
+    ]
+
+
 @router.get("/shows/{show_id}/episodes", response_model=list[EpisodeOut])
 async def get_show_episodes_route(
     show_id: int,
