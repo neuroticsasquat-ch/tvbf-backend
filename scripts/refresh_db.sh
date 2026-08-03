@@ -40,6 +40,13 @@ case "$MODE" in
   *) echo "usage: $0 [tvmaze|app|both]" >&2; exit 1 ;;
 esac
 
+# Schemas this run drops and restores from the prod dump.
+case "$MODE" in
+  tvmaze) RESTORED_SCHEMAS="'tvmaze'" ;;
+  app)    RESTORED_SCHEMAS="'app'" ;;
+  both)   RESTORED_SCHEMAS="'tvmaze','app'" ;;
+esac
+
 echo "→ Locating prod Postgres container on $PROD_SSH..."
 PROD_CONTAINER=$(ssh "$PROD_SSH" \
   "docker ps --filter ancestor=postgres:18-alpine --format '{{.ID}}'" | head -1)
@@ -71,47 +78,66 @@ ssh "$PROD_SSH" \
   "docker exec -i $PROD_CONTAINER pg_dump ${DUMP_FLAGS[*]} -U $PROD_PG_USER $PROD_PG_DB" \
   > "$DUMP_FILE"
 
+# `DROP SCHEMA ... CASCADE` below silently drops every foreign key pointing
+# into the dropped schemas, including ones defined on tables we are NOT
+# restoring (app.user_show_rating, import_ne.show_resolution, ...). Those do
+# not come back with the dump, so snapshot their definitions first and replay
+# them after the restore.
+#
+# Only constraints whose OWN table lives outside the restored set need this —
+# anything defined on a restored table is recreated by pg_restore.
+echo "→ Snapshotting cross-schema foreign keys..."
+FK_RESTORE_SQL=$(docker exec -i "$LOCAL_PG_CONTAINER" \
+  psql -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -tA <<SQL
+SELECT format(
+         'ALTER TABLE %I.%I ADD CONSTRAINT %I %s;',
+         rn.nspname, rt.relname, c.conname, pg_get_constraintdef(c.oid)
+       )
+FROM pg_constraint c
+JOIN pg_class     rt ON rt.oid = c.conrelid
+JOIN pg_namespace rn ON rn.oid = rt.relnamespace
+JOIN pg_class     ft ON ft.oid = c.confrelid
+JOIN pg_namespace fn ON fn.oid = ft.relnamespace
+WHERE c.contype = 'f'
+  AND fn.nspname IN ($RESTORED_SCHEMAS)
+  AND rn.nspname NOT IN ($RESTORED_SCHEMAS)
+ORDER BY rn.nspname, rt.relname, c.conname;
+SQL
+)
+
+if [[ -n "$FK_RESTORE_SQL" ]]; then
+  echo "$FK_RESTORE_SQL" | sed 's/^/    /'
+else
+  echo "    (none)"
+fi
+
 echo "→ Preparing local schemas..."
+DROP_SQL=""
 case "$MODE" in
-  tvmaze)
-    # Preserve local app data. Drop the cross-schema FKs from app and drop the
-    # tvmaze schema; pg_restore will recreate the schema + tables. We re-add
-    # the FKs after restore. App rows referencing tvmaze IDs must still exist
-    # in prod (true under normal use).
-    docker exec -i "$LOCAL_PG_CONTAINER" psql -U "$LOCAL_DB_USER" -d "$LOCAL_DB" <<'SQL'
-ALTER TABLE app.user_show_watch    DROP CONSTRAINT IF EXISTS fk_usw_show;
-ALTER TABLE app.user_episode_watch DROP CONSTRAINT IF EXISTS fk_uew_episode;
-DROP SCHEMA IF EXISTS tvmaze CASCADE;
-SQL
-    ;;
-  app)
-    docker exec -i "$LOCAL_PG_CONTAINER" psql -U "$LOCAL_DB_USER" -d "$LOCAL_DB" <<'SQL'
-DROP SCHEMA IF EXISTS app CASCADE;
-SQL
-    ;;
-  both)
-    docker exec -i "$LOCAL_PG_CONTAINER" psql -U "$LOCAL_DB_USER" -d "$LOCAL_DB" <<'SQL'
-DROP SCHEMA IF EXISTS app CASCADE;
-DROP SCHEMA IF EXISTS tvmaze CASCADE;
-SQL
-    ;;
+  tvmaze) DROP_SQL="DROP SCHEMA IF EXISTS tvmaze CASCADE;" ;;
+  app)    DROP_SQL="DROP SCHEMA IF EXISTS app CASCADE;" ;;
+  both)   DROP_SQL="DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS tvmaze CASCADE;" ;;
 esac
+docker exec -i "$LOCAL_PG_CONTAINER" \
+  psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -c "$DROP_SQL"
 
 echo "→ Restoring dump..."
 docker cp "$DUMP_FILE" "$LOCAL_PG_CONTAINER:/tmp/refresh.dump"
 docker exec -i "$LOCAL_PG_CONTAINER" pg_restore \
   --no-owner --no-acl -U "$LOCAL_DB_USER" -d "$LOCAL_DB" /tmp/refresh.dump
 
-if [[ "$MODE" == "tvmaze" ]]; then
+if [[ -n "$FK_RESTORE_SQL" ]]; then
   echo "→ Re-adding cross-schema foreign keys..."
-  docker exec -i "$LOCAL_PG_CONTAINER" psql -U "$LOCAL_DB_USER" -d "$LOCAL_DB" <<'SQL'
-ALTER TABLE app.user_show_watch
-  ADD CONSTRAINT fk_usw_show FOREIGN KEY (show_id)
-  REFERENCES tvmaze.show(id) ON DELETE CASCADE;
-ALTER TABLE app.user_episode_watch
-  ADD CONSTRAINT fk_uew_episode FOREIGN KEY (episode_id)
-  REFERENCES tvmaze.episode(id) ON DELETE CASCADE;
-SQL
+  if ! printf '%s\n' "$FK_RESTORE_SQL" \
+    | docker exec -i "$LOCAL_PG_CONTAINER" \
+        psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB"; then
+    echo "ERROR: could not re-add a foreign key after the restore." >&2
+    echo "  This usually means a local row references a row that is not in the" >&2
+    echo "  prod dump — e.g. a My Shows entry for a show prod no longer has." >&2
+    echo "  Delete the offending rows and re-add the constraint by hand:" >&2
+    printf '%s\n' "$FK_RESTORE_SQL" | sed 's/^/    /' >&2
+    exit 1
+  fi
 fi
 
 if [[ ( "$MODE" == "app" || "$MODE" == "both" ) && "$ANONYMIZE" == "1" ]]; then
