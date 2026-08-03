@@ -1,6 +1,7 @@
 import asyncio
 import time
 from collections import deque
+from functools import cache
 
 import httpx
 
@@ -29,6 +30,30 @@ class RateLimiter:
             self._timestamps.append(time.monotonic())
 
 
+@cache
+def get_rate_limiter(calls: int, window_seconds: float) -> RateLimiter:
+    """The process-wide limiter for one request budget.
+
+    TV Maze's cap applies to us as a whole, not to each job. Every admin route
+    builds its own `TVMazeClient`, so a per-instance limiter let two concurrent
+    jobs each pace at the configured rate and hit upstream at twice it — over
+    the cap, with neither throttling the other. Sharing one bucket means
+    concurrent jobs split a single budget and simply run slower, which is the
+    intended behaviour.
+
+    Cached rather than built at import so the settings that size it are read
+    when the first client is constructed. Tests reset it via `cache_clear()`
+    (`functools.cache` exposes it the same as `lru_cache`); `tests/conftest.py`
+    does that between tests so timestamps never leak.
+
+    The cache is keyed by budget, so callers asking for *different* numbers get
+    different buckets — which would reintroduce exactly the overshoot this
+    exists to prevent. In practice it cannot happen: every construction site
+    reads the same `Settings`. Size a new caller from settings too.
+    """
+    return RateLimiter(calls, window_seconds)
+
+
 class TVMazeClient:
     def __init__(
         self,
@@ -38,9 +63,13 @@ class TVMazeClient:
         retry_max_attempts: int = 5,
         retry_base_delay: float = 0.5,
         timeout: float = 30.0,
+        limiter: RateLimiter | None = None,
     ):
         self._base_url = base_url.rstrip("/")
-        self._limiter = RateLimiter(rate_calls, rate_window)
+        # Shared by default; pass `limiter` explicitly for an isolated budget.
+        self._limiter = (
+            limiter if limiter is not None else get_rate_limiter(rate_calls, rate_window)
+        )
         self._retry_max = retry_max_attempts
         self._retry_base = retry_base_delay
         self._client = httpx.AsyncClient(timeout=timeout)
