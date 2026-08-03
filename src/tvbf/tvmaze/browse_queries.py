@@ -108,6 +108,11 @@ async def get_episode(session: AsyncSession, episode_id: int) -> m.Episode | Non
     return result.scalar_one_or_none()
 
 
+async def episode_exists(session: AsyncSession, episode_id: int) -> bool:
+    result = await session.execute(select(m.Episode.id).where(m.Episode.id == episode_id))
+    return result.scalar_one_or_none() is not None
+
+
 async def get_show_episodes(
     session: AsyncSession, show_id: int, season: int | None
 ) -> list[m.Episode]:
@@ -117,6 +122,134 @@ async def get_show_episodes(
     stmt = stmt.order_by(m.Episode.season, m.Episode.number)
     result = await session.execute(stmt)
     return list(result.scalars().all())
+
+
+async def list_show_cast(
+    session: AsyncSession, show_id: int
+) -> list[tuple[m.ShowCast, m.Person, m.Character]]:
+    """Cast credits for one show in upstream billing order.
+
+    Covered by ix_show_cast_show_id_sort. Single-show route, so unlike
+    `hydrate_show_refs` there is no N+1 to batch away.
+    """
+    stmt = (
+        select(m.ShowCast, m.Person, m.Character)
+        .join(m.Person, m.Person.id == m.ShowCast.person_id)
+        .join(m.Character, m.Character.id == m.ShowCast.character_id)
+        .where(m.ShowCast.show_id == show_id)
+        .order_by(m.ShowCast.sort_order)
+    )
+    result = await session.execute(stmt)
+    return list(result.tuples().all())
+
+
+async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Person, m.CrewRole]]:
+    """Crew credits for one show in upstream order. Covered by ix_show_crew_show_id_sort."""
+    stmt = (
+        select(m.Person, m.CrewRole)
+        .join(m.ShowCrew, m.ShowCrew.person_id == m.Person.id)
+        .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
+        .where(m.ShowCrew.show_id == show_id)
+        .order_by(m.ShowCrew.sort_order)
+    )
+    result = await session.execute(stmt)
+    return list(result.tuples().all())
+
+
+async def list_episode_guest_cast(
+    session: AsyncSession, episode_id: int
+) -> list[tuple[m.EpisodeGuestCast, m.Person, m.Character]]:
+    """Guest-cast credits for one episode in upstream billing order.
+
+    Covered by ix_egc_episode_id_sort. The credit id breaks ties:
+    the credit tables carry no unique constraint by design, so one episode can
+    hold several rows at the same `sort_order` and the order would otherwise be
+    nondeterministic across requests.
+    """
+    stmt = (
+        select(m.EpisodeGuestCast, m.Person, m.Character)
+        .join(m.Person, m.Person.id == m.EpisodeGuestCast.person_id)
+        .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
+        .where(m.EpisodeGuestCast.episode_id == episode_id)
+        .order_by(m.EpisodeGuestCast.sort_order.asc(), m.EpisodeGuestCast.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def get_person(session: AsyncSession, person_id: int) -> m.Person | None:
+    result = await session.execute(select(m.Person).where(m.Person.id == person_id))
+    return result.scalar_one_or_none()
+
+
+async def person_exists(session: AsyncSession, person_id: int) -> bool:
+    result = await session.execute(select(m.Person.id).where(m.Person.id == person_id))
+    return result.scalar_one_or_none() is not None
+
+
+# A filmography reads most-recent-first, so credited shows are ordered by
+# premiere date descending. Shows with no premiere date (unaired, upcoming) sort
+# last; show id breaks ties so the order is stable across requests.
+_CREDIT_SHOW_ORDER = (m.Show.premiered.desc().nulls_last(), m.Show.id.asc())
+
+
+async def list_person_cast_credits(
+    session: AsyncSession, person_id: int
+) -> list[tuple[m.ShowCast, m.Show, m.Character]]:
+    """Regular cast credits for one person. Covered by ix_show_cast_person_id."""
+    stmt = (
+        select(m.ShowCast, m.Show, m.Character)
+        .join(m.Show, m.Show.id == m.ShowCast.show_id)
+        .join(m.Character, m.Character.id == m.ShowCast.character_id)
+        .where(m.ShowCast.person_id == person_id)
+        # The credit tables carry no unique constraint by design, so one person
+        # can hold several credits on the same show (two characters, or an
+        # upstream duplicate). Break the tie on the credit itself, or the order
+        # within a show is nondeterministic across requests.
+        .order_by(*_CREDIT_SHOW_ORDER, m.ShowCast.sort_order.asc(), m.ShowCast.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_person_crew_credits(
+    session: AsyncSession, person_id: int
+) -> list[tuple[m.Show, m.CrewRole]]:
+    """Crew credits for one person. Covered by ix_show_crew_person_id."""
+    stmt = (
+        select(m.Show, m.CrewRole)
+        .join(m.ShowCrew, m.ShowCrew.show_id == m.Show.id)
+        .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
+        .where(m.ShowCrew.person_id == person_id)
+        # Crew is the common multi-credit case — one person is routinely writer
+        # and director on the same show — so role name orders within a show, and
+        # the credit id keeps even identical roles stable.
+        .order_by(*_CREDIT_SHOW_ORDER, m.CrewRole.name.asc(), m.ShowCrew.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_person_guest_credits(
+    session: AsyncSession, person_id: int
+) -> list[tuple[m.EpisodeGuestCast, m.Episode, m.Show, m.Character]]:
+    """Guest-cast credits for one person, joined through episode → show so each
+    entry can render "Show — S2E11" without a second round trip.
+
+    Ordered by air date descending: `sort_order` on a guest credit is billing
+    within its own episode and says nothing useful across episodes. Episodes with
+    no airdate sort last, with episode id breaking ties.
+    """
+    stmt = (
+        select(m.EpisodeGuestCast, m.Episode, m.Show, m.Character)
+        .join(m.Episode, m.Episode.id == m.EpisodeGuestCast.episode_id)
+        .join(m.Show, m.Show.id == m.Episode.show_id)
+        .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
+        .where(m.EpisodeGuestCast.person_id == person_id)
+        .order_by(
+            m.Episode.airdate.desc().nulls_last(),
+            m.Episode.id.asc(),
+            m.EpisodeGuestCast.id.asc(),
+        )
+    )
+    return list((await session.execute(stmt)).tuples().all())
 
 
 def _fold(expr):
@@ -189,6 +322,54 @@ async def list_shows(
 
     stmt = (
         base.order_by(_SORT_EXPRS[sort], m.Show.id.asc())
+        .limit(per_page)
+        .offset((page - 1) * per_page)
+    )
+    rows = list((await session.execute(stmt)).scalars().all())
+    return rows, total
+
+
+async def search_people(
+    session: AsyncSession,
+    search: str | None,
+    page: int,
+    per_page: int,
+) -> tuple[list[m.Person], int]:
+    """Paginated person search — the same query shape as show search, pointed at
+    a different table.
+
+    Deliberately a separate entity search rather than a third OR branch in
+    `list_shows`: a cast member's name is not a name of the show, and folding
+    ~1.3M crew names into the title predicate would make "smith" return most of
+    the catalog. `list_shows` is untouched by this.
+
+    Reuses `_fold` so the column and each query token normalize under identical
+    rules, which matters more for names than for titles — "visnjic" has to reach
+    "Goran Višnjić" because nobody types the diacritics. Backed by
+    `ix_person_name_folded_trgm`.
+
+    Search-only by design: with no usable token there is nothing to match, so
+    this returns an empty page rather than the whole table. There is no
+    browse-all-people surface, and at ~487k rows an unfiltered listing would
+    sort the entire table on every request off the back of an index that only
+    covers the folded name.
+    """
+    # Token-AND, same as show search: "zachary levi" matches, "zachary garcia"
+    # doesn't. A query that folds to nothing ("--", "") matches nothing — never
+    # everything.
+    usable = [t for t in (search or "").split() if _strip_punct_space(t)]
+    if not usable:
+        return [], 0
+
+    base = select(m.Person)
+    for token in usable:
+        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
+        base = base.where(_fold(m.Person.name).like(needle))
+
+    total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
+
+    stmt = (
+        base.order_by(func.lower(m.Person.name).asc(), m.Person.id.asc())
         .limit(per_page)
         .offset((page - 1) * per_page)
     )

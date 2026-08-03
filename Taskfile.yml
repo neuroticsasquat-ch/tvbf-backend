@@ -179,6 +179,27 @@ tasks:
         curl -sk https://api.tvbf.localhost/admin/refresh-shows/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  people:ingest:
+    desc: POST /admin/ingest-people
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/ingest-people
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  people:ingest:status:
+    desc: 'GET /admin/ingest-people/<id> — task people:ingest:status -- <uuid>'
+    cmds:
+      - >
+        curl -sk https://api.tvbf.localhost/admin/ingest-people/{{.CLI_ARGS}}
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  people:update:
+    desc: POST /admin/update-people
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/update-people
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:

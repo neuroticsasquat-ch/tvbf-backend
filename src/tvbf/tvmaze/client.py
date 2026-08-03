@@ -115,6 +115,23 @@ class TVMazeClient:
         resp = await self._request("GET", url)
         return {int(k): int(v) for k, v in resp.json().items()}
 
+    async def get_person(self, person_id: int) -> dict:
+        """A person plus their guest-cast credits, in one request.
+
+        Only `guestcastcredits` is embedded. `castcredits` and `crewcredits`
+        are free to request but are written by the show axis, and person-side
+        credits carry no ordering — writing them would clobber billing order.
+        """
+        url = f"{self._base_url}/people/{person_id}"
+        resp = await self._request("GET", url, params=[("embed[]", "guestcastcredits")])
+        return resp.json()
+
+    async def get_person_updates(self) -> dict[int, int]:
+        """Every person id upstream, mapped to its last-modified epoch."""
+        url = f"{self._base_url}/updates/people"
+        resp = await self._request("GET", url)
+        return {int(k): int(v) for k, v in resp.json().items()}
+
     async def get_akas(self, show_id: int) -> list[dict]:
         url = f"{self._base_url}/shows/{show_id}/akas"
         resp = await self._request("GET", url)

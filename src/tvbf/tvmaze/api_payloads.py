@@ -140,6 +140,61 @@ class TVMazeCharacter(BaseModel):
     image: TVMazeImage | None = None
 
 
+def _id_from_href(href: str | None) -> int | None:
+    """Trailing path segment of a TV Maze self-link, as an int."""
+    if not href:
+        return None
+    tail = href.rstrip("/").rsplit("/", 1)[-1]
+    return int(tail) if tail.isdigit() else None
+
+
+class TVMazeGuestCastCredit(BaseModel):
+    """One guest-cast credit as returned by `/people/{id}?embed[]=guestcastcredits`.
+
+    Unlike the show-side cast embed, guest credits carry `_links` rather than
+    embedded objects, so the episode and character ids are parsed out of href
+    strings. Both are optional: a credit missing either link is unusable and the
+    upsert skips it rather than guessing.
+    """
+
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    is_self: bool = Field(False, alias="self")
+    is_voice: bool = Field(False, alias="voice")
+    links: dict = Field(default_factory=dict, alias="_links")
+
+    @property
+    def episode_id(self) -> int | None:
+        return _id_from_href((self.links.get("episode") or {}).get("href"))
+
+    @property
+    def character_id(self) -> int | None:
+        return _id_from_href((self.links.get("character") or {}).get("href"))
+
+    @property
+    def character_name(self) -> str | None:
+        return (self.links.get("character") or {}).get("name")
+
+
+class TVMazePersonEmbedded(BaseModel):
+    """Only `guestcastcredits` is modelled, because only it is requested.
+
+    `castcredits` and `crewcredits` embed fine but duplicate what the show axis
+    already writes, and person-side credits carry no ordering — writing them
+    would clobber the billing order pass A captured from the show side.
+    """
+
+    model_config = ConfigDict(extra="ignore")
+
+    guestcastcredits: list[TVMazeGuestCastCredit] = Field(default_factory=list)
+
+
+class TVMazePersonDetail(TVMazePerson):
+    """A person fetched directly from `/people/{id}`, with its embeds."""
+
+    embedded: TVMazePersonEmbedded = Field(default_factory=TVMazePersonEmbedded, alias="_embedded")
+
+
 class TVMazeCastEntry(BaseModel):
     # `self` can't be a field name, so both flags are aliased for symmetry.
     # `character` is never null upstream (286/286 sampled), including pure

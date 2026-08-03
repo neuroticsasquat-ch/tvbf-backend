@@ -1,7 +1,7 @@
 from dataclasses import dataclass, field
 from datetime import date, time
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
 ALLOWED_SORT_KEYS = {
     "name",
@@ -135,6 +135,125 @@ class ShowListPage(BaseModel):
     total_pages: int
 
 
+class PersonRef(BaseModel):
+    """Compact person reference used inside credit payloads."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    image_medium: str | None = None
+
+
+class CharacterRef(BaseModel):
+    """Compact character reference used inside cast payloads."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    image_medium: str | None = None
+
+
+class CastMemberOut(BaseModel):
+    person: PersonRef
+    character: CharacterRef
+    # `self` is a Python keyword, so the attribute is `self_credit` and only the
+    # serialized key matches upstream's naming.
+    self_credit: bool = Field(False, serialization_alias="self")
+    voice: bool = False
+
+
+class CrewMemberOut(BaseModel):
+    person: PersonRef
+    role: str
+
+
+class PersonOut(BaseModel):
+    """A person, as returned by GET /people/{id} and as each item of a
+    GET /people search page."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    country_code: str | None = None
+    country_name: str | None = None
+    birthday: date | None = None
+    deathday: date | None = None
+    gender: str | None = None
+    image_medium: str | None = None
+    image_original: str | None = None
+
+
+class PersonListPage(BaseModel):
+    """Paginated person search results. Items are the same shape as person
+    detail — a person row is small, and one person shape keeps the frontend from
+    needing a second fetch to render anything beyond a name."""
+
+    items: list[PersonOut]
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+
+
+class ShowRef(BaseModel):
+    """Compact show reference used inside a person's filmography."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str
+    image_medium: str | None = None
+    premiered: date | None = None
+
+
+class EpisodeRef(BaseModel):
+    """Compact episode reference used inside guest-cast credits. Carries season
+    and number so the frontend can render "Show — S2E11" without a round trip."""
+
+    model_config = ConfigDict(from_attributes=True)
+
+    id: int
+    name: str | None = None
+    season: int
+    number: int | None = None
+    airdate: date | None = None
+
+
+class PersonCastCreditOut(BaseModel):
+    show: ShowRef
+    character: CharacterRef
+    self_credit: bool = Field(False, serialization_alias="self")
+    voice: bool = False
+
+
+class PersonCrewCreditOut(BaseModel):
+    show: ShowRef
+    role: str
+
+
+class PersonGuestCreditOut(BaseModel):
+    show: ShowRef
+    episode: EpisodeRef
+    character: CharacterRef
+    self_credit: bool = Field(False, serialization_alias="self")
+    voice: bool = False
+
+
+class PersonCreditsOut(BaseModel):
+    """Grouped filmography. The three kinds are genuinely different shapes
+    (person-as-character, person-in-function, person-as-character-in-one-episode)
+    and the page renders them as separate sections, so they stay grouped rather
+    than interleaved. All three keys are always present — an absent category is
+    an empty list, never a missing key."""
+
+    cast: list[PersonCastCreditOut] = []
+    crew: list[PersonCrewCreditOut] = []
+    guest_cast: list[PersonGuestCreditOut] = []
+
+
 def build_show_summary(
     show,
     genre_names: list[str],
@@ -212,4 +331,45 @@ def build_show_detail(
         seasons=season_dtos,
         rating_average=float(show.rating_average) if show.rating_average is not None else None,
         my_rating=my_rating,
+    )
+
+
+def build_cast_member(credit, person, character) -> CastMemberOut:
+    return CastMemberOut(
+        person=PersonRef.model_validate(person),
+        character=CharacterRef.model_validate(character),
+        self_credit=credit.is_self,
+        voice=credit.is_voice,
+    )
+
+
+def build_crew_member(person, role) -> CrewMemberOut:
+    return CrewMemberOut(person=PersonRef.model_validate(person), role=role.name)
+
+
+def build_person_credits(cast_rows, crew_rows, guest_rows) -> PersonCreditsOut:
+    return PersonCreditsOut(
+        cast=[
+            PersonCastCreditOut(
+                show=ShowRef.model_validate(show),
+                character=CharacterRef.model_validate(character),
+                self_credit=credit.is_self,
+                voice=credit.is_voice,
+            )
+            for credit, show, character in cast_rows
+        ],
+        crew=[
+            PersonCrewCreditOut(show=ShowRef.model_validate(show), role=role.name)
+            for show, role in crew_rows
+        ],
+        guest_cast=[
+            PersonGuestCreditOut(
+                show=ShowRef.model_validate(show),
+                episode=EpisodeRef.model_validate(episode),
+                character=CharacterRef.model_validate(character),
+                self_credit=credit.is_self,
+                voice=credit.is_voice,
+            )
+            for credit, episode, show, character in guest_rows
+        ],
     )
