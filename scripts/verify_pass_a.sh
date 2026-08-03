@@ -212,7 +212,7 @@ elif (( tvdb >= 10000 )); then report INVESTIGATE "external ids" "tvdb=$tvdb —
 else report STOP "external ids" "tvdb=$tvdb — NEU-922's thetvdb alias fix did not take effect"
 fi
 
-# 2. Specials. Baseline 0; expected ~6% of rows.
+# 2. Specials. Baseline 0; measured 0.77% of rows after the first full pass.
 episodes=$EPISODES; specials=$SPECIALS
 if (( episodes == 0 )); then
   report STOP "specials" "no episodes at all"
@@ -221,34 +221,41 @@ else
   pct=$(( pct_x100 / 100 )).$(printf '%02d' $(( pct_x100 % 100 )))
   # NEU-938 predicted ~6%, but that appears to have borrowed NEU-942's "5.7% of
   # episodes REFERENCED BY GUEST CREDITS are specials" — a different and much
-  # smaller population. Measured at 28.8% through the run: ~1.75% of all rows.
+  # smaller population. The completed pass measured 27,493 of 3,527,180 rows
+  # (0.77%), so the 1–4% band flagged a healthy run. Verified per-show against
+  # /shows/{id}/episodes?specials=1 — shows 4, 67, 82 and 210 (101 specials)
+  # match upstream exactly, so the low rate is the catalogue's shape, not a
+  # fetch that dropped them. Band widened to 0.5–2% around the real figure.
   # What actually matters here is that specials are non-zero, since pass C's
   # guest credits FK to episodes that only this pass fetches.
   if   (( specials == 0 ));                          then report STOP "specials" "0 specials — pass C would drop guest credits on missing episodes"
-  elif (( pct_x100 >= 100 && pct_x100 <= 400 ));     then report PASS "specials" "$specials of $episodes episodes (${pct}%)"
-  else report INVESTIGATE "specials" "$specials of $episodes episodes (${pct}%) — expected 1–4%"
+  elif (( pct_x100 >= 50 && pct_x100 <= 200 ));      then report PASS "specials" "$specials of $episodes episodes (${pct}%)"
+  else report INVESTIGATE "specials" "$specials of $episodes episodes (${pct}%) — expected 0.5–2%"
   fi
 fi
 
 # 3. Credit volume.
 #
 # NEU-938's "~640k cast / ~1.3M crew" came from a 45-show sample that was
-# clearly weighted toward large shows. Measured against real data at 28.8%
-# through the run: 77.7% of refreshed shows have NO crew rows at all (avg 3.3
-# crew, 4.9 cast), while big shows do get full lists (631, 567, 533). That
-# extrapolates to ~438k cast and ~292k crew — cast-heavy, where the sample
-# predicted crew-heavy by 2:1. Bands below follow the measurement, not the
-# sample. The real "did credits ingest work" signal is check 5.
+# clearly weighted toward large shows, and the mid-run correction to ~438k/~292k
+# was itself extrapolated from 28.8%. The completed pass landed at 274,629 cast
+# and 164,539 crew: 55.6% of shows have cast, only 17.1% have crew, so 82.9%
+# carry no crew rows at all — leaner than the 77.7% seen at 28.8%, because the
+# id tail skews to single-season foreign and reality titles. Sampled seven
+# synced shows with cast but zero crew (108, 137, 224, 241, 246, 256, 262):
+# /shows/{id}/crew returns an empty array upstream for all seven, so this is
+# TV Maze's sparsity, not under-collection. Bands below follow the real totals.
+# The real "did credits ingest work" signal is check 5.
 cast_rows=$CAST_ROWS; crew_rows=$CREW_ROWS
 zero_crew_pct=0
 (( $SYNCED > 0 )) && zero_crew_pct=$(( 100 * $ZERO_CREW / $SYNCED ))
 vol_detail="cast=$cast_rows crew=$crew_rows people=$PEOPLE chars=$CHARACTERS; ${zero_crew_pct}% of shows have no crew"
 if   (( cast_rows < 150000 || crew_rows < 100000 )); then
   report STOP "credit volume" "$vol_detail — far below the measured trajectory"
-elif (( cast_rows >= 350000 && cast_rows <= 600000 && crew_rows >= 200000 && crew_rows <= 420000 )); then
+elif (( cast_rows >= 250000 && cast_rows <= 350000 && crew_rows >= 140000 && crew_rows <= 200000 )); then
   report PASS "credit volume" "$vol_detail"
 else
-  report INVESTIGATE "credit volume" "$vol_detail — outside the ~438k/~292k projection"
+  report INVESTIGATE "credit volume" "$vol_detail — outside the measured 275k cast / 165k crew"
 fi
 
 # 4. Billing order. sort_order is the only place upstream billing order lives.
