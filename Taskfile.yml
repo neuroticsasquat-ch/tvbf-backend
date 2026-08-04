@@ -165,6 +165,20 @@ tasks:
         curl -sk https://api.tvbf.localhost/admin/backfill-ratings/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  credits:backfill:
+    desc: POST /admin/backfill-episode-credits
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-episode-credits
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  credits:backfill:status:
+    desc: 'GET /admin/backfill-episode-credits/<id> — task credits:backfill:status -- <uuid>'
+    cmds:
+      - >
+        curl -sk https://api.tvbf.localhost/admin/backfill-episode-credits/{{.CLI_ARGS}}
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   refresh:shows:
     desc: POST /admin/refresh-shows
     cmds:
