@@ -1,8 +1,9 @@
 """Pass C — the person initial ingest (NEU-942).
 
-One request per person: `/people/{id}?embed[]=guestcastcredits`. The todo list
-is every id in `/updates/people` whose `credits_synced_at IS NULL`, so people
-pass A created from a show's cast embed are picked up here for their credits.
+One request per person: `/people/{id}`, attributes only. It used to embed
+`guestcastcredits` and write them; ADR-0003 moved every credit table to the
+show axis, so what remains here is the person mirror and its
+`credits_synced_at IS NULL` todo list.
 """
 
 from datetime import UTC, datetime
@@ -17,7 +18,7 @@ from tvbf.tvmaze import person_ingest as person_ingest_module
 from tvbf.tvmaze.person_ingest import run_person_ingest
 
 
-def person_payload(person_id: int, *, credits=None, updated: int = 1700000000) -> dict:
+def person_payload(person_id: int, *, updated: int = 1700000000) -> dict:
     return {
         "id": person_id,
         "name": f"Person {person_id}",
@@ -27,21 +28,6 @@ def person_payload(person_id: int, *, credits=None, updated: int = 1700000000) -
         "gender": "Male",
         "image": None,
         "updated": updated,
-        "_embedded": {"guestcastcredits": credits or []},
-    }
-
-
-def guest_credit(episode_id: int, character_id: int, *, name: str = "Guest") -> dict:
-    return {
-        "self": False,
-        "voice": False,
-        "_links": {
-            "episode": {"href": f"https://api.tvmaze.com/episodes/{episode_id}"},
-            "character": {
-                "href": f"https://api.tvmaze.com/characters/{character_id}",
-                "name": name,
-            },
-        },
     }
 
 
@@ -77,20 +63,6 @@ async def run_id(session):
     return run.id
 
 
-@pytest.fixture
-async def episodes(session):
-    """Guest credits need real episodes to point their FK at."""
-    session.add(m.Show(id=1, name="S", tvmaze_updated=1))
-    await session.flush()
-    session.add_all(
-        [
-            m.Episode(id=500, show_id=1, season=1, number=1, name="E1"),
-            m.Episode(id=501, show_id=1, season=1, number=2, name="E2"),
-        ]
-    )
-    await session.commit()
-
-
 async def _refreshed_person(session, person_id: int) -> m.Person:
     return (
         await session.execute(
@@ -111,25 +83,8 @@ async def _refreshed_run(session, rid) -> m.IngestRun:
     ).scalar_one()
 
 
-async def _guest_rows(session, person_id: int) -> list[m.EpisodeGuestCast]:
-    return list(
-        (
-            await session.execute(
-                select(m.EpisodeGuestCast)
-                .where(m.EpisodeGuestCast.person_id == person_id)
-                .order_by(m.EpisodeGuestCast.sort_order)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-
-async def test_ingest_writes_person_and_guest_credits(session, run_id, episodes):
-    client = FakeClient(
-        {10: 100},
-        {10: person_payload(10, credits=[guest_credit(500, 900), guest_credit(501, 901)])},
-    )
+async def test_ingest_writes_person_attributes(session, run_id):
+    client = FakeClient({10: 100}, {10: person_payload(10)})
     result = await run_person_ingest(session_factory=lambda: session, client=client, run_id=run_id)
 
     assert result.persons_processed == 1
@@ -141,22 +96,39 @@ async def test_ingest_writes_person_and_guest_credits(session, run_id, episodes)
     assert person.birthday is None  # "" coerced, not a parse error
     assert person.credits_synced_at is not None
 
-    rows = await _guest_rows(session, 10)
-    assert [(r.episode_id, r.character_id) for r in rows] == [(500, 900), (501, 901)]
+
+async def test_the_person_pass_writes_no_credit_rows(session, run_id):
+    """The ownership cutover (ADR-0003): every credit table is written by the
+    show axis now, so this pass must not touch them even when upstream sends a
+    credit embed we no longer ask for."""
+    payload = person_payload(11)
+    payload["_embedded"] = {
+        "guestcastcredits": [
+            {
+                "_links": {
+                    "episode": {"href": "https://api.tvmaze.com/episodes/500"},
+                    "character": {"href": "https://api.tvmaze.com/characters/900"},
+                }
+            }
+        ]
+    }
+    client = FakeClient({11: 100}, {11: payload})
+    await run_person_ingest(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert (await session.execute(select(m.EpisodeGuestCast))).scalars().all() == []
 
 
-async def test_a_person_created_by_pass_a_is_picked_up_for_credits(session, run_id, episodes):
-    """Pass A writes person rows from the cast embed but never their credits,
-    so `credits_synced_at IS NULL` is what puts them in this todo list."""
-    session.add(m.Person(id=11, name="From pass A", tvmaze_updated=1))
+async def test_a_person_created_by_pass_a_is_picked_up(session, run_id):
+    """Pass A writes person rows from the cast embed, so `credits_synced_at IS
+    NULL` is what puts them in this todo list."""
+    session.add(m.Person(id=12, name="From pass A", tvmaze_updated=1))
     await session.commit()
 
-    client = FakeClient({11: 100}, {11: person_payload(11, credits=[guest_credit(500, 902)])})
+    client = FakeClient({12: 100}, {12: person_payload(12)})
     result = await run_person_ingest(session_factory=lambda: session, client=client, run_id=run_id)
 
-    assert client.person_calls == [11]
+    assert client.person_calls == [12]
     assert result.persons_processed == 1
-    assert [r.episode_id for r in await _guest_rows(session, 11)] == [500]
 
 
 async def test_already_synced_people_are_skipped(session, run_id):
@@ -185,47 +157,6 @@ async def test_rerun_is_a_no_op(session, run_id):
 
     assert client.person_calls == [14]  # watermark respected
     assert result.persons_processed == 0
-
-
-async def test_guest_credits_are_replaced_not_appended_on_re_fetch(session, run_id, episodes):
-    client = FakeClient({15: 100}, {15: person_payload(15, credits=[guest_credit(500, 903)])})
-    await run_person_ingest(session_factory=lambda: session, client=client, run_id=run_id)
-    assert len(await _guest_rows(session, 15)) == 1
-
-    # Clear the watermark so the second run re-fetches, and change the credits.
-    person = await _refreshed_person(session, 15)
-    person.credits_synced_at = None
-    await session.commit()
-
-    client._people[15] = person_payload(15, credits=[guest_credit(501, 904)])
-    second = m.IngestRun(id=uuid4(), kind="person_initial", status="running")
-    session.add(second)
-    await session.commit()
-    await run_person_ingest(session_factory=lambda: session, client=client, run_id=second.id)
-
-    rows = await _guest_rows(session, 15)
-    assert [(r.episode_id, r.character_id) for r in rows] == [(501, 904)]
-
-
-async def test_a_credit_for_an_unmirrored_episode_fails_that_person_only(session, run_id, episodes):
-    """The FK doing its job: pass A is what fetches specials, and ~6% of
-    guest-credited episodes are specials. The person stays unsynced so a later
-    run retries them once pass A has landed."""
-    client = FakeClient(
-        {16: 100, 17: 100},
-        {
-            16: person_payload(16, credits=[guest_credit(999999, 905)]),
-            17: person_payload(17, credits=[guest_credit(500, 906)]),
-        },
-    )
-    result = await run_person_ingest(session_factory=lambda: session, client=client, run_id=run_id)
-
-    assert result.persons_failed == 1
-    assert result.persons_processed == 1
-    assert (await _refreshed_person(session, 17)).credits_synced_at is not None
-    assert (
-        await session.execute(select(m.Person).where(m.Person.id == 16))
-    ).scalar_one_or_none() is None
 
 
 async def test_http_failure_is_non_fatal_and_counted_on_the_run(session, run_id):

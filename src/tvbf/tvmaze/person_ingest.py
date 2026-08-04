@@ -10,13 +10,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.api_payloads import TVMazePersonDetail
+from tvbf.tvmaze.api_payloads import TVMazePerson
 from tvbf.tvmaze.runs import finalize_run, record_progress
-from tvbf.tvmaze.upsert import (
-    mark_person_credits_synced,
-    upsert_person_guest_cast,
-    upsert_persons,
-)
+from tvbf.tvmaze.upsert import mark_person_credits_synced, upsert_persons
 
 log = logging.getLogger(__name__)
 
@@ -44,25 +40,19 @@ async def run_person_ingest(
     run_id: UUID,
     failure_threshold: int = 10,
 ) -> PersonIngestResult:
-    """Pass C: mirror every person, and their guest-cast credits as a byproduct.
+    """Pass C: mirror every person upstream, one request each across ~487k people.
 
-    One request per person — `/people/{id}?embed[]=guestcastcredits` — across
-    ~487k people. Guest credits are unreachable from the show side at any
-    acceptable cost (`/episodes/{id}?embed[]=guestcast` is the only route and
-    that is 3.4M requests), and every guest credit involves exactly one person,
-    so walking all people covers all guest credits by definition.
+    Writes attributes only. It used to embed `guestcastcredits` and write them
+    too, which was the whole justification for the pass; ADR-0003 moved every
+    credit to the show axis, leaving this reaching nobody the show and season
+    embeds don't already deliver complete. It is retired in NEU-962.
 
     The todo list is every id in `/updates/people` whose `credits_synced_at IS
-    NULL`, which correctly picks up the people pass A created as a side effect
-    of the show cast/crew embeds but never fetched credits for. Each person
-    runs in its own transaction, so a crash mid-run leaves earlier people
-    synced and the next trigger resumes from the watermark.
+    NULL`. Each person runs in its own transaction, so a crash mid-run leaves
+    earlier people synced and the next trigger resumes from the watermark.
 
     Per-person failures bump `shows_failed` and abort the run after
-    `failure_threshold` consecutive failures, mirroring pass A. A credit
-    pointing at an episode we don't mirror raises on the FK and fails that
-    person — deliberately, since it means pass A's specials never landed and
-    the run should be stopped rather than silently dropping credits.
+    `failure_threshold` consecutive failures, mirroring pass A.
     """
     updates = await client.get_person_updates()
     # Captured before the loop, exactly as the show ingest does: without it the
@@ -151,11 +141,8 @@ async def process_people(
 
         try:
             async with _owned_session(session_factory) as s:
-                person = TVMazePersonDetail.model_validate(payload)
+                person = TVMazePerson.model_validate(payload)
                 await upsert_persons(s, [person])
-                await upsert_person_guest_cast(
-                    s, person_id=person.id, credits=person.embedded.guestcastcredits
-                )
                 await mark_person_credits_synced(s, person_id=person.id)
                 await record_progress(s, run_id, processed_delta=1)
                 await s.commit()
