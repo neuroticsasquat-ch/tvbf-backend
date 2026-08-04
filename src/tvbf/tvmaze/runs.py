@@ -2,7 +2,7 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from sqlalchemy import desc, select, update
+from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
@@ -82,6 +82,40 @@ async def get_last_successful_cursor(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def find_live_run(
+    session: AsyncSession, *, kind: str, stale_after_minutes: int
+) -> m.IngestRun | None:
+    """The in-flight run of `kind`, or None if there isn't one.
+
+    Liveness is `status='running'` **plus recent activity**, never status
+    alone. `mark_stale_runs_cancelled` only runs in the lifespan hook, so a
+    run whose process died without finalizing keeps `status='running'` until
+    the container next restarts — a guard built on status alone would wedge
+    that kind of job with no way out but a redeploy.
+
+    Falls back to `started_at` when `last_progress_at` is NULL, so a run that
+    has been created but has not yet recorded progress still counts as live.
+    That window is precisely where an accidental double-POST lands, and it is
+    also why this is stricter than `mark_stale_runs_cancelled`, which ignores
+    NULL-progress rows entirely.
+
+    Scoped to a single kind on purpose. A global check would couple every job
+    to every other — a stuck backfill would block an urgent daily.
+    """
+    cutoff = datetime.now(UTC) - timedelta(minutes=stale_after_minutes)
+    result = await session.execute(
+        select(m.IngestRun)
+        .where(
+            m.IngestRun.kind == kind,
+            m.IngestRun.status == "running",
+            func.coalesce(m.IngestRun.last_progress_at, m.IngestRun.started_at) > cutoff,
+        )
+        .order_by(desc(m.IngestRun.started_at))
+        .limit(1)
+    )
+    return result.scalars().first()
 
 
 async def mark_stale_runs_cancelled(session: AsyncSession, *, stale_after_minutes: int) -> int:

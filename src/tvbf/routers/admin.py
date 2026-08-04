@@ -16,7 +16,7 @@ from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.person_ingest import run_person_ingest
 from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.ratings_backfill import run_ratings_backfill
-from tvbf.tvmaze.runs import create_run, finalize_run
+from tvbf.tvmaze.runs import create_run, finalize_run, find_live_run
 from tvbf.tvmaze.show_refresh import run_show_refresh
 from tvbf.tvmaze.update import run_update
 
@@ -26,6 +26,26 @@ router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(requir
 
 def _session_factory():
     return SessionLocal()
+
+
+async def _reject_if_in_flight(session: AsyncSession, kind: str, settings: Settings) -> None:
+    """409 if a run of `kind` is already going. Call before `create_run`.
+
+    Two runs of one kind don't corrupt anything — the upserts are idempotent —
+    but the TV Maze rate limiter is process-wide and `@cache`d (NEU-955), so
+    they split one 18 req/10s budget and each simply crawls. On a multi-hour
+    backfill an accidental double-POST therefore doubles the wall-clock.
+
+    Scoped per kind, so a stuck backfill never blocks an urgent daily.
+    """
+    live = await find_live_run(
+        session, kind=kind, stale_after_minutes=settings.ingest_stale_run_minutes
+    )
+    if live is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=f"a {kind} run is already in flight: {live.id}",
+        )
 
 
 async def _background_ingest(run_id: UUID, settings: Settings) -> None:
@@ -194,6 +214,7 @@ async def trigger_ingest(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "initial", settings)
     run_id = await create_run(session, kind="initial")
     await session.commit()
     asyncio.create_task(_background_ingest(run_id, settings))
@@ -205,6 +226,7 @@ async def trigger_update(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "update", settings)
     run_id = await create_run(session, kind="update")
     await session.commit()
     asyncio.create_task(_background_update(run_id, settings))
@@ -226,6 +248,7 @@ async def trigger_backfill_akas(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "akas_backfill", settings)
     run_id = await create_run(session, kind="akas_backfill")
     await session.commit()
     asyncio.create_task(_background_backfill_akas(run_id, settings))
@@ -249,6 +272,7 @@ async def trigger_backfill_ratings(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "ratings_backfill", settings)
     run_id = await create_run(session, kind="ratings_backfill")
     await session.commit()
     asyncio.create_task(_background_backfill_ratings(run_id, settings))
@@ -272,6 +296,7 @@ async def trigger_show_refresh(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "show_refresh", settings)
     run_id = await create_run(session, kind="show_refresh")
     await session.commit()
     asyncio.create_task(_background_show_refresh(run_id, settings))
@@ -295,6 +320,7 @@ async def trigger_person_ingest(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "person_initial", settings)
     run_id = await create_run(session, kind="person_initial")
     await session.commit()
     asyncio.create_task(_background_person_ingest(run_id, settings))
@@ -318,6 +344,7 @@ async def trigger_person_update(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
+    await _reject_if_in_flight(session, "person_update", settings)
     run_id = await create_run(session, kind="person_update")
     await session.commit()
     asyncio.create_task(_background_person_update(run_id, settings))

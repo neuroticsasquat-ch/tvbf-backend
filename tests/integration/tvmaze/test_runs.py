@@ -8,6 +8,7 @@ from tvbf.tvmaze.runs import (
     SHOW_CURSOR_KINDS,
     create_run,
     finalize_run,
+    find_live_run,
     get_last_successful_cursor,
     mark_stale_runs_cancelled,
     record_progress,
@@ -158,3 +159,79 @@ async def test_mark_stale_runs_cancelled(session):
     ).scalar_one()
     assert stale_row.status == "cancelled"
     assert fresh_row.status == "running"
+
+
+async def _age(session, run_id, *, started_delta=None, progress_delta=None) -> None:
+    """Backdate a run's timestamps so liveness can be exercised without sleeping."""
+    row = (await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))).scalar_one()
+    if started_delta is not None:
+        row.started_at = datetime.now(UTC) - started_delta
+    if progress_delta is not None:
+        row.last_progress_at = datetime.now(UTC) - progress_delta
+    await session.commit()
+
+
+async def test_find_live_run_returns_a_progressing_run(session):
+    run_id = await create_run(session, kind="akas_backfill")
+    await session.commit()
+    await record_progress(session, run_id, processed_delta=1)
+    await session.commit()
+
+    live = await find_live_run(session, kind="akas_backfill", stale_after_minutes=15)
+    assert live is not None
+    assert live.id == run_id
+
+
+async def test_find_live_run_is_scoped_to_one_kind(session):
+    run_id = await create_run(session, kind="akas_backfill")
+    await session.commit()
+    await record_progress(session, run_id, processed_delta=1)
+    await session.commit()
+
+    assert await find_live_run(session, kind="ratings_backfill", stale_after_minutes=15) is None
+
+
+async def test_find_live_run_ignores_a_stale_run(session):
+    """The staleness clause is what stops a dead run wedging its kind.
+
+    `mark_stale_runs_cancelled` only runs in the lifespan hook, so a run whose
+    process died keeps `status='running'` until the next restart.
+    """
+    run_id = await create_run(session, kind="akas_backfill")
+    await session.commit()
+    await _age(session, run_id, progress_delta=timedelta(hours=1))
+
+    assert await find_live_run(session, kind="akas_backfill", stale_after_minutes=15) is None
+
+
+async def test_find_live_run_counts_a_run_that_has_not_progressed_yet(session):
+    """A just-spawned run has last_progress_at NULL — still live via started_at.
+
+    This is the window an accidental double-POST actually lands in, so treating
+    NULL as 'not live' would miss the case the guard exists for.
+    """
+    run_id = await create_run(session, kind="akas_backfill")
+    await session.commit()
+
+    live = await find_live_run(session, kind="akas_backfill", stale_after_minutes=15)
+    assert live is not None
+    assert live.id == run_id
+    assert live.last_progress_at is None
+
+
+async def test_find_live_run_ignores_an_old_run_that_never_progressed(session):
+    """NULL last_progress_at must not pin a run live forever — fall back to started_at."""
+    run_id = await create_run(session, kind="akas_backfill")
+    await session.commit()
+    await _age(session, run_id, started_delta=timedelta(hours=1))
+
+    assert await find_live_run(session, kind="akas_backfill", stale_after_minutes=15) is None
+
+
+async def test_find_live_run_ignores_finished_runs(session):
+    run_id = await create_run(session, kind="akas_backfill")
+    await session.commit()
+    await finalize_run(session, run_id, status="succeeded")
+    await session.commit()
+
+    assert await find_live_run(session, kind="akas_backfill", stale_after_minutes=15) is None
