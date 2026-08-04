@@ -54,13 +54,20 @@ def crew_entry(person_id: int, name: str, type_: str) -> dict:
 
 
 class FakeClient:
-    """Duck-types the two calls pass A makes, recording what it was asked for."""
+    """Duck-types the three calls pass A makes, recording what it was asked for."""
 
-    def __init__(self, shows: dict[int, dict], episodes: dict[int, list[dict]] | None = None):
+    def __init__(
+        self,
+        shows: dict[int, dict],
+        episodes: dict[int, list[dict]] | None = None,
+        season_episodes: dict[int, list[dict]] | None = None,
+    ):
         self._shows = shows
         self._episodes = episodes or {}
+        self._season_episodes = season_episodes or {}
         self.show_calls: list[tuple[int, tuple[str, ...]]] = []
         self.episode_calls: list[tuple[int, bool]] = []
+        self.season_calls: list[int] = []
 
     async def get_show(self, show_id: int, *, embed: list[str] | None = None) -> dict:
         self.show_calls.append((show_id, tuple(embed or ())))
@@ -69,6 +76,10 @@ class FakeClient:
     async def get_show_episodes(self, show_id: int, *, specials: bool = True) -> list[dict]:
         self.episode_calls.append((show_id, specials))
         return self._episodes.get(show_id, [])
+
+    async def get_season_episodes(self, season_id: int) -> list[dict]:
+        self.season_calls.append(season_id)
+        return self._season_episodes.get(season_id, [])
 
 
 def _http_error(show_id: int) -> httpx.HTTPStatusError:
@@ -223,6 +234,75 @@ async def test_refresh_stamps_both_watermarks(session, run_id):
     show = await _refreshed_show(session, 16)
     assert show.credits_synced_at is not None
     assert show.ratings_synced_at is not None
+
+
+async def test_refresh_writes_episode_credits_for_the_shows_it_processes(session, run_id):
+    """A show whose watermark is reset must re-fetch genuinely everything.
+
+    Without the season step this pass would rewrite the show and its episodes
+    and leave their credits behind — everything-but-credits, which is exactly
+    the state a reset is meant to escape.
+    """
+    session.add(m.Show(id=19, name="A", tvmaze_updated=1))
+    await session.commit()
+
+    season_id = 19 * 1000 + 1
+    client = FakeClient(
+        {19: show_payload(19)},
+        episodes={19: [{"id": 7000, "season": 1, "number": 1, "name": "E1"}]},
+        season_episodes={
+            season_id: [
+                {
+                    "id": 7000,
+                    "season": 1,
+                    "number": 1,
+                    "name": "E1",
+                    "_embedded": {
+                        "guestcast": [],
+                        "guestcrew": [
+                            {
+                                "guestCrewType": "Director",
+                                "person": {"id": 8000, "name": "Ada", "updated": 1},
+                            }
+                        ],
+                    },
+                }
+            ]
+        },
+    )
+    await run_show_refresh(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert client.season_calls == [season_id]
+
+    crew = (await session.execute(select(m.EpisodeCrew))).scalars().all()
+    assert [(c.episode_id, c.sort_order) for c in crew] == [(7000, 0)]
+
+    season = (
+        await session.execute(
+            select(m.Season)
+            .where(m.Season.id == season_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert season.credits_synced_at is not None
+
+
+async def test_refresh_skips_the_season_step_when_the_show_write_failed(
+    session, run_id, monkeypatch
+):
+    """No episode rows were committed, so there is nothing for credits to FK to."""
+    session.add(m.Show(id=25, name="A", tvmaze_updated=1))
+    await session.commit()
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("write failed")
+
+    monkeypatch.setattr(show_refresh_module, "upsert_show_payload", boom)
+
+    client = FakeClient({25: show_payload(25)})
+    await run_show_refresh(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert client.season_calls == []
 
 
 async def test_rerun_is_a_no_op(session, run_id):

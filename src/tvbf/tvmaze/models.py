@@ -353,7 +353,7 @@ class IngestRun(Base):
             # database does. Tests build from `create_all` and never see the
             # migration, so they get an ordinary validated constraint from here.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
-            "'show_refresh', 'person_update')",
+            "'show_refresh', 'person_update', 'episode_credits_backfill')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

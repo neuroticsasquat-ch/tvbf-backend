@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.api_payloads import TVMazeEpisode, TVMazeShow
 from tvbf.tvmaze.runs import finalize_run, record_progress
+from tvbf.tvmaze.season_credits import refresh_show_season_credits
 from tvbf.tvmaze.upsert import (
     mark_credits_synced,
     mark_ratings_synced,
@@ -70,6 +71,13 @@ async def run_show_refresh(
     rather than falling back — the watermark is what makes this pass resumable,
     so stamping it on a show whose specials never arrived would strand them
     until someone spent another 27 hours.
+
+    After the show commits, its seasons are refetched for episode credits, so a
+    show whose watermark is reset re-fetches genuinely everything rather than
+    everything-but-credits. The two watermarks stay independent and mean
+    different things: `show.credits_synced_at` is show-level cast and crew,
+    `season.credits_synced_at` is episode-level credits. Same column name,
+    different grain.
     """
     async with _owned_session(session_factory) as s:
         todo = (
@@ -127,6 +135,7 @@ async def run_show_refresh(
                 return BackfillResult(processed, failed)
             continue
 
+        written: TVMazeShow | None = None
         try:
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
@@ -142,6 +151,7 @@ async def run_show_refresh(
                 await s.commit()
             processed += 1
             consecutive_failures = 0
+            written = show
         except Exception as e:
             log.exception("show refresh: write failed for show %d", show_id)
             failed += 1
@@ -159,6 +169,16 @@ async def run_show_refresh(
                     )
                     await s.commit()
                 return BackfillResult(processed, failed)
+
+        if written is not None:
+            # Season credits go last, and outside the show's transaction: they
+            # FK to episode.id, so the episode rows written above must be
+            # committed first. Skipped when the write failed — there are no
+            # episode rows to hang credits off, and the show is retried whole
+            # on the next pass anyway.
+            await refresh_show_season_credits(
+                client=client, session_factory=session_factory, show=written
+            )
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded")

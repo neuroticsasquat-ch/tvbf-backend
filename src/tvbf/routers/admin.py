@@ -14,6 +14,7 @@ from tvbf.deps import get_session, require_admin
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.akas_backfill import run_akas_backfill
 from tvbf.tvmaze.client import TVMazeClient
+from tvbf.tvmaze.episode_credits_backfill import run_episode_credits_backfill
 from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.ratings_backfill import run_ratings_backfill
@@ -37,7 +38,7 @@ async def _start_run(
 ) -> dict[str, str]:
     """Guard, create the run row, spawn its worker, and return the run id.
 
-    One helper for all six trigger routes so `kind` is named exactly once
+    One helper for all seven trigger routes so `kind` is named exactly once
     per route. Guarding and creating as two separate calls reads fine and
     type-checks, but a copy-paste that guards one kind while creating another
     silently disables the guard — the failure this exists to prevent.
@@ -149,6 +150,27 @@ async def _background_backfill_ratings(run_id: UUID, settings: Settings) -> None
             )
     except Exception as e:
         log.exception("background ratings backfill crashed")
+        async with SessionLocal() as s:
+            await finalize_run(s, run_id, status="failed", error=str(e))
+            await s.commit()
+
+
+async def _background_backfill_episode_credits(run_id: UUID, settings: Settings) -> None:
+    try:
+        async with TVMazeClient(
+            base_url=settings.tvmaze_base_url,
+            rate_calls=settings.tvmaze_rate_limit_requests,
+            rate_window=settings.tvmaze_rate_limit_window_seconds,
+            retry_max_attempts=settings.tvmaze_retry_max_attempts,
+        ) as client:
+            await run_episode_credits_backfill(
+                session_factory=_session_factory,
+                client=client,
+                run_id=run_id,
+                failure_threshold=settings.ingest_consecutive_failure_threshold,
+            )
+    except Exception as e:
+        log.exception("background episode credits backfill crashed")
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()
@@ -272,6 +294,28 @@ async def get_backfill_ratings_status(
         await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))
     ).scalar_one_or_none()
     if row is None or row.kind != "ratings_backfill":
+        raise HTTPException(status_code=404, detail="run not found")
+    return _serialize_run(row)
+
+
+@router.post("/backfill-episode-credits", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_backfill_episode_credits(
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    return await _start_run(
+        session, settings, "episode_credits_backfill", _background_backfill_episode_credits
+    )
+
+
+@router.get("/backfill-episode-credits/{run_id}")
+async def get_backfill_episode_credits_status(
+    run_id: UUID, session: AsyncSession = Depends(get_session)
+) -> dict:
+    row = (
+        await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))
+    ).scalar_one_or_none()
+    if row is None or row.kind != "episode_credits_backfill":
         raise HTTPException(status_code=404, detail="run not found")
     return _serialize_run(row)
 
