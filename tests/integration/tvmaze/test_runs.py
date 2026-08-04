@@ -161,7 +161,7 @@ async def test_mark_stale_runs_cancelled(session):
     assert fresh_row.status == "running"
 
 
-async def _age(session, run_id, *, started_delta=None, progress_delta=None) -> None:
+async def _backdate(session, run_id, *, started_delta=None, progress_delta=None) -> None:
     """Backdate a run's timestamps so liveness can be exercised without sleeping."""
     row = (await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))).scalar_one()
     if started_delta is not None:
@@ -199,7 +199,7 @@ async def test_find_live_run_ignores_a_stale_run(session):
     """
     run_id = await create_run(session, kind="akas_backfill")
     await session.commit()
-    await _age(session, run_id, progress_delta=timedelta(hours=1))
+    await _backdate(session, run_id, progress_delta=timedelta(hours=1))
 
     assert await find_live_run(session, kind="akas_backfill", stale_after_minutes=15) is None
 
@@ -223,7 +223,7 @@ async def test_find_live_run_ignores_an_old_run_that_never_progressed(session):
     """NULL last_progress_at must not pin a run live forever — fall back to started_at."""
     run_id = await create_run(session, kind="akas_backfill")
     await session.commit()
-    await _age(session, run_id, started_delta=timedelta(hours=1))
+    await _backdate(session, run_id, started_delta=timedelta(hours=1))
 
     assert await find_live_run(session, kind="akas_backfill", stale_after_minutes=15) is None
 
