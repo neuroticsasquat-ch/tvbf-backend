@@ -1,6 +1,7 @@
+import logging
 from datetime import UTC, datetime
 
-from sqlalchemy import delete, select, update
+from sqlalchemy import delete, or_, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -11,12 +12,14 @@ from tvbf.tvmaze.api_payloads import (
     TVMazeCharacter,
     TVMazeCrewEntry,
     TVMazeEpisode,
-    TVMazeGuestCastCredit,
     TVMazeNetwork,
     TVMazePerson,
     TVMazeSeason,
+    TVMazeSeasonEpisode,
     TVMazeShow,
 )
+
+log = logging.getLogger(__name__)
 
 
 async def upsert_network(session: AsyncSession, net: TVMazeNetwork | None) -> int | None:
@@ -283,8 +286,10 @@ _CREDIT_BATCH_SIZE = 1000
 async def upsert_persons(session: AsyncSession, people: list[TVMazePerson]) -> None:
     """Upsert person rows by upstream id.
 
-    Never touches credits_synced_at — a person created here still needs the
-    person axis (pass C) to fetch their own credits.
+    Writes the full attribute set from whatever payload it is handed, and the
+    person objects embedded in show cast/crew and season guest cast/crew are
+    byte-identical to `/people/{id}` — which is what lets every person arrive
+    complete off the show axis alone (ADR-0003).
     """
     if not people:
         return
@@ -339,36 +344,52 @@ async def upsert_characters(session: AsyncSession, characters: list[TVMazeCharac
         await session.execute(stmt)
 
 
-async def resolve_crew_role(session: AsyncSession, name: str) -> int:
-    """Resolve-or-insert a crew role id. Mirrors upsert_genre_by_name.
+async def _resolve_interned_name(
+    session: AsyncSession, model: type[m.CrewRole] | type[m.EpisodeCrewRole], name: str
+) -> int:
+    """Resolve-or-insert a row in a name-interning lookup. Mirrors upsert_genre_by_name.
 
-    Upstream sends crew type as free text with no id, exactly like genre.
+    Upstream sends both crew vocabularies as free text with no id, exactly like
+    genre.
 
     Deliberately not cached across shows, despite the spec suggesting a
-    run-lifetime cache: credits are written in per-show transactions and a
-    per-show failure rolls back without aborting the run, so a cached id for a
-    role inserted inside a transaction that later rolled back would produce an
-    FK violation on show_crew.role_id for every subsequent show using it.
-    Crew types per show are of the same order as genres, so the lookup cost
+    run-lifetime cache: credits are written in per-show (or per-season)
+    transactions and a failure there rolls back without aborting the run, so a
+    cached id for a role inserted inside a transaction that later rolled back
+    would produce an FK violation on `role_id` for every subsequent writer using
+    it. Roles per payload are of the same order as genres, so the lookup cost
     matches the pattern this mirrors.
     """
     existing = (
-        await session.execute(select(m.CrewRole.id).where(m.CrewRole.name == name))
+        await session.execute(select(model.id).where(model.name == name))
     ).scalar_one_or_none()
     if existing is not None:
         return existing
     stmt = (
-        insert(m.CrewRole)
+        insert(model)
         .values(name=name)
-        .on_conflict_do_nothing(index_elements=[m.CrewRole.name])
-        .returning(m.CrewRole.id)
+        .on_conflict_do_nothing(index_elements=[model.name])
+        .returning(model.id)
     )
     result = (await session.execute(stmt)).scalar_one_or_none()
     if result is not None:
         return result
-    return (
-        await session.execute(select(m.CrewRole.id).where(m.CrewRole.name == name))
-    ).scalar_one()
+    return (await session.execute(select(model.id).where(model.name == name))).scalar_one()
+
+
+async def resolve_crew_role(session: AsyncSession, name: str) -> int:
+    """Resolve-or-insert a show-level crew role id ("Executive Producer")."""
+    return await _resolve_interned_name(session, m.CrewRole, name)
+
+
+async def resolve_episode_crew_role(session: AsyncSession, name: str) -> int:
+    """Resolve-or-insert an episode-level crew role id ("Director", "Teleplay").
+
+    A separate lookup from `crew_role`, not an oversight: the two vocabularies
+    are disjoint. None of Writer / Director / Story / Teleplay appear among
+    `crew_role`'s 233 production-function names (ADR-0003).
+    """
+    return await _resolve_interned_name(session, m.EpisodeCrewRole, name)
 
 
 async def upsert_show_cast(
@@ -445,90 +466,149 @@ async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
     )
 
 
-async def insert_missing_characters(
-    session: AsyncSession, characters: list[TVMazeCharacter]
+async def upsert_season_credits(
+    session: AsyncSession, *, season_id: int, episodes: list[TVMazeSeasonEpisode]
 ) -> None:
-    """Create character rows that don't exist yet, leaving existing ones alone.
+    """Replace every episode credit in one season. Caller owns the transaction.
 
-    Deliberately NOT `upsert_characters`. A guest credit only carries a
-    character's id and name, never its image, so upserting would null the
-    `image_medium` / `image_original` the show axis wrote from the full
-    embedded object — and a link with no name would overwrite a real name with
-    "". Same reasoning that keeps pass C off `castcredits`: the show side is
-    authoritative for anything the person side sees only a link to.
+    A season response is authoritative for every credit on every episode it
+    contains (ADR-0003), so this is a delete-and-replace of the whole season:
+    idempotent, and correct when a credit is removed upstream. That property is
+    what the person axis could never have — one episode's guest cast belongs to
+    many people, so the retired per-person writer had to delete by person.
+
+    Writes credits only. Show, season and episode rows stay owned by the show
+    fetch, which must therefore have committed first: credits FK to `episode.id`.
+
+    A season response may name an episode we don't mirror, because the show
+    gained one upstream since our last show fetch. Those credits are skipped and
+    logged, and the watermark is still stamped. This deliberately reverses the
+    person axis's stance of raising on the FK: there, a missing episode meant a
+    broken prerequisite worth stopping for; at season grain it just means our
+    mirror is older than upstream, and it self-heals, because a new episode
+    marks its show updated and the daily then rewrites the show and its seasons.
+    Failing the season instead would strand it on every retry until the show
+    happened to be refetched — which, during the backfill with the daily cron
+    disabled, is never.
     """
-    if not characters:
-        return
-    seen: dict[int, TVMazeCharacter] = {c.id: c for c in characters}
-    rows = [{"id": c.id, "name": c.name} for c in seen.values()]
-    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
-        await session.execute(
-            insert(m.Character)
-            .values(rows[start : start + _CREDIT_BATCH_SIZE])
-            .on_conflict_do_nothing(index_elements=[m.Character.id])
-        )
-
-
-async def upsert_person_guest_cast(
-    session: AsyncSession, *, person_id: int, credits: list[TVMazeGuestCastCredit]
-) -> None:
-    """Replace this PERSON's guest-cast rows. Caller owns the transaction.
-
-    The grain is per-person, not per-episode. Guest credits are only reachable
-    from the person side, and every row on an episode belongs to a different
-    person, so deleting by episode would wipe other people's credits on the
-    same episode. This is the single easiest thing to get wrong here.
-
-    Credits missing either link id are skipped — there is nothing to point the
-    FKs at. Credits pointing at an episode we don't mirror raise on the FK
-    rather than being dropped: ~6% of guest-credited episodes are specials, so
-    a nonzero rate of these means pass A never landed and the run should stop,
-    not quietly write a partial person and stamp the watermark.
-    """
-    await session.execute(
-        delete(m.EpisodeGuestCast).where(m.EpisodeGuestCast.person_id == person_id)
+    response_ids = [ep.id for ep in episodes]
+    # Delete by the season's own episodes AND by the ids this response names.
+    # The second arm matters when an episode's `season_id` is NULL (its season
+    # was never matched by number): the season arm alone would leave that
+    # episode's stale rows behind, and the insert below would then collide with
+    # the three-part unique key.
+    scoped_episodes = select(m.Episode.id).where(
+        or_(m.Episode.season_id == season_id, m.Episode.id.in_(response_ids))
     )
-    # Resolve both link ids up front so the rest of the function works with
-    # plain ints rather than re-parsing the hrefs on every access.
-    usable: list[tuple[int, int, TVMazeGuestCastCredit]] = []
-    for credit in credits:
-        episode_id, character_id = credit.episode_id, credit.character_id
-        if episode_id is None or character_id is None:
-            continue
-        usable.append((episode_id, character_id, credit))
-    if not usable:
-        return
-
-    await insert_missing_characters(
-        session,
-        [TVMazeCharacter(id=cid, name=c.character_name or "") for _, cid, c in usable],
+    await session.execute(
+        delete(m.EpisodeGuestCast).where(m.EpisodeGuestCast.episode_id.in_(scoped_episodes))
+    )
+    await session.execute(
+        delete(m.EpisodeCrew).where(m.EpisodeCrew.episode_id.in_(scoped_episodes))
     )
 
-    rows: list[dict[str, object]] = []
-    seen: set[tuple[int, int]] = set()
-    for episode_id, character_id, c in usable:
-        key = (episode_id, character_id)
-        if key in seen:
-            continue  # the same credit sent twice upstream is one credit
-        seen.add(key)
-        rows.append(
-            {
-                "episode_id": episode_id,
-                "person_id": person_id,
-                "character_id": character_id,
-                "is_self": c.is_self,
-                "is_voice": c.is_voice,
-                "sort_order": len(rows),
-            }
+    known = set(
+        (await session.execute(select(m.Episode.id).where(m.Episode.id.in_(response_ids))))
+        .scalars()
+        .all()
+    )
+    if missing := [eid for eid in response_ids if eid not in known]:
+        log.info(
+            "season %d: skipping credits for %d episode(s) we don't mirror yet: %s",
+            season_id,
+            len(missing),
+            missing,
         )
-    for start in range(0, len(rows), _CREDIT_BATCH_SIZE):
+    present = [ep for ep in episodes if ep.id in known]
+
+    cast_entries = [e for ep in present for e in ep.embedded.guestcast]
+    crew_entries = [e for ep in present for e in ep.embedded.guestcrew]
+
+    await upsert_persons(
+        session, [e.person for e in cast_entries] + [e.person for e in crew_entries]
+    )
+    await upsert_characters(session, [e.character for e in cast_entries])
+    role_ids = {
+        t: await resolve_episode_crew_role(session, t) for t in {e.type for e in crew_entries}
+    }
+
+    cast_rows: list[dict[str, object]] = []
+    crew_rows: list[dict[str, object]] = []
+    for ep in present:
+        # sort_order counts within one episode — the episode's own credit
+        # sequence, which is exactly what the person axis could not express (it
+        # wrote the index within that person's credit list, so an episode's
+        # guest cast came out ordered by how many other gigs each actor had).
+        rank = 0
+        seen_cast: set[tuple[int, int]] = set()
+        for e in ep.embedded.guestcast:
+            # Three-part dedup, NOT (episode_id, character_id): two people share
+            # one character on 1.6% of episodes, and the narrower key would drop
+            # one of them.
+            key = (e.person.id, e.character.id)
+            if key in seen_cast:
+                continue  # the same credit sent twice upstream is one credit
+            seen_cast.add(key)
+            cast_rows.append(
+                {
+                    "episode_id": ep.id,
+                    "person_id": e.person.id,
+                    "character_id": e.character.id,
+                    "is_self": e.is_self,
+                    "is_voice": e.is_voice,
+                    "sort_order": rank,
+                }
+            )
+            rank += 1
+
+        rank = 0
+        seen_crew: set[tuple[int, int]] = set()
+        for e in ep.embedded.guestcrew:
+            key = (e.person.id, role_ids[e.type])
+            if key in seen_crew:
+                continue
+            seen_crew.add(key)
+            crew_rows.append(
+                {
+                    "episode_id": ep.id,
+                    "person_id": e.person.id,
+                    "role_id": role_ids[e.type],
+                    "sort_order": rank,
+                }
+            )
+            rank += 1
+
+    for start in range(0, len(cast_rows), _CREDIT_BATCH_SIZE):
         await session.execute(
-            insert(m.EpisodeGuestCast).values(rows[start : start + _CREDIT_BATCH_SIZE])
+            insert(m.EpisodeGuestCast).values(cast_rows[start : start + _CREDIT_BATCH_SIZE])
+        )
+    for start in range(0, len(crew_rows), _CREDIT_BATCH_SIZE):
+        await session.execute(
+            insert(m.EpisodeCrew).values(crew_rows[start : start + _CREDIT_BATCH_SIZE])
         )
 
+    await mark_season_credits_synced(session, season_id=season_id)
 
-async def mark_person_credits_synced(session: AsyncSession, *, person_id: int) -> None:
-    """Set the person's credits_synced_at to now() — pass C's watermark."""
+
+async def mark_season_credits_synced(session: AsyncSession, *, season_id: int) -> None:
+    """Set the season's credits_synced_at to now() — the episode-credit watermark.
+
+    Same column name as `show.credits_synced_at`, different grain: that one is
+    show-level cast and crew, this one is episode-level credits. Don't conflate.
+    """
     await session.execute(
-        update(m.Person).where(m.Person.id == person_id).values(credits_synced_at=datetime.now(UTC))
+        update(m.Season).where(m.Season.id == season_id).values(credits_synced_at=datetime.now(UTC))
+    )
+
+
+async def clear_season_credits_synced(session: AsyncSession, *, season_id: int) -> None:
+    """Put a season back in the backfill's todo list.
+
+    A season that fails to refresh must not keep the timestamp from its last
+    successful one: the backfill selects on `credits_synced_at IS NULL`, and the
+    daily's cursor has already advanced past the show, so a stale stamp means
+    nothing ever retries it.
+    """
+    await session.execute(
+        update(m.Season).where(m.Season.id == season_id).values(credits_synced_at=None)
     )

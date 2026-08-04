@@ -12,7 +12,12 @@ from tvbf.tvmaze.runs import (
     get_last_successful_cursor,
     record_progress,
 )
-from tvbf.tvmaze.upsert import mark_akas_synced, upsert_akas, upsert_show_payload
+from tvbf.tvmaze.season_credits import refresh_show_season_credits
+from tvbf.tvmaze.upsert import (
+    mark_akas_synced,
+    upsert_akas,
+    upsert_show_payload,
+)
 
 log = logging.getLogger(__name__)
 
@@ -98,6 +103,11 @@ async def run_update(
                     )
                     await s.commit()
                 return IngestResult(processed, failed, cursor)
+            continue
+
+        # Season credits go last, and outside the show's transaction: they FK to
+        # episode.id, so the episode rows written above must be committed first.
+        await refresh_show_season_credits(client=client, session_factory=session_factory, show=show)
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=max_epoch)

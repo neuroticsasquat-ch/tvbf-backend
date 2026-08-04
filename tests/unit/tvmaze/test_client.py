@@ -201,18 +201,33 @@ async def test_get_akas_empty_list_for_shows_with_no_akas():
 
 
 @respx.mock
-async def test_get_person_embeds_only_guest_cast_credits():
-    """castcredits/crewcredits are deliberately not requested — they duplicate
-    the show axis and carry no billing order (NEU-942)."""
+async def test_get_person_requests_no_credit_embeds():
+    """The request-side half of the ownership cutover (ADR-0003). This used to
+    embed `guestcastcredits`; every credit table is written by the show axis
+    now, so the person fetch is a plain attribute refresh."""
     respx.get("https://api.tvmaze.com/people/30856").mock(
-        return_value=httpx.Response(
-            200, json={"id": 30856, "name": "Zachary Levi", "updated": 1, "_embedded": {}}
-        )
+        return_value=httpx.Response(200, json={"id": 30856, "name": "Zachary Levi", "updated": 1})
     )
     async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
         payload = await c.get_person(30856)
     assert payload["id"] == 30856
-    assert respx.calls.last.request.url.params.get_list("embed[]") == ["guestcastcredits"]
+    assert respx.calls.last.request.url.params.get_list("embed[]") == []
+
+
+@respx.mock
+async def test_get_season_episodes_embeds_both_credit_sets():
+    """One request per season is the whole cost argument (ADR-0003) — and it
+    only holds if both embeds ride along. Dropping `guestcrew` would silently
+    yield episodes with no crew, which is indistinguishable from an episode
+    that genuinely has none."""
+    respx.get("https://api.tvmaze.com/seasons/1234/episodes").mock(
+        return_value=httpx.Response(200, json=[{"id": 1, "season": 1, "number": 1}])
+    )
+    async with TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=20, rate_window=1) as c:
+        episodes = await c.get_season_episodes(1234)
+
+    assert [e["id"] for e in episodes] == [1]
+    assert respx.calls.last.request.url.params.get_list("embed[]") == ["guestcast", "guestcrew"]
 
 
 @respx.mock

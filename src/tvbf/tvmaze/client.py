@@ -174,20 +174,38 @@ class TVMazeClient:
         resp = await self._request("GET", url, params=params)
         return resp.json()
 
+    async def get_season_episodes(self, season_id: int) -> list[dict]:
+        """Every episode in a season, with its guest cast and episode crew.
+
+        One request per season is what makes episode credits affordable at all:
+        188,189 requests against 3.53M at episode grain (ADR-0003). Two things
+        make this the right route rather than the show-level episode list:
+        `/shows/{id}/episodes` honours neither embed, and this one includes
+        specials without a `specials=1` param.
+        """
+        url = f"{self._base_url}/seasons/{season_id}/episodes"
+        resp = await self._request(
+            "GET", url, params=[("embed[]", "guestcast"), ("embed[]", "guestcrew")]
+        )
+        return resp.json()
+
     async def get_show_updates(self) -> dict[int, int]:
         url = f"{self._base_url}/updates/shows"
         resp = await self._request("GET", url)
         return {int(k): int(v) for k, v in resp.json().items()}
 
     async def get_person(self, person_id: int) -> dict:
-        """A person plus their guest-cast credits, in one request.
+        """A person's own attributes. No credit embeds — deliberately.
 
-        Only `guestcastcredits` is embedded. `castcredits` and `crewcredits`
-        are free to request but are written by the show axis, and person-side
-        credits carry no ordering — writing them would clobber billing order.
+        Every credit table is written by the show axis now: show cast/crew from
+        the show fetch, episode guest cast/crew from the season fetch
+        (ADR-0003). `guestcastcredits` used to be embedded here, and dropping it
+        is the request-side half of that cutover — the person axis survives only
+        as an attribute refresh, because a rename or a new deathday marks no
+        show updated and reaches us by no other route.
         """
         url = f"{self._base_url}/people/{person_id}"
-        resp = await self._request("GET", url, params=[("embed[]", "guestcastcredits")])
+        resp = await self._request("GET", url)
         return resp.json()
 
     async def get_person_updates(self) -> dict[int, int]:

@@ -240,10 +240,13 @@ async def get_person_credits_route(
     # can't stand in for a missing person. Check existence explicitly.
     if not await browse_queries.person_exists(session, person_id):
         raise HTTPException(status_code=404, detail="person not found")
+    # Keyword arguments: the four row lists are same-shaped sequences of tuples,
+    # so a transposed pair would fail deep inside Pydantic rather than here.
     return build_person_credits(
-        await browse_queries.list_person_cast_credits(session, person_id),
-        await browse_queries.list_person_crew_credits(session, person_id),
-        await browse_queries.list_person_guest_credits(session, person_id),
+        cast_rows=await browse_queries.list_person_cast_credits(session, person_id),
+        crew_rows=await browse_queries.list_person_crew_credits(session, person_id),
+        guest_rows=await browse_queries.list_person_guest_credits(session, person_id),
+        episode_crew_rows=await browse_queries.list_person_episode_crew_credits(session, person_id),
     )
 
 
@@ -283,6 +286,24 @@ async def get_episode_guest_cast_route(
         for credit, person, character in await browse_queries.list_episode_guest_cast(
             session, episode_id
         )
+    ]
+
+
+# Episode crew is the episode-level counterpart of /shows/{id}/crew and shares
+# its shape, so it reuses CrewMemberOut. Like guest cast it carries no per-user
+# fields, so the router-level `private, max-age=300` applies.
+@router.get("/episodes/{episode_id}/crew", response_model=list[CrewMemberOut])
+async def get_episode_crew_route(
+    episode_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    # 22.5% of sampled episodes have no crew credits at all (ADR-0003), so an
+    # empty result can't stand in for a missing episode. Check existence.
+    if not await browse_queries.episode_exists(session, episode_id):
+        raise HTTPException(status_code=404, detail="episode not found")
+    return [
+        build_crew_member(person, role)
+        for person, role in await browse_queries.list_episode_crew(session, episode_id)
     ]
 
 

@@ -1,4 +1,5 @@
 import re
+from datetime import UTC, datetime
 
 import httpx
 import respx
@@ -12,6 +13,7 @@ from tvbf.tvmaze.update import run_update
 
 _AKAS_URL_RE = re.compile(r"https://api\.tvmaze\.com/shows/\d+/akas")
 _EPISODES_URL_RE = re.compile(r"https://api\.tvmaze\.com/shows/\d+/episodes")
+_SEASON_EPISODES_URL_RE = re.compile(r"https://api\.tvmaze\.com/seasons/\d+/episodes")
 
 
 def _mock_akas_default_empty() -> None:
@@ -21,6 +23,11 @@ def _mock_akas_default_empty() -> None:
 def _mock_episodes_default_empty() -> None:
     """Default-mock /episodes for any show id; merged with the embed, not replacing it."""
     respx.get(url__regex=_EPISODES_URL_RE).mock(return_value=httpx.Response(200, json=[]))
+
+
+def _mock_season_episodes_default_empty() -> None:
+    """Every updated show now has its seasons refetched for episode credits."""
+    respx.get(url__regex=_SEASON_EPISODES_URL_RE).mock(return_value=httpx.Response(200, json=[]))
 
 
 @respx.mock
@@ -46,6 +53,7 @@ async def test_update_only_fetches_shows_past_cursor(session):
 
     _mock_akas_default_empty()
     _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -72,6 +80,7 @@ async def test_update_with_no_prior_run_treats_cursor_as_zero(session):
 
     _mock_akas_default_empty()
     _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -95,6 +104,7 @@ async def test_update_aborts_after_consecutive_http_failures(session):
 
     _mock_akas_default_empty()
     _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -150,6 +160,7 @@ async def test_update_catches_upsert_errors_and_continues(session, monkeypatch):
 
     _mock_akas_default_empty()
     _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
     run_id = await create_run(session, kind="update")
     await session.commit()
 
@@ -164,6 +175,161 @@ async def test_update_catches_upsert_errors_and_continues(session, monkeypatch):
 
     assert result.shows_processed == 1
     assert result.shows_failed == 1
+
+
+def _season_episode(episode_id: int, *, cast=(), crew=()) -> dict:
+    return {
+        "id": episode_id,
+        "season": 1,
+        "number": 1,
+        "_embedded": {
+            "guestcast": [
+                {
+                    "person": {"id": pid, "name": f"Person {pid}", "updated": 1},
+                    "character": {"id": cid, "name": f"Character {cid}"},
+                }
+                for pid, cid in cast
+            ],
+            "guestcrew": [
+                {
+                    "person": {"id": pid, "name": f"Person {pid}", "updated": 1},
+                    "guestCrewType": role,
+                }
+                for pid, role in crew
+            ],
+        },
+    }
+
+
+@respx.mock
+async def test_update_refetches_each_season_for_episode_credits(session):
+    """The daily's season step. That the credits land at all is also the
+    ordering proof: they FK to `episode.id`, so the show write must have
+    committed before the season fetch runs."""
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 10})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 10, seasons=2, episodes_per_season=1))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    s1 = respx.get("https://api.tvmaze.com/seasons/1001/episodes").mock(
+        return_value=httpx.Response(
+            200, json=[_season_episode(10001, cast=[(10, 900)], crew=[(11, "Director")])]
+        )
+    )
+    s2 = respx.get("https://api.tvmaze.com/seasons/1002/episodes").mock(
+        return_value=httpx.Response(200, json=[_season_episode(10002)])
+    )
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+
+    async with TVMazeClient(
+        "https://api.tvmaze.com", rate_calls=50, rate_window=1, retry_base_delay=0.01
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    assert s1.call_count == 1 and s2.call_count == 1
+
+    cast = (await session.execute(select(m.EpisodeGuestCast))).scalars().all()
+    assert [(r.episode_id, r.person_id, r.character_id) for r in cast] == [(10001, 10, 900)]
+    crew = (await session.execute(select(m.EpisodeCrew))).scalars().all()
+    assert [(r.episode_id, r.person_id) for r in crew] == [(10001, 11)]
+
+    seasons = (
+        (
+            await session.execute(
+                select(m.Season).order_by(m.Season.id).execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    # Stamped even for the season that carried no credits at all — absence of
+    # rows cannot stand in for "not yet fetched".
+    assert all(s.credits_synced_at is not None for s in seasons)
+
+
+@respx.mock
+async def test_a_failing_season_does_not_fail_its_show(session):
+    """The show is already committed and correct; the season keeps a NULL
+    watermark and the backfill picks it up. Failing the show instead would be
+    wrong here, because the daily's cursor advances past failed shows."""
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 10})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 10, seasons=1, episodes_per_season=1))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    respx.get("https://api.tvmaze.com/seasons/1001/episodes").mock(return_value=httpx.Response(500))
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    assert result.shows_failed == 0
+    season = (
+        await session.execute(
+            select(m.Season).where(m.Season.id == 1001).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert season.credits_synced_at is None
+
+
+@respx.mock
+async def test_a_failing_season_is_handed_back_to_the_backfill(session):
+    """A season that already synced once must have its watermark CLEARED when a
+    later refresh fails. Left stamped, the backfill's `IS NULL` scan skips it
+    and the daily has already advanced past this show — so nothing retries."""
+    session.add(m.Show(id=1, name="Show 1", tvmaze_updated=1))
+    await session.flush()
+    session.add(m.Season(id=1001, show_id=1, number=1, credits_synced_at=datetime.now(UTC)))
+    await session.commit()
+
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 10})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 10, seasons=1, episodes_per_season=1))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    respx.get("https://api.tvmaze.com/seasons/1001/episodes").mock(return_value=httpx.Response(500))
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    assert result.shows_failed == 0
+    season = (
+        await session.execute(
+            select(m.Season).where(m.Season.id == 1001).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert season.credits_synced_at is None
 
 
 @respx.mock
@@ -187,6 +353,7 @@ async def test_update_persists_specials_from_the_episodes_endpoint(session):
         )
     )
     _mock_akas_default_empty()
+    _mock_season_episodes_default_empty()
 
     run_id = await create_run(session, kind="update")
     await session.commit()

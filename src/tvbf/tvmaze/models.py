@@ -131,6 +131,10 @@ class Season(Base):
     image_medium: Mapped[str | None] = mapped_column(Text)
     image_original: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    # Episode-credit pass watermark. Absence of credit rows cannot stand in for
+    # "not yet fetched": 22.5% of episodes carry no crew credits and a whole
+    # season legitimately may have none. See ADR-0003.
+    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Episode(Base):
@@ -187,9 +191,9 @@ class Person(Base):
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    # Pass C watermark. Set only when this person's credits have been fetched —
-    # a person row created from a show's cast embed has credits_synced_at NULL.
-    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # No credits watermark here, unlike `show` and `season`: person rows carry no
+    # credits of their own since ADR-0003, and the column that used to sequence
+    # the retired initial pass went with it (NEU-962).
 
 
 class Character(Base):
@@ -266,12 +270,22 @@ class ShowCrew(Base):
 class EpisodeGuestCast(Base):
     __tablename__ = "episode_guest_cast"
     __table_args__ = (
+        UniqueConstraint(
+            "episode_id",
+            "person_id",
+            "character_id",
+            name="uq_egc_episode_person_character",
+        ),
         Index("ix_egc_episode_id_sort", "episode_id", "sort_order"),
         Index("ix_egc_person_id", "person_id"),
         {"schema": SCHEMA},
     )
-    # Written by the PERSON axis, not the show axis. Refresh grain is
-    # WHERE person_id = ? — never per-episode. See ADR-0001.
+    # Still written by the person axis today; ownership moves to the season
+    # fetch, whose refresh grain is one season's episodes at a time (ADR-0003).
+    # That single writer is what makes a unique key possible. It has to be
+    # three-part: one character is played by more than one person on 17 of
+    # 1,043 sampled episodes, so (episode_id, character_id) would silently drop
+    # legitimate rows.
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
     episode_id: Mapped[int] = mapped_column(
@@ -288,12 +302,58 @@ class EpisodeGuestCast(Base):
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
+class EpisodeCrewRole(Base):
+    __tablename__ = "episode_crew_role"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_episode_crew_role_name"),
+        {"schema": SCHEMA},
+    )
+    # Kept separate from crew_role deliberately: the vocabularies are disjoint.
+    # Episode-level values are Writer, Director, Story, Teleplay; none of them
+    # appear among crew_role's 233 production-function names. See ADR-0003.
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class EpisodeCrew(Base):
+    __tablename__ = "episode_crew"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id", "person_id", "role_id", name="uq_episode_crew_episode_person_role"
+        ),
+        Index("ix_episode_crew_episode_id_sort", "episode_id", "sort_order"),
+        Index("ix_episode_crew_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+    # Three-part key for the same reason as episode_guest_cast: one person holds
+    # more than one crew role on 36 of 1,043 sampled episodes.
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    role_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode_crew_role.id"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class IngestRun(Base):
     __tablename__ = "ingest_run"
     __table_args__ = (
         CheckConstraint(
+            # `person_initial` was dropped in NEU-962. Historical rows of that
+            # kind survive in prod: the migration re-adds this constraint NOT
+            # VALID (unconditionally — every migrated database gets it that way)
+            # so the cancelled pass-C run stays readable while no new one can be
+            # written. NOT VALID skips only the scan of existing rows; writes are
+            # enforced either way, so what this declaration says is what every
+            # database does. Tests build from `create_all` and never see the
+            # migration, so they get an ordinary validated constraint from here.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
-            "'show_refresh', 'person_initial', 'person_update')",
+            "'show_refresh', 'person_update', 'episode_credits_backfill')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(
