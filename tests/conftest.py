@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 from tvbf.app import models as _app_models  # noqa: F401, E402 -- register tables
 from tvbf.db import Base  # noqa: E402
 from tvbf.tvmaze import models as _tvmaze_models  # noqa: F401, E402 -- register tables
-from tvbf.tvmaze.client import get_rate_limiter  # noqa: E402
+from tvbf.tvmaze.client import reset_rate_limiters  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -100,16 +100,18 @@ def _reset_rate_limiter():
 
     `get_rate_limiter` is `@cache`d so all clients in a process share one
     budget (NEU-955). Left alone, its timestamp deque would carry across tests
-    and make a later test sleep off an earlier test's requests.
+    and make a later test sleep off an earlier test's requests, and the
+    second-budget warning (NEU-957) would fire on whichever test happened to
+    ask for a different budget second.
 
     Like `_stub_outbound_email`, this deliberately does not request
     `monkeypatch` — an autouse fixture that does would run its teardown after
     the `session` fixture's and break the admin tests' `asyncio.create_task`
     patching.
     """
-    get_rate_limiter.cache_clear()
+    reset_rate_limiters()
     yield
-    get_rate_limiter.cache_clear()
+    reset_rate_limiters()
 
 
 @pytest.fixture
