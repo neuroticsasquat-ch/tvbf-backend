@@ -11,7 +11,13 @@ on:
 jobs:
   update:
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # The season-credit step took the daily from ~3 requests/show to ~5.11,
+    # which at 18 req/10s is ~14.5 minutes per day of accumulated backlog — so
+    # 60 minutes started failing at about four days behind, and the first run
+    # after the 29-hour backfill pass sits squarely in that band. The run is an
+    # asyncio task inside the app, so a workflow timeout doesn't stop it: the
+    # failure mode was a red job sitting over work that quietly succeeded.
+    timeout-minutes: 180
     steps:
       - name: Trigger update
         id: trigger
@@ -30,7 +36,7 @@ jobs:
           ADMIN_TOKEN: ${{ secrets.TVBF_ADMIN_TOKEN }}
           RUN_ID: ${{ steps.trigger.outputs.run_id }}
         run: |
-          for i in $(seq 1 120); do
+          for i in $(seq 1 360); do  # 360 × 30s = 180 min, matching timeout-minutes
             body=$(curl -fsS \
               -H "Authorization: Bearer $ADMIN_TOKEN" \
               "https://api.tvbingefriend.com/admin/ingest/$RUN_ID")

@@ -1,9 +1,10 @@
 """The daily person delta — NEU-943.
 
 `update.py`, pointed at the person axis: read the watermark, take everything in
-`/updates/people` past it, re-fetch with `embed[]=guestcastcredits`, advance the
+`/updates/people` past it that we already hold, re-fetch attributes, advance the
 cursor. What it exists for is the attribute change no show record reflects — a
 performer's rename never touches a show, so nothing else would re-fetch them.
+It writes no credits since ADR-0003.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -16,7 +17,7 @@ from tvbf.tvmaze import models as m
 from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.runs import PERSON_CURSOR_KINDS, get_last_successful_cursor
 
-from .test_person_ingest import FakeClient, _http_error, guest_credit, person_payload
+from .test_person_ingest import FakeClient, _http_error, person_payload
 
 
 @pytest.fixture
@@ -27,16 +28,10 @@ async def run_id(session):
     return run.id
 
 
-@pytest.fixture
-async def episodes(session):
-    """Guest credits need real episodes to point their FK at."""
-    session.add(m.Show(id=1, name="S", tvmaze_updated=1))
-    await session.flush()
+async def _hold(session, *person_ids: int) -> None:
+    """Mirror these people, so the delta's held-scoping lets them through."""
     session.add_all(
-        [
-            m.Episode(id=500, show_id=1, season=1, number=1, name="E1"),
-            m.Episode(id=501, show_id=1, season=1, number=2, name="E2"),
-        ]
+        [m.Person(id=pid, name=f"Person {pid}", tvmaze_updated=1) for pid in person_ids]
     )
     await session.commit()
 
@@ -74,23 +69,10 @@ async def _refreshed_person(session, person_id: int) -> m.Person:
     ).scalar_one()
 
 
-async def _guest_rows(session, person_id: int) -> list[m.EpisodeGuestCast]:
-    return list(
-        (
-            await session.execute(
-                select(m.EpisodeGuestCast)
-                .where(m.EpisodeGuestCast.person_id == person_id)
-                .order_by(m.EpisodeGuestCast.sort_order)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-
 async def test_only_people_past_the_cursor_are_re_fetched(session, run_id):
     now = datetime.now(UTC)
     await _succeeded_run(session, kind="person_update", cursor=1700000000, finished_at=now)
+    await _hold(session, 70, 71)
 
     client = FakeClient(
         {70: 1699999999, 71: 1700000001},
@@ -109,6 +91,7 @@ async def test_the_initial_ingests_cursor_is_inherited_by_the_first_delta(sessio
     all 487k people."""
     now = datetime.now(UTC)
     await _succeeded_run(session, kind="person_initial", cursor=1700000000, finished_at=now)
+    await _hold(session, 72, 73)
 
     client = FakeClient(
         {72: 1699999999, 73: 1700000500},
@@ -127,6 +110,7 @@ async def test_a_newer_show_axis_cursor_is_not_borrowed(session, run_id):
         session, kind="person_update", cursor=1700000000, finished_at=now - timedelta(hours=1)
     )
     await _succeeded_run(session, kind="update", cursor=1700009999, finished_at=now)
+    await _hold(session, 74)
 
     client = FakeClient({74: 1700000500}, {74: person_payload(74, updated=1700000500)})
     await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
@@ -135,6 +119,7 @@ async def test_a_newer_show_axis_cursor_is_not_borrowed(session, run_id):
 
 
 async def test_first_ever_run_with_no_cursor_walks_everything(session, run_id):
+    await _hold(session, 75, 76)
     client = FakeClient(
         {75: 1, 76: 2}, {75: person_payload(75, updated=1), 76: person_payload(76, updated=2)}
     )
@@ -167,25 +152,62 @@ async def test_an_already_synced_person_is_re_fetched_when_their_epoch_moves(ses
     assert (await _refreshed_person(session, 77)).name == "New name"
 
 
-async def test_guest_credits_are_replaced_not_appended(session, run_id, episodes):
-    client = FakeClient({78: 100}, {78: person_payload(78, credits=[guest_credit(500, 910)])})
+async def test_people_we_do_not_hold_are_not_fetched(session, run_id):
+    """Without an initial pass seeding the table, an unscoped todo list is all
+    486,790 upstream people, and the ones with no credit anywhere would accrete
+    as zero-credit strangers whose pages render an empty filmography."""
+    await _hold(session, 78)
+
+    client = FakeClient({78: 100, 79: 100}, {78: person_payload(78)})
+    result = await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert client.person_calls == [78]
+    assert result.persons_processed == 1
+    assert (
+        await session.execute(select(m.Person).where(m.Person.id == 79))
+    ).scalar_one_or_none() is None
+
+
+async def test_the_cursor_covers_people_the_scoping_skipped(session, run_id):
+    """The watermark records what was considered, not what was fetched. Taking
+    it over the fetched list would peg it to the highest-epoch person we happen
+    to hold and re-consider the same strangers every day."""
+    await _hold(session, 78)
+
+    client = FakeClient({78: 100, 79: 9999}, {78: person_payload(78)})
+    result = await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert client.person_calls == [78]
+    assert result.last_update_cursor == 9999
+
+
+async def test_the_daily_writes_no_credit_rows(session, run_id):
+    """The ownership cutover (ADR-0003). A payload still carrying the embed we
+    no longer request must not put a row in a credit table."""
+    await _hold(session, 78)
+    payload = person_payload(78)
+    payload["_embedded"] = {
+        "guestcastcredits": [
+            {
+                "_links": {
+                    "episode": {"href": "https://api.tvmaze.com/episodes/500"},
+                    "character": {"href": "https://api.tvmaze.com/characters/900"},
+                }
+            }
+        ]
+    }
+
+    client = FakeClient({78: 100}, {78: payload})
     await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
-    assert [(r.episode_id, r.character_id) for r in await _guest_rows(session, 78)] == [(500, 910)]
 
-    client._people[78] = person_payload(78, credits=[guest_credit(501, 911)], updated=200)
-    client._updates = {78: 200}
-    second = m.IngestRun(id=uuid4(), kind="person_update", status="running")
-    session.add(second)
-    await session.commit()
-    await run_person_update(session_factory=lambda: session, client=client, run_id=second.id)
-
-    assert [(r.episode_id, r.character_id) for r in await _guest_rows(session, 78)] == [(501, 911)]
+    assert (await session.execute(select(m.EpisodeGuestCast))).scalars().all() == []
 
 
 async def test_the_cursor_advances_only_on_success(session, run_id):
     await _succeeded_run(
         session, kind="person_update", cursor=1700000000, finished_at=datetime.now(UTC)
     )
+    await _hold(session, 79)
 
     class FailingClient(FakeClient):
         async def get_person(self, person_id: int) -> dict:
@@ -223,6 +245,8 @@ async def test_a_run_with_nothing_to_do_republishes_the_cursor(session, run_id):
 
 
 async def test_a_failure_is_non_fatal_and_counted_on_the_run(session, run_id):
+    await _hold(session, 81, 82)
+
     class OneFailingClient(FakeClient):
         async def get_person(self, person_id: int) -> dict:
             if person_id == 81:
@@ -246,6 +270,7 @@ async def test_the_watermark_advances_past_a_non_fatally_failed_person(session, 
     retried until upstream bumps them again. The safety net is pass C, whose
     todo list is `credits_synced_at IS NULL` rather than epoch-driven.
     """
+    await _hold(session, 83, 84)
 
     class OneFailingClient(FakeClient):
         async def get_person(self, person_id: int) -> dict:
@@ -262,6 +287,7 @@ async def test_the_watermark_advances_past_a_non_fatally_failed_person(session, 
 
 
 async def test_aborts_after_consecutive_failure_threshold(session, run_id):
+    await _hold(session, 90, 91, 92)
     calls: list[int] = []
 
     class CountingFailingClient(FakeClient):
