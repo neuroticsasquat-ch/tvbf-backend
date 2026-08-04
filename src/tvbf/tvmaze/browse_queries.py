@@ -159,12 +159,13 @@ async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Pe
 async def list_episode_guest_cast(
     session: AsyncSession, episode_id: int
 ) -> list[tuple[m.EpisodeGuestCast, m.Person, m.Character]]:
-    """Guest-cast credits for one episode in upstream billing order.
+    """Guest-cast credits for one episode in upstream credit order — the
+    episode's own credit sequence, not billing order (which is reserved for show
+    cast, where upstream orders by total appearances).
 
-    Covered by ix_egc_episode_id_sort. The credit id breaks ties:
-    the credit tables carry no unique constraint by design, so one episode can
-    hold several rows at the same `sort_order` and the order would otherwise be
-    nondeterministic across requests.
+    Covered by ix_egc_episode_id_sort. The credit id breaks ties: nothing
+    upstream guarantees `sort_order` is distinct within an episode, so the order
+    would otherwise be nondeterministic across requests.
     """
     stmt = (
         select(m.EpisodeGuestCast, m.Person, m.Character)
@@ -172,6 +173,25 @@ async def list_episode_guest_cast(
         .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
         .where(m.EpisodeGuestCast.episode_id == episode_id)
         .order_by(m.EpisodeGuestCast.sort_order.asc(), m.EpisodeGuestCast.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_episode_crew(
+    session: AsyncSession, episode_id: int
+) -> list[tuple[m.Person, m.EpisodeCrewRole]]:
+    """Crew credits for one episode in upstream credit order.
+
+    Covered by ix_episode_crew_episode_id_sort. Same tie-break reasoning as
+    `list_episode_guest_cast`, and it bites harder here: one person holds more
+    than one crew role on 36 of 1,043 sampled episodes (ADR-0003).
+    """
+    stmt = (
+        select(m.Person, m.EpisodeCrewRole)
+        .join(m.EpisodeCrew, m.EpisodeCrew.person_id == m.Person.id)
+        .join(m.EpisodeCrewRole, m.EpisodeCrewRole.id == m.EpisodeCrew.role_id)
+        .where(m.EpisodeCrew.episode_id == episode_id)
+        .order_by(m.EpisodeCrew.sort_order.asc(), m.EpisodeCrew.id.asc())
     )
     return list((await session.execute(stmt)).tuples().all())
 
@@ -190,6 +210,10 @@ async def person_exists(session: AsyncSession, person_id: int) -> bool:
 # premiere date descending. Shows with no premiere date (unaired, upcoming) sort
 # last; show id breaks ties so the order is stable across requests.
 _CREDIT_SHOW_ORDER = (m.Show.premiered.desc().nulls_last(), m.Show.id.asc())
+
+# Episode-level credits read the same way, by air date. Episodes with no airdate
+# (unaired, or never dated upstream) sort last; episode id breaks ties.
+_CREDIT_EPISODE_ORDER = (m.Episode.airdate.desc().nulls_last(), m.Episode.id.asc())
 
 
 async def list_person_cast_credits(
@@ -233,9 +257,9 @@ async def list_person_guest_credits(
     """Guest-cast credits for one person, joined through episode → show so each
     entry can render "Show — S2E11" without a second round trip.
 
-    Ordered by air date descending: `sort_order` on a guest credit is billing
-    within its own episode and says nothing useful across episodes. Episodes with
-    no airdate sort last, with episode id breaking ties.
+    Ordered by air date descending (`_CREDIT_EPISODE_ORDER`): `sort_order` on a
+    guest credit is credit order within its own episode and says nothing useful
+    across episodes. Within one episode the credit id keeps the order stable.
     """
     stmt = (
         select(m.EpisodeGuestCast, m.Episode, m.Show, m.Character)
@@ -243,10 +267,36 @@ async def list_person_guest_credits(
         .join(m.Show, m.Show.id == m.Episode.show_id)
         .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
         .where(m.EpisodeGuestCast.person_id == person_id)
+        .order_by(*_CREDIT_EPISODE_ORDER, m.EpisodeGuestCast.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_person_episode_crew_credits(
+    session: AsyncSession, person_id: int
+) -> list[tuple[m.Episode, m.Show, m.EpisodeCrewRole]]:
+    """Episode-crew credits for one person, joined through episode → show so each
+    entry can render "Show — S1E3" without a second round trip.
+
+    This is the half of a person's filmography that has no upstream person-side
+    route at all — `/people/{id}?embed[]=guestcrewcredits` is a 400 — so it only
+    exists because credits are fetched per season (ADR-0003).
+
+    Ordered by air date descending like `list_person_guest_credits`, nulls last.
+    A person routinely holds both Writer and Director on one episode, and within
+    that episode `sort_order` is the credit sequence — the same order
+    `list_episode_crew` serves, so the two views of one episode agree.
+    """
+    stmt = (
+        select(m.Episode, m.Show, m.EpisodeCrewRole)
+        .join(m.EpisodeCrew, m.EpisodeCrew.episode_id == m.Episode.id)
+        .join(m.Show, m.Show.id == m.Episode.show_id)
+        .join(m.EpisodeCrewRole, m.EpisodeCrewRole.id == m.EpisodeCrew.role_id)
+        .where(m.EpisodeCrew.person_id == person_id)
         .order_by(
-            m.Episode.airdate.desc().nulls_last(),
-            m.Episode.id.asc(),
-            m.EpisodeGuestCast.id.asc(),
+            *_CREDIT_EPISODE_ORDER,
+            m.EpisodeCrew.sort_order.asc(),
+            m.EpisodeCrew.id.asc(),
         )
     )
     return list((await session.execute(stmt)).tuples().all())

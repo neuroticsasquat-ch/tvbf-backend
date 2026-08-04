@@ -210,8 +210,9 @@ class ShowRef(BaseModel):
 
 
 class EpisodeRef(BaseModel):
-    """Compact episode reference used inside guest-cast credits. Carries season
-    and number so the frontend can render "Show — S2E11" without a round trip."""
+    """Compact episode reference used inside episode-level credits. Carries
+    season and number so the frontend can render "Show — S2E11" without a round
+    trip."""
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -242,16 +243,23 @@ class PersonGuestCreditOut(BaseModel):
     voice: bool = False
 
 
+class PersonEpisodeCrewCreditOut(BaseModel):
+    show: ShowRef
+    episode: EpisodeRef
+    role: str
+
+
 class PersonCreditsOut(BaseModel):
-    """Grouped filmography. The three kinds are genuinely different shapes
-    (person-as-character, person-in-function, person-as-character-in-one-episode)
-    and the page renders them as separate sections, so they stay grouped rather
-    than interleaved. All three keys are always present — an absent category is
-    an empty list, never a missing key."""
+    """Grouped filmography. The four kinds are genuinely different shapes
+    (person-as-character, person-in-function, person-as-character-in-one-episode,
+    person-in-function-on-one-episode) and the page renders them as separate
+    sections, so they stay grouped rather than interleaved. All four keys are
+    always present — an absent category is an empty list, never a missing key."""
 
     cast: list[PersonCastCreditOut] = []
     crew: list[PersonCrewCreditOut] = []
     guest_cast: list[PersonGuestCreditOut] = []
+    episode_crew: list[PersonEpisodeCrewCreditOut] = []
 
 
 def build_show_summary(
@@ -347,7 +355,7 @@ def build_crew_member(person, role) -> CrewMemberOut:
     return CrewMemberOut(person=PersonRef.model_validate(person), role=role.name)
 
 
-def build_person_credits(cast_rows, crew_rows, guest_rows) -> PersonCreditsOut:
+def build_person_credits(cast_rows, crew_rows, guest_rows, episode_crew_rows) -> PersonCreditsOut:
     return PersonCreditsOut(
         cast=[
             PersonCastCreditOut(
@@ -371,5 +379,13 @@ def build_person_credits(cast_rows, crew_rows, guest_rows) -> PersonCreditsOut:
                 voice=credit.is_voice,
             )
             for credit, episode, show, character in guest_rows
+        ],
+        episode_crew=[
+            PersonEpisodeCrewCreditOut(
+                show=ShowRef.model_validate(show),
+                episode=EpisodeRef.model_validate(episode),
+                role=role.name,
+            )
+            for episode, show, role in episode_crew_rows
         ],
     )
