@@ -1,3 +1,56 @@
+# Release notes
+
+## 0.2.0 — 2026-08-04
+
+### Browse
+
+- Disable browser cache on user-mutable endpoints
+- Add show cast and crew routes ([NEU-940](https://linear.app/neuroticsasquatch/issue/NEU-940)) ([#174](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/174))
+- Add person detail and credits routes ([NEU-948](https://linear.app/neuroticsasquatch/issue/NEU-948)) ([#175](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/175))
+- Add person search and folded person-name index ([NEU-950](https://linear.app/neuroticsasquatch/issue/NEU-950)) ([#176](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/176))
+- Add episode guest-cast route ([NEU-949](https://linear.app/neuroticsasquatch/issue/NEU-949)) ([#177](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/177))
+
+### Feedback
+
+- Wire LinearClient settings, lifespan, and dependency
+- Add POST /me/feedback route forwarding to Linear
+- Send maintainer notification email after Linear submit
+
+### General
+
+- Scope ingest cursor lookup per axis ([NEU-954](https://linear.app/neuroticsasquatch/issue/NEU-954))
+- Add credit table definitions and migration ([NEU-936](https://linear.app/neuroticsasquatch/issue/NEU-936)) ([#168](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/168))
+
+### Integrations
+
+- Add Linear GraphQL client for feedback flow
+- Use externalId (singular) in customerUpsert
+
+### Observability
+
+- Auto-instrument the API with OpenTelemetry → SigNoz
+
+### Scripts
+
+- Restore all cross-schema FKs on db:refresh ([#180](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/180))
+- Add pass A verification script ([NEU-938](https://linear.app/neuroticsasquatch/issue/NEU-938)) ([#181](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/181))
+- Retune pass A verification bands to measured totals ([#182](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/182))
+
+### Search
+
+- Fold accents and punctuation in show name search ([NEU-433](https://linear.app/neuroticsasquatch/issue/NEU-433))
+
+### Tvmaze
+
+- Honour show embed and add cast/crew upserts ([NEU-937](https://linear.app/neuroticsasquatch/issue/NEU-937)) ([#169](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/169))
+- Alias externals thetvdb so TVDB ids stop parsing as None ([NEU-922](https://linear.app/neuroticsasquatch/issue/NEU-922)) ([#170](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/170))
+- Fetch specials on ingest and daily delta ([NEU-933](https://linear.app/neuroticsasquatch/issue/NEU-933)) ([#171](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/171))
+- Add pass A show-refresh orchestrator ([NEU-926](https://linear.app/neuroticsasquatch/issue/NEU-926)) ([#172](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/172))
+- Add pass C person ingest and guest cast ([NEU-942](https://linear.app/neuroticsasquatch/issue/NEU-942)) ([#178](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/178))
+- Add daily person delta ([NEU-943](https://linear.app/neuroticsasquatch/issue/NEU-943)) ([#179](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/179))
+- Make the rate limiter process-wide, not per client ([NEU-955](https://linear.app/neuroticsasquatch/issue/NEU-955)) ([#184](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/184))
+- Warn when a second rate-limiter budget is created ([NEU-957](https://linear.app/neuroticsasquatch/issue/NEU-957)) ([#185](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/185))
+
 # Changelog
 
 All notable changes to this project will be documented in this file.

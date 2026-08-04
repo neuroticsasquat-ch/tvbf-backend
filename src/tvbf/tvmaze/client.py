@@ -1,8 +1,12 @@
 import asyncio
+import logging
 import time
 from collections import deque
+from functools import cache
 
 import httpx
+
+log = logging.getLogger(__name__)
 
 
 class RateLimiter:
@@ -29,6 +33,62 @@ class RateLimiter:
             self._timestamps.append(time.monotonic())
 
 
+# Every budget `get_rate_limiter` has been asked for. Tracked separately from
+# the cache because `cache_info()` reports a size, not the keys behind it.
+_seen_budgets: set[tuple[int, float]] = set()
+
+
+@cache
+def get_rate_limiter(calls: int, window_seconds: float) -> RateLimiter:
+    """The process-wide limiter for one request budget.
+
+    TV Maze's cap applies to us as a whole, not to each job. Every admin route
+    builds its own `TVMazeClient`, so a per-instance limiter let two concurrent
+    jobs each pace at the configured rate and hit upstream at twice it — over
+    the cap, with neither throttling the other. Sharing one bucket means
+    concurrent jobs split a single budget and simply run slower, which is the
+    intended behaviour.
+
+    Cached rather than built at import so the settings that size it are read
+    when the first client is constructed. Tests reset it through
+    `reset_rate_limiters()`, which `tests/conftest.py` calls between tests so
+    timestamps never leak. Do not call `get_rate_limiter.cache_clear()`
+    directly — it leaves `_seen_budgets` populated, so the cache and the seen
+    set fall out of step.
+
+    The cache is keyed by budget, so callers asking for *different* numbers get
+    different buckets — which would reintroduce exactly the overshoot this
+    exists to prevent. Every construction site reads the same `Settings`, so it
+    cannot happen today; a second budget warns rather than failing silently,
+    because the symptom otherwise is invisible (NEU-957). Size a new caller
+    from settings too.
+    """
+    # The membership half only matters if someone bypassed `reset_rate_limiters`
+    # and cleared the cache alone: the budget would then be a miss while still
+    # in `_seen_budgets`, and warning about it would be noise.
+    if _seen_budgets and (calls, window_seconds) not in _seen_budgets:
+        log.warning(
+            "additional TV Maze rate budget requested (%s per %ss; already have %s) — "
+            "jobs on different budgets no longer share one limiter and will "
+            "exceed the upstream cap together",
+            calls,
+            window_seconds,
+            sorted(_seen_budgets),
+        )
+    _seen_budgets.add((calls, window_seconds))
+    return RateLimiter(calls, window_seconds)
+
+
+def reset_rate_limiters() -> None:
+    """Drop the cached limiters and the budgets seen so far.
+
+    For tests only — `tests/conftest.py` calls this between tests so neither a
+    limiter's timestamps nor the divergence warning leaks into the next one.
+    """
+    get_rate_limiter.cache_clear()
+    _seen_budgets.clear()
+
+
 class TVMazeClient:
     def __init__(
         self,
@@ -38,9 +98,13 @@ class TVMazeClient:
         retry_max_attempts: int = 5,
         retry_base_delay: float = 0.5,
         timeout: float = 30.0,
+        limiter: RateLimiter | None = None,
     ):
         self._base_url = base_url.rstrip("/")
-        self._limiter = RateLimiter(rate_calls, rate_window)
+        # Shared by default; pass `limiter` explicitly for an isolated budget.
+        self._limiter = (
+            limiter if limiter is not None else get_rate_limiter(rate_calls, rate_window)
+        )
         self._retry_max = retry_max_attempts
         self._retry_base = retry_base_delay
         self._client = httpx.AsyncClient(timeout=timeout)
