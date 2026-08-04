@@ -290,9 +290,6 @@ async def upsert_persons(session: AsyncSession, people: list[TVMazePerson]) -> N
     person objects embedded in show cast/crew and season guest cast/crew are
     byte-identical to `/people/{id}` — which is what lets every person arrive
     complete off the show axis alone (ADR-0003).
-
-    Never touches credits_synced_at, which is the person initial pass's own
-    resumability watermark and no longer means anything about credits.
     """
     if not people:
         return
@@ -614,11 +611,4 @@ async def clear_season_credits_synced(session: AsyncSession, *, season_id: int) 
     """
     await session.execute(
         update(m.Season).where(m.Season.id == season_id).values(credits_synced_at=None)
-    )
-
-
-async def mark_person_credits_synced(session: AsyncSession, *, person_id: int) -> None:
-    """Set the person's credits_synced_at to now() — pass C's watermark."""
-    await session.execute(
-        update(m.Person).where(m.Person.id == person_id).values(credits_synced_at=datetime.now(UTC))
     )

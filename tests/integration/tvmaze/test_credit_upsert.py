@@ -91,8 +91,6 @@ async def test_cast_populates_person_and_character_rows(session, a_show):
     assert person.image_medium == "https://m.jpg"
     assert person.image_original == "https://o.jpg"
     assert person.tvmaze_updated == 1774528332
-    # Pass C owns person credits; the show axis must not claim they are synced.
-    assert person.credits_synced_at is None
 
     character = (
         await session.execute(select(m.Character).where(m.Character.id == 45090))

@@ -4,20 +4,58 @@
 `/updates/people` past it that we already hold, re-fetch attributes, advance the
 cursor. What it exists for is the attribute change no show record reflects — a
 performer's rename never touches a show, so nothing else would re-fetch them.
-It writes no credits since ADR-0003.
+It writes no credits since ADR-0003, and since NEU-962 it is the only job on the
+axis: the initial pass it used to inherit a cursor from is gone.
 """
 
 from datetime import UTC, datetime, timedelta
 from uuid import uuid4
 
+import httpx
 import pytest
 from sqlalchemy import select
 
 from tvbf.tvmaze import models as m
+from tvbf.tvmaze import person_update as person_update_module
 from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.runs import PERSON_CURSOR_KINDS, get_last_successful_cursor
 
-from .test_person_ingest import FakeClient, _http_error, person_payload
+
+def person_payload(person_id: int, *, updated: int = 1700000000) -> dict:
+    return {
+        "id": person_id,
+        "name": f"Person {person_id}",
+        "country": {"name": "United States", "code": "US", "timezone": "America/New_York"},
+        "birthday": "",
+        "deathday": "",
+        "gender": "Male",
+        "image": None,
+        "updated": updated,
+    }
+
+
+class FakeClient:
+    """Duck-types the two calls the delta makes, recording what it was asked for."""
+
+    def __init__(self, updates: dict[int, int], people: dict[int, dict] | None = None):
+        self._updates = updates
+        self._people = people or {}
+        self.person_calls: list[int] = []
+
+    async def get_person_updates(self) -> dict[int, int]:
+        return dict(self._updates)
+
+    async def get_person(self, person_id: int) -> dict:
+        self.person_calls.append(person_id)
+        return self._people[person_id]
+
+
+def _http_error(person_id: int) -> httpx.HTTPStatusError:
+    return httpx.HTTPStatusError(
+        "boom",
+        request=httpx.Request("GET", f"https://api.tvmaze.com/people/{person_id}"),
+        response=httpx.Response(500),
+    )
 
 
 @pytest.fixture
@@ -85,23 +123,6 @@ async def test_only_people_past_the_cursor_are_re_fetched(session, run_id):
     assert result.last_update_cursor == 1700000001
 
 
-async def test_the_initial_ingests_cursor_is_inherited_by_the_first_delta(session, run_id):
-    """`person_initial` and `person_update` share one lineage. Scoping the
-    lookup to this kind alone would send the first delta back to 0 and re-walk
-    all 487k people."""
-    now = datetime.now(UTC)
-    await _succeeded_run(session, kind="person_initial", cursor=1700000000, finished_at=now)
-    await _hold(session, 72, 73)
-
-    client = FakeClient(
-        {72: 1699999999, 73: 1700000500},
-        {73: person_payload(73, updated=1700000500)},
-    )
-    await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
-
-    assert client.person_calls == [73]
-
-
 async def test_a_newer_show_axis_cursor_is_not_borrowed(session, run_id):
     """Both axes write TV Maze epochs into the same column, so a show cursor
     read here would not error — it would just silently skip people."""
@@ -130,13 +151,21 @@ async def test_first_ever_run_with_no_cursor_walks_everything(session, run_id):
     assert result.last_update_cursor == 2
 
 
-async def test_an_already_synced_person_is_re_fetched_when_their_epoch_moves(session, run_id):
-    """The delta's todo list is epoch-driven, not `credits_synced_at`-driven —
-    otherwise the rename this job exists for would never be picked up."""
-    session.add(
-        m.Person(
-            id=77, name="Old name", tvmaze_updated=1700000000, credits_synced_at=datetime.now(UTC)
-        )
+async def test_the_todo_list_comes_from_upstream_epochs_not_from_row_state(session, run_id):
+    """The todo list is built from `/updates/people` epochs and nothing else.
+
+    NEU-962 dropped `person.credits_synced_at`, which this used to demonstrate
+    by seeding the watermark; the property it guarded is still real and still
+    load-bearing. A person we have already mirrored in full is exactly the
+    person whose name changes, so any per-row "already done" gate would make the
+    rename this job exists for unreachable. The two people below are seeded
+    identically — the only thing separating them is what upstream reports.
+    """
+    session.add_all(
+        [
+            m.Person(id=77, name="Old name", tvmaze_updated=1700000000),
+            m.Person(id=78, name="Same vintage", tvmaze_updated=1700000000),
+        ]
     )
     await session.commit()
     await _succeeded_run(
@@ -145,7 +174,7 @@ async def test_an_already_synced_person_is_re_fetched_when_their_epoch_moves(ses
 
     payload = person_payload(77, updated=1700000500)
     payload["name"] = "New name"
-    client = FakeClient({77: 1700000500}, {77: payload})
+    client = FakeClient({77: 1700000500, 78: 1699999999}, {77: payload})
     await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
 
     assert client.person_calls == [77]
@@ -201,6 +230,32 @@ async def test_the_daily_writes_no_credit_rows(session, run_id):
     await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
 
     assert (await session.execute(select(m.EpisodeGuestCast))).scalars().all() == []
+
+
+async def test_a_failed_write_leaves_no_partial_person_row(session, run_id, monkeypatch):
+    """One transaction per person. Fails *after* the upsert, so only an actual
+    rollback can keep the row out — a half-written person would otherwise be
+    counted as failed on the run while sitting in the table."""
+    await _hold(session, 85)
+    real_record_progress = person_update_module.record_progress
+
+    async def boom_on_success(s, rid, processed_delta=0, failed_delta=0):
+        if processed_delta:
+            raise RuntimeError("simulated failure after the upsert")
+        return await real_record_progress(
+            s, rid, processed_delta=processed_delta, failed_delta=failed_delta
+        )
+
+    monkeypatch.setattr(person_update_module, "record_progress", boom_on_success)
+
+    payload = person_payload(85)
+    payload["name"] = "Renamed"
+    client = FakeClient({85: 1700000500}, {85: payload})
+    result = await run_person_update(session_factory=lambda: session, client=client, run_id=run_id)
+
+    assert result.persons_failed == 1
+    assert result.persons_processed == 0
+    assert (await _refreshed_person(session, 85)).name == "Person 85"  # not "Renamed"
 
 
 async def test_the_cursor_advances_only_on_success(session, run_id):
@@ -267,8 +322,11 @@ async def test_the_watermark_advances_past_a_non_fatally_failed_person(session, 
     """Inherited from `update.py`, and pinned here because it is a real gap:
     `max_epoch` is computed over the whole todo list, so a person who failed
     without tripping the abort threshold is behind the new watermark and isn't
-    retried until upstream bumps them again. The safety net is pass C, whose
-    todo list is `credits_synced_at IS NULL` rather than epoch-driven.
+    retried until upstream bumps them again. Pass C used to be the safety net —
+    its todo list was watermark-driven rather than epoch-driven — and NEU-962
+    retired it, so nothing catches these now. Accepted: the loss is one
+    refreshed headshot or rename until upstream next touches that person, and
+    the person axis is attributes only.
     """
     await _hold(session, 83, 84)
 

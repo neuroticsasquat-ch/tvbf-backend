@@ -24,7 +24,6 @@ ROUTE_KINDS = [
     ("/admin/backfill-akas", "akas_backfill"),
     ("/admin/backfill-ratings", "ratings_backfill"),
     ("/admin/refresh-shows", "show_refresh"),
-    ("/admin/ingest-people", "person_initial"),
     ("/admin/update-people", "person_update"),
 ]
 
@@ -37,7 +36,6 @@ BACKGROUND_FNS = [
     "_background_backfill_akas",
     "_background_backfill_ratings",
     "_background_show_refresh",
-    "_background_person_ingest",
     "_background_person_update",
 ]
 

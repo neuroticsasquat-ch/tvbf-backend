@@ -103,9 +103,9 @@ async def test_get_last_successful_cursor_is_scoped_to_its_axis(session):
     two axes resume from each other's position. Both cursors are TV Maze epoch
     seconds, so nothing errors; work is just silently skipped.
 
-    Uses `akas_backfill` as the stand-in off-axis kind because it is already
-    in the `ck_ingest_run_kind` whitelist. The real second cursor lineage
-    (`person_initial` / `person_update`) arrives with the Cast and Crew tables.
+    Uses `akas_backfill` as the stand-in off-axis kind rather than the real
+    second lineage (`person_update`) so this stays a test of the scoping itself
+    and not of one particular pair of axes.
     """
     show_run = await create_run(session, kind="update")
     other_axis = await create_run(session, kind="akas_backfill")
