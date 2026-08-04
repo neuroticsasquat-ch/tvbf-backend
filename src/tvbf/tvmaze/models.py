@@ -191,9 +191,9 @@ class Person(Base):
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
-    # Pass C watermark. Set only when this person's credits have been fetched —
-    # a person row created from a show's cast embed has credits_synced_at NULL.
-    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # No credits watermark here, unlike `show` and `season`: person rows carry no
+    # credits of their own since ADR-0003, and the column that used to sequence
+    # the retired initial pass went with it (NEU-962).
 
 
 class Character(Base):
@@ -344,8 +344,16 @@ class IngestRun(Base):
     __tablename__ = "ingest_run"
     __table_args__ = (
         CheckConstraint(
+            # `person_initial` was dropped in NEU-962. Historical rows of that
+            # kind survive in prod: the migration re-adds this constraint NOT
+            # VALID (unconditionally — every migrated database gets it that way)
+            # so the cancelled pass-C run stays readable while no new one can be
+            # written. NOT VALID skips only the scan of existing rows; writes are
+            # enforced either way, so what this declaration says is what every
+            # database does. Tests build from `create_all` and never see the
+            # migration, so they get an ordinary validated constraint from here.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
-            "'show_refresh', 'person_initial', 'person_update')",
+            "'show_refresh', 'person_update')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

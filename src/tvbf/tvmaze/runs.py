@@ -10,8 +10,13 @@ from tvbf.tvmaze import models as m
 # Run kinds that share one `last_update_cursor` lineage. Each ingest axis has
 # its own: the initial ingest sets the cursor and the daily delta advances it,
 # so the two kinds must be read together. Axes must NOT see each other's.
+#
+# The person lineage is a single kind since NEU-962 retired the initial pass,
+# and stays a named lineage rather than an inlined literal because the scoping
+# is the point: unscoped, the person delta would resume from the show axis's
+# cursor and silently skip work (see `get_last_successful_cursor`).
 SHOW_CURSOR_KINDS: tuple[str, ...] = ("initial", "update")
-PERSON_CURSOR_KINDS: tuple[str, ...] = ("person_initial", "person_update")
+PERSON_CURSOR_KINDS: tuple[str, ...] = ("person_update",)
 
 
 async def create_run(session: AsyncSession, kind: str) -> UUID:
