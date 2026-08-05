@@ -250,11 +250,43 @@ else
     "$BAD_CAST_ORDER cast + $BAD_CREW_ORDER crew episodes have a gap or a non-zero floor"
 fi
 
-# 4. Failure rate. 'succeeded' already implies no consecutive-show streak hit
-#    the threshold. 188,189 seasons: 0.5% is ~940.
-if   (( RUN_FAILED > 940 )); then report STOP "failure rate" "$RUN_FAILED failures (>0.5%)"
-elif (( RUN_FAILED >= 200 )); then report INVESTIGATE "failure rate" "$RUN_FAILED failures — sample the log for reasons"
-else report PASS "failure rate" "$RUN_FAILED failures of $RUN_PROCESSED processed"
+# 4. Failure rate, as a proportion of what THIS run attempted.
+#
+# Measured against a rate, not a fixed count, for two reasons. The bands are
+# claims about how often a season fails, and a resumed run attempts only what is
+# left — a count calibrated to a full 188k pass would silently become a much
+# looser threshold on a run that resumed at the halfway mark.
+#
+# The bands themselves come from the first run rather than from a guess. The
+# original 0.5% ceiling was written before the pass had ever executed; the live
+# run oscillated between 0.6% and 1.1% and every failure sampled was a 404 on a
+# season TV Maze has deleted but our mirror still holds — the season record
+# itself 404s, not just its episode list. That is upstream churn, not a fetch
+# problem, and it is the expected steady-state failure mode.
+#
+# So PASS covers the measured envelope with headroom, and STOP sits near 3.5×
+# it: high enough that ordinary deletion churn never trips it, low enough to
+# catch a diffuse systemic fault. Sustained total breakage is already covered
+# elsewhere and does not need a band here — the run aborts itself after
+# INGEST_CONSECUTIVE_FAILURE_THRESHOLD consecutive shows fail wholesale, so a
+# status of 'succeeded' has already ruled it out.
+#
+# What lands here is therefore the diffuse case: a class of season that always
+# fails, scattered thinly enough that no ten consecutive shows fail together.
+ATTEMPTED=$(( RUN_PROCESSED + RUN_FAILED ))
+if (( ATTEMPTED == 0 )); then
+  report STOP "failure rate" "the run recorded no attempts at all"
+else
+  fail_x100=$(( 10000 * RUN_FAILED / ATTEMPTED ))
+  fail_pct=$(( fail_x100 / 100 )).$(printf '%02d' $(( fail_x100 % 100 )))
+  fail_detail="$RUN_FAILED of $ATTEMPTED attempted (${fail_pct}%)"
+  if   (( fail_x100 > 300 )); then
+    report STOP "failure rate" "$fail_detail — well past the ~1% seen from upstream deletions"
+  elif (( fail_x100 >= 150 )); then
+    report INVESTIGATE "failure rate" "$fail_detail — above the measured 0.6–1.1%; sample the log"
+  else
+    report PASS "failure rate" "$fail_detail"
+  fi
 fi
 
 # ---------------------------------------------------------------------------
