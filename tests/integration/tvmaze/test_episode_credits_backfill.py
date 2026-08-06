@@ -28,20 +28,29 @@ def _person(person_id: int, name: str):
 class FakeClient:
     """Returns a canned episode list per season and records the call order."""
 
-    def __init__(self, payloads: dict[int, list[dict]] | None = None, fail: set[int] | None = None):
+    def __init__(
+        self,
+        payloads: dict[int, list[dict]] | None = None,
+        fail: set[int] | None = None,
+        gone: set[int] | None = None,
+    ):
         self._payloads = payloads or {}
         self._fail = fail or set()
+        # `gone` raises 404 (the season is deleted upstream); `fail` raises 500
+        # (upstream is broken). NEU-1006 makes the two behave differently.
+        self._gone = gone or set()
         self.calls: list[int] = []
 
     async def get_season_episodes(self, season_id: int) -> list[dict]:
         self.calls.append(season_id)
-        if season_id in self._fail:
+        if season_id in self._fail or season_id in self._gone:
+            status = 404 if season_id in self._gone else 500
             raise httpx.HTTPStatusError(
                 "boom",
                 request=httpx.Request(
                     "GET", f"https://api.tvmaze.com/seasons/{season_id}/episodes"
                 ),
-                response=httpx.Response(500),
+                response=httpx.Response(status),
             )
         return self._payloads.get(season_id, [])
 
@@ -234,3 +243,66 @@ async def test_backfill_run_kind_is_admitted_by_the_check_constraint(session, ki
 
     row = (await session.execute(select(m.IngestRun).where(m.IngestRun.id == run.id))).scalar_one()
     assert row.kind == kind
+
+
+async def test_shows_whose_every_season_is_gone_do_not_abort_the_run(session):
+    """NEU-1006 at the per-show grain — the site the spec flagged as easy to miss.
+
+    Three shows, every season 404, threshold 2. Under the old rule the run
+    aborted at the second show; now it walks the whole list. This pass produced
+    245 such 404s in NEU-961's prod run.
+    """
+    await _seed_show(session, 160, [(1800, 1)])
+    await _seed_show(session, 161, [(1801, 1)])
+    await _seed_show(session, 162, [(1802, 1)])
+    run = m.IngestRun(id=uuid4(), kind="episode_credits_backfill", status="running")
+    session.add(run)
+    await session.commit()
+
+    client = FakeClient(gone={1800, 1801, 1802})
+    result = await run_episode_credits_backfill(
+        session_factory=lambda: session, client=client, run_id=run.id, failure_threshold=2
+    )
+
+    assert client.calls == [1800, 1801, 1802], "every show must be attempted"
+    assert (result.seasons_processed, result.seasons_failed) == (0, 3)
+
+    refreshed = (
+        await session.execute(
+            select(m.IngestRun)
+            .where(m.IngestRun.id == run.id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert refreshed.status == "succeeded"
+
+
+async def test_a_show_mixing_gone_and_broken_seasons_still_counts(session):
+    """Only a wholly-gone show is exempt. One real 500 makes the show count.
+
+    Two such shows against a threshold of 2 must abort — otherwise a genuine
+    outage hides behind a single 404 per show.
+    """
+    await _seed_show(session, 170, [(1900, 1), (1901, 2)])
+    await _seed_show(session, 171, [(1902, 1), (1903, 2)])
+    await _seed_show(session, 172, [(1904, 1)])
+    run = m.IngestRun(id=uuid4(), kind="episode_credits_backfill", status="running")
+    session.add(run)
+    await session.commit()
+
+    client = FakeClient(gone={1900, 1902}, fail={1901, 1903, 1904})
+    result = await run_episode_credits_backfill(
+        session_factory=lambda: session, client=client, run_id=run.id, failure_threshold=2
+    )
+
+    assert client.calls == [1900, 1901, 1902, 1903], "aborted before the third show"
+    assert result.seasons_processed == 0
+
+    refreshed = (
+        await session.execute(
+            select(m.IngestRun)
+            .where(m.IngestRun.id == run.id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert refreshed.status == "failed"

@@ -89,6 +89,26 @@ def reset_rate_limiters() -> None:
     _seen_budgets.clear()
 
 
+def is_gone_upstream(exc: BaseException) -> bool:
+    """True when upstream says this entity no longer exists.
+
+    404 only, and deliberately narrow.
+
+    `_request` already retries timeouts, network errors, 429s and 5xx to
+    exhaustion before raising, so an `HTTPStatusError` reaching a run loop is
+    never transient: a 5xx that surfaces is a *persistent* upstream failure and
+    must still count toward the consecutive-failure abort. A 404 is a permanent
+    data condition — the entity is gone — and counting it says "upstream is
+    broken" when upstream is fine (NEU-1006).
+
+    Not widened to any 4xx: a 400 or 401 is a bug in our request or our config
+    and must still abort. Silently absorbing those would be worse than counting
+    them. 410 Gone is not included either — TV Maze does not send it, and an
+    unexercised branch is speculative.
+    """
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+
+
 class TVMazeClient:
     def __init__(
         self,
