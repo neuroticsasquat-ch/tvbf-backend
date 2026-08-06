@@ -1,6 +1,7 @@
 from sqlalchemy import select
 
 from tvbf.tvmaze import models as m
+from tvbf.tvmaze import upsert as upsert_module
 from tvbf.tvmaze.api_payloads import TVMazeEpisode, TVMazeNetwork, TVMazeSeason, TVMazeShow
 from tvbf.tvmaze.upsert import (
     upsert_episodes,
@@ -405,3 +406,265 @@ async def test_upsert_show_payload_falls_back_to_the_embed_when_episodes_is_none
 
     eps = (await session.execute(select(m.Episode).where(m.Episode.show_id == 402))).scalars().all()
     assert {e.id for e in eps} == {20200}
+
+
+# ---------------------------------------------------------------------------
+# NEU-967 — the show fetch is authoritative for a show's season set (ADR-0004)
+# ---------------------------------------------------------------------------
+
+
+def _show_payload(show_id: int, *, seasons: list[dict], episodes: list[dict]) -> TVMazeShow:
+    return TVMazeShow.model_validate(
+        {
+            "id": show_id,
+            "name": f"Show {show_id}",
+            "type": "Scripted",
+            "genres": [],
+            "updated": 1700000000,
+            "network": None,
+            "webChannel": None,
+            "_embedded": {"seasons": seasons, "episodes": episodes},
+        }
+    )
+
+
+async def _seed_show(session, show_id: int) -> None:
+    """Insert a bare show row.
+
+    models.py declares no relationship(), so SQLAlchemy can't infer FK-based
+    insert order — callers flush between this and any dependent row.
+    """
+    session.add(m.Show(id=show_id, name=f"Show {show_id}", tvmaze_updated=1700000000))
+    await session.flush()
+
+
+async def test_prune_deletes_seasons_absent_from_the_payload(session):
+    """The core of NEU-967: a season upstream has deleted stops being mirrored."""
+    await _seed_show(session, 410)
+    session.add_all(
+        [
+            m.Season(id=10500, show_id=410, number=1),
+            m.Season(id=10501, show_id=410, number=2),  # the phantom
+        ]
+    )
+    await session.commit()
+
+    payload = _show_payload(410, seasons=[{"id": 10500, "number": 1}], episodes=[])
+    await upsert_show_payload(session, payload, prune_seasons=True)
+    await session.commit()
+
+    surviving = (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 410))).scalars().all()
+    )
+    assert set(surviving) == {10500}
+
+
+async def test_prune_is_opt_in_and_defaults_to_deleting_nothing(session):
+    """Trap 1: a caller that didn't request embed[]=seasons must delete nothing.
+
+    `TVMazeEmbedded.seasons` defaults to [], so an unguarded prune would read a
+    seasons-less payload as an authoritative zero and wipe the show. The default
+    must therefore be inert even when the payload names no seasons at all.
+    """
+    await _seed_show(session, 411)
+    session.add_all(
+        [
+            m.Season(id=10600, show_id=411, number=1),
+            m.Season(id=10601, show_id=411, number=2),
+        ]
+    )
+    await session.commit()
+
+    payload = _show_payload(411, seasons=[], episodes=[])
+    await upsert_show_payload(session, payload)  # prune_seasons defaults to False
+    await session.commit()
+
+    surviving = (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 411))).scalars().all()
+    )
+    assert set(surviving) == {10600, 10601}
+
+
+async def test_prune_repoints_episodes_to_the_surviving_duplicate_numbered_season(session):
+    """Duplicate-number repair: the phantom goes and its episodes land on the survivor.
+
+    Show 71 upstream carried two seasons both numbered 35 and later deduplicated
+    them. Because `upsert_episodes` builds its season_by_number map from a live
+    query, pruning first leaves only the survivor in that map and the phantom's
+    episodes are re-pointed onto it. Prune afterwards and they would instead be
+    bound to a row about to vanish, and nulled by ON DELETE SET NULL.
+
+    This asserts the OUTCOME. It does not by itself pin the ordering: with both
+    rows present `season_by_number` is a dict comprehension over an unordered
+    SELECT, and which duplicate wins depends on heap order, which
+    `upsert_season`'s ON CONFLICT DO UPDATE perturbs via MVCC. The ordering is
+    pinned deterministically by the test below instead.
+    """
+    await _seed_show(session, 412)
+    session.add_all(
+        [
+            m.Season(id=10700, show_id=412, number=35),  # the survivor
+            m.Season(id=10701, show_id=412, number=35),  # the phantom
+        ]
+    )
+    await session.flush()
+    session.add(m.Episode(id=20700, show_id=412, season_id=10701, season=35, number=1))
+    await session.commit()
+
+    payload = _show_payload(
+        412,
+        seasons=[{"id": 10700, "number": 35}],
+        episodes=[{"id": 20700, "season": 35, "number": 1, "name": "E1"}],
+    )
+    await upsert_show_payload(session, payload, prune_seasons=True)
+    await session.commit()
+
+    surviving = (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 412))).scalars().all()
+    )
+    assert set(surviving) == {10700}
+
+    ep = (
+        await session.execute(
+            select(m.Episode).where(m.Episode.id == 20700).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert ep.season_id == 10700, "episode should be re-pointed at the surviving season"
+
+
+async def test_prune_runs_before_episodes_are_written(session, monkeypatch):
+    """Pins the prune-before-episodes ordering; fails if the two steps are swapped.
+
+    Asserts the property the ordering exists to guarantee — that by the time
+    `upsert_episodes` builds its season_by_number map, the phantom is already
+    gone — rather than an outcome that heap order can satisfy by accident.
+    """
+    await _seed_show(session, 417)
+    session.add_all(
+        [
+            m.Season(id=11100, show_id=417, number=35),  # the survivor
+            m.Season(id=11101, show_id=417, number=35),  # the phantom
+        ]
+    )
+    await session.commit()
+
+    seen: list[set[int]] = []
+    real_upsert_episodes = upsert_module.upsert_episodes
+
+    async def spy(session_, show_id, episodes):
+        rows = (
+            (await session_.execute(select(m.Season.id).where(m.Season.show_id == show_id)))
+            .scalars()
+            .all()
+        )
+        seen.append(set(rows))
+        return await real_upsert_episodes(session_, show_id, episodes)
+
+    monkeypatch.setattr(upsert_module, "upsert_episodes", spy)
+
+    payload = _show_payload(
+        417,
+        seasons=[{"id": 11100, "number": 35}],
+        episodes=[{"id": 21100, "season": 35, "number": 1, "name": "E1"}],
+    )
+    await upsert_show_payload(session, payload, prune_seasons=True)
+    await session.commit()
+
+    assert seen == [{11100}], (
+        "upsert_episodes saw the phantom season — the prune must run before it, "
+        f"but the visible season set was {seen}"
+    )
+
+
+async def test_pruned_season_without_a_survivor_leaves_episodes_null_but_reachable(session):
+    """No same-numbered survivor: season_id goes NULL and the episode stays browsable.
+
+    Covers both routes to NULL — the episode the payload still names (rewritten
+    with a season_id the number map can no longer resolve) and the one it does
+    not (nulled by the FK's ON DELETE SET NULL).
+    """
+    await _seed_show(session, 413)
+    session.add(m.Season(id=10800, show_id=413, number=7))
+    await session.flush()
+    session.add_all(
+        [
+            m.Episode(id=20800, show_id=413, season_id=10800, season=7, number=1),
+            m.Episode(id=20801, show_id=413, season_id=10800, season=7, number=2),
+        ]
+    )
+    await session.commit()
+
+    # The payload drops season 7 entirely and re-states only the first episode.
+    payload = _show_payload(
+        413,
+        seasons=[],
+        episodes=[{"id": 20800, "season": 7, "number": 1, "name": "E1"}],
+    )
+    await upsert_show_payload(session, payload, prune_seasons=True)
+    await session.commit()
+
+    eps = (
+        (
+            await session.execute(
+                select(m.Episode)
+                .where(m.Episode.show_id == 413)
+                .execution_options(populate_existing=True)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert {e.id for e in eps} == {20800, 20801}
+    assert all(e.season_id is None for e in eps)
+    # Browse filters on the integer, not the FK, so both stay reachable.
+    assert all(e.season == 7 for e in eps)
+
+
+async def test_empty_payload_seasons_under_prune_is_an_authoritative_zero(session):
+    """Deliberate: with the caller opted in, no seasons upstream means delete them all.
+
+    This reads as an accident unless asserted. It is the whole reason the guard
+    is a caller-supplied flag rather than an implicit `if not seasons: skip` —
+    that guard would conflate this legitimate case with a missing embed.
+    """
+    await _seed_show(session, 414)
+    session.add_all(
+        [
+            m.Season(id=10900, show_id=414, number=1),
+            m.Season(id=10901, show_id=414, number=2),
+        ]
+    )
+    await session.commit()
+
+    payload = _show_payload(414, seasons=[], episodes=[])
+    await upsert_show_payload(session, payload, prune_seasons=True)
+    await session.commit()
+
+    surviving = (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 414))).scalars().all()
+    )
+    assert surviving == []
+
+
+async def test_prune_is_scoped_to_the_show_being_written(session):
+    """A payload for one show must never touch another show's seasons."""
+    await _seed_show(session, 415)
+    await _seed_show(session, 416)
+    session.add_all(
+        [
+            m.Season(id=11000, show_id=415, number=1),
+            m.Season(id=11001, show_id=416, number=1),
+        ]
+    )
+    await session.commit()
+
+    payload = _show_payload(415, seasons=[], episodes=[])
+    await upsert_show_payload(session, payload, prune_seasons=True)
+    await session.commit()
+
+    assert (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 415))).scalars().all()
+    ) == []
+    assert (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 416))).scalars().all()
+    ) == [11001]

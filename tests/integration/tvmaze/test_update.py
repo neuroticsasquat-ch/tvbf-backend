@@ -369,3 +369,60 @@ async def test_update_persists_specials_from_the_episodes_endpoint(session):
     eps = (await session.execute(select(m.Episode).where(m.Episode.show_id == 1))).scalars().all()
     assert {e.id for e in eps} == {10001, 10002, 99999}
     assert next(e for e in eps if e.id == 99999).number is None
+
+
+@respx.mock
+async def test_update_prunes_a_season_the_payload_has_dropped(session):
+    """NEU-967 end-to-end on the daily path: the mirror converges on the payload.
+
+    The show was mirrored with two seasons; upstream has since deleted the
+    second. One daily cycle must leave the mirror matching what the payload
+    now says, rather than carrying the phantom forever.
+    """
+    prior_run = await create_run(session, kind="initial")
+    await session.commit()
+    await finalize_run(session, prior_run, status="succeeded", last_update_cursor=1)
+
+    # Seed the show as it was mirrored when upstream still had both seasons.
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 10})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 10, seasons=2, episodes_per_season=1))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    seed_run = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com", rate_calls=50, rate_window=1, retry_base_delay=0.01
+    ) as c:
+        await run_update(session_factory=lambda: session, client=c, run_id=seed_run)
+
+    seasons = (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 1))).scalars().all()
+    )
+    assert set(seasons) == {1001, 1002}
+
+    # Upstream drops season 2 and marks the show updated again.
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 20})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 20, seasons=1, episodes_per_season=1))
+    )
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com", rate_calls=50, rate_window=1, retry_base_delay=0.01
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    seasons = (
+        (await session.execute(select(m.Season.id).where(m.Season.show_id == 1))).scalars().all()
+    )
+    assert set(seasons) == {1001}, "the daily must drop a season the payload no longer names"

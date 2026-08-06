@@ -107,7 +107,9 @@ async def run_ratings_backfill(
         try:
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
-                await upsert_show_payload(s, show)
+                # prune_seasons: this fetch explicitly embeds seasons, so the
+                # payload is authoritative (ADR-0004).
+                await upsert_show_payload(s, show, prune_seasons=True)
                 await mark_ratings_synced(s, show_id=show_id)
                 await record_progress(s, run_id, processed_delta=1)
                 await s.commit()
