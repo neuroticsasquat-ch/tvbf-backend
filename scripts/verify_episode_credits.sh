@@ -140,6 +140,18 @@ WITH se AS (
   FROM tvmaze.season
 ), ep AS (
   SELECT count(*) AS episodes FROM tvmaze.episode
+), tracked AS (
+  -- The crew-volume band is calibrated on shows people actually track, not on
+  -- the whole catalogue -- see the band itself for why. Empty on a fresh local
+  -- DB, which the band handles rather than dividing by zero.
+  SELECT
+    (SELECT count(*) FROM tvmaze.episode e
+      WHERE EXISTS (SELECT 1 FROM app.user_show_watch u WHERE u.show_id = e.show_id))
+      AS tracked_episodes,
+    (SELECT count(DISTINCT ec.episode_id) FROM tvmaze.episode_crew ec
+       JOIN tvmaze.episode e ON e.id = ec.episode_id
+      WHERE EXISTS (SELECT 1 FROM app.user_show_watch u WHERE u.show_id = e.show_id))
+      AS tracked_crew_episodes
 ), ord AS (
   -- sort_order must start at 0 and be dense per episode, on BOTH credit tables.
   -- A gap or a non-zero floor means the array index was not what got written.
@@ -167,14 +179,16 @@ SELECT
   (SELECT count(*) FROM tvmaze.episode_crew_role),
   (SELECT count(DISTINCT episode_id) FROM tvmaze.episode_crew),
   (SELECT bad_cast FROM ord),
-  (SELECT bad_crew FROM ord);
+  (SELECT bad_crew FROM ord),
+  (SELECT tracked_episodes FROM tracked),
+  (SELECT tracked_crew_episodes FROM tracked);
 SQL
 )
 
 IFS='|' read -r SEASONS STAMPED EPISODES CAST_ROWS CREW_ROWS CREW_ROLES CREW_EPISODES \
-  BAD_CAST_ORDER BAD_CREW_ORDER <<<"$METRICS"
+  BAD_CAST_ORDER BAD_CREW_ORDER TRACKED_EPISODES TRACKED_CREW_EPISODES <<<"$METRICS"
 
-if [[ -z "${BAD_CREW_ORDER:-}" ]]; then
+if [[ -z "${TRACKED_CREW_EPISODES:-}" ]]; then
   echo "✗ Metrics query returned an unexpected shape:" >&2
   echo "  $METRICS" >&2
   exit 2
@@ -223,20 +237,41 @@ fi
 # test_work_list_is_ordered_by_show_then_season_number, which is where the
 # acceptance criterion is actually met.
 
-# 2. Credit volume. 77.5% of sampled episodes carry crew; guest cast is
-#    sparser. Bands are deliberately wide — this check exists to catch "nothing
-#    was written at all", not to police the catalogue's shape.
+# 2. Credit volume. This check exists to catch "nothing was written at all",
+#    not to police the catalogue's shape.
+#
+#    The 60–90% band is measured against shows someone actually tracks, NOT the
+#    whole catalogue. Over the full mirror only ~6% of episodes carry crew, and
+#    that is correct: TV Maze holds no episode crew for unscripted content, and
+#    the denominator is dominated by it — News 0%, Reality 1%, Talk Show 1%,
+#    against Scripted 13%, with the largest shows by episode count being daily
+#    soaps and game shows. Flat across decades, so it is catalogue shape rather
+#    than a partial write. Banding the catalogue-wide figure at 60–90% made a
+#    healthy prod run report INVESTIGATE every single time, which is how a
+#    check stops being read.
+#
+#    On tracked shows the figure is 78% crew / 83% guest cast (555 shows,
+#    20,141 episodes, measured 2026-08-06), which is what the 77.5% design
+#    sample actually described and what the frontend crew surfaces consume.
 if (( EPISODES == 0 )); then
   report STOP "credit volume" "no episodes at all"
 else
-  crew_pct=$(( 100 * CREW_EPISODES / EPISODES ))
-  detail="cast=$CAST_ROWS crew=$CREW_ROWS roles=$CREW_ROLES; ${crew_pct}% of episodes have crew"
+  catalogue_pct=$(( 100 * CREW_EPISODES / EPISODES ))
+  detail="cast=$CAST_ROWS crew=$CREW_ROWS roles=$CREW_ROLES; ${catalogue_pct}% of all episodes have crew"
   if   (( CREW_ROWS == 0 )); then
     report STOP "credit volume" "$detail — the guestcrew embed wrote nothing"
-  elif (( crew_pct >= 60 && crew_pct <= 90 )); then
-    report PASS "credit volume" "$detail"
+  elif (( TRACKED_EPISODES == 0 )); then
+    # No tracked shows (a fresh local DB). The band is unmeasurable, but crew
+    # rows exist, which is what this check is really for.
+    report PASS "credit volume" "$detail; no tracked shows, band not applicable"
   else
-    report INVESTIGATE "credit volume" "$detail — expected 60–90% (sampled 77.5%)"
+    tracked_pct=$(( 100 * TRACKED_CREW_EPISODES / TRACKED_EPISODES ))
+    detail="$detail; ${tracked_pct}% of tracked-show episodes do"
+    if (( tracked_pct >= 60 && tracked_pct <= 90 )); then
+      report PASS "credit volume" "$detail"
+    else
+      report INVESTIGATE "credit volume" "$detail — expected 60–90% on tracked shows"
+    fi
   fi
 fi
 
