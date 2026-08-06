@@ -4,13 +4,14 @@ from uuid import UUID
 import httpx
 
 from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
-from tvbf.tvmaze.client import TVMazeClient
+from tvbf.tvmaze.client import TVMazeClient, is_gone_upstream
 from tvbf.tvmaze.ingest import IngestResult, SessionFactory, _fetch_episodes, _owned_session
 from tvbf.tvmaze.runs import (
     SHOW_CURSOR_KINDS,
     finalize_run,
     get_last_successful_cursor,
     record_progress,
+    warn_if_all_gone,
 )
 from tvbf.tvmaze.season_credits import refresh_show_season_credits
 from tvbf.tvmaze.tombstone import reconcile_tombstones
@@ -40,6 +41,7 @@ async def run_update(
     processed = 0
     failed = 0
     consecutive_failures = 0
+    gone = 0
 
     for show_id in todo:
         try:
@@ -47,7 +49,13 @@ async def run_update(
         except httpx.HTTPStatusError as e:
             log.warning("skipping show %d after http error: %s", show_id, e)
             failed += 1
-            consecutive_failures += 1
+            # 404 means gone, not broken, so it must not push the run toward
+            # the abort (NEU-1006). Left untouched rather than reset: a real
+            # outage interleaved with dead entities must still accumulate.
+            if is_gone_upstream(e):
+                gone += 1
+            else:
+                consecutive_failures += 1
             async with _owned_session(session_factory) as s:
                 await record_progress(s, run_id, failed_delta=1)
                 await s.commit()
@@ -121,6 +129,7 @@ async def run_update(
         await s.commit()
 
     async with _owned_session(session_factory) as s:
+        warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="shows")
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=max_epoch)
         await s.commit()
 

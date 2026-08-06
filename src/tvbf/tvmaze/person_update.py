@@ -11,11 +11,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.api_payloads import TVMazePerson
+from tvbf.tvmaze.client import is_gone_upstream
 from tvbf.tvmaze.runs import (
     PERSON_CURSOR_KINDS,
     finalize_run,
     get_last_successful_cursor,
     record_progress,
+    warn_if_all_gone,
 )
 from tvbf.tvmaze.upsert import upsert_persons
 
@@ -118,17 +120,26 @@ async def process_people(
     processed = 0
     failed = 0
     consecutive_failures = 0
+    gone = 0
 
-    async def _record_failure(detail: str | None = None) -> bool:
+    async def _record_failure(detail: str | None = None, *, is_gone: bool = False) -> bool:
         """Count one failed person; True if the run aborted on the threshold.
 
         Pass A open-codes this three times over; the cost of a divergence
         between the three arms is a re-run of the whole pass, so it lives in
         one place here.
+
+        `is_gone` marks a person deleted upstream (a 404). It still counts
+        toward `failed`, so the reported totals are unchanged, but it leaves the
+        consecutive counter alone — the threshold means "upstream is broken",
+        and a deleted person is not that (NEU-1006).
         """
-        nonlocal failed, consecutive_failures
+        nonlocal failed, consecutive_failures, gone
         failed += 1
-        consecutive_failures += 1
+        if is_gone:
+            gone += 1
+        else:
+            consecutive_failures += 1
         async with _owned_session(session_factory) as s:
             await record_progress(s, run_id, failed_delta=1)
             await s.commit()
@@ -147,7 +158,7 @@ async def process_people(
             payload = await client.get_person(person_id)
         except httpx.HTTPStatusError as e:
             log.warning("person update: skipping person %d after http error: %s", person_id, e)
-            if await _record_failure():
+            if await _record_failure(is_gone=is_gone_upstream(e)):
                 return PersonUpdateResult(processed, failed, cursor_on_abort)
             continue
         except Exception as e:
@@ -170,6 +181,7 @@ async def process_people(
                 return PersonUpdateResult(processed, failed, cursor_on_abort)
 
     async with _owned_session(session_factory) as s:
+        warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="people")
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=cursor_on_success)
         await s.commit()
 

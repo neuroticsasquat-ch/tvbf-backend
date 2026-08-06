@@ -571,3 +571,166 @@ async def test_an_implausible_feed_skips_tombstoning_but_the_daily_still_succeed
         )
     ).scalar_one()
     assert show.deleted_upstream_at is None
+
+
+@respx.mock
+async def test_consecutive_404s_do_not_abort_the_run(session):
+    """NEU-1006: a contiguous band of deleted shows must not wedge a run.
+
+    Six 404s against a threshold of 2 — under the old rule this aborted at the
+    second show and made zero progress on every retry.
+    """
+    gone_ids = list(range(9001, 9007))
+    feed = {str(i): 10 for i in gone_ids}
+    feed["9100"] = 10  # one live show, last in id order
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json=feed)
+    )
+    for i in gone_ids:
+        respx.get(f"https://api.tvmaze.com/shows/{i}").mock(return_value=httpx.Response(404))
+    respx.get("https://api.tvmaze.com/shows/9100").mock(
+        return_value=httpx.Response(200, json=make_show(9100, 10))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(
+            session_factory=lambda: session, client=c, run_id=run_id, failure_threshold=2
+        )
+
+    assert result.shows_failed == 6, "404s must still be counted in shows_failed"
+    assert result.shows_processed == 1, "the run must reach the live show past the dead band"
+
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "succeeded"
+
+
+@respx.mock
+async def test_consecutive_5xx_still_aborts_the_run(session):
+    """The behaviour deliberately preserved — this is what the threshold is for."""
+    feed = {"9201": 10, "9202": 10, "9203": 10}
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json=feed)
+    )
+    for i in (9201, 9202, 9203):
+        respx.get(f"https://api.tvmaze.com/shows/{i}").mock(return_value=httpx.Response(500))
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(
+            session_factory=lambda: session, client=c, run_id=run_id, failure_threshold=2
+        )
+
+    assert result.shows_processed == 0
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "failed"
+
+
+@respx.mock
+async def test_5xx_interleaved_with_404s_still_aborts(session):
+    """The test that fails under a reset-to-zero implementation.
+
+    404, 500, 404, 500 with threshold 2: resetting on a 404 would clear the
+    counter each time and the run would never abort, masking a real outage
+    behind a field of deleted entities.
+    """
+    feed = {"9301": 10, "9302": 10, "9303": 10, "9304": 10}
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json=feed)
+    )
+    respx.get("https://api.tvmaze.com/shows/9301").mock(return_value=httpx.Response(404))
+    respx.get("https://api.tvmaze.com/shows/9302").mock(return_value=httpx.Response(500))
+    respx.get("https://api.tvmaze.com/shows/9303").mock(return_value=httpx.Response(404))
+    respx.get("https://api.tvmaze.com/shows/9304").mock(return_value=httpx.Response(500))
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(
+            session_factory=lambda: session, client=c, run_id=run_id, failure_threshold=2
+        )
+
+    assert result.shows_processed == 0
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "failed", "two 5xx must abort even with 404s between them"
+
+
+@respx.mock
+async def test_an_all_gone_run_warns_but_succeeds(session, caplog):
+    """Spec §4: log it, don't fail it — a small all-deleted work list is normal."""
+    caplog.set_level("WARNING", logger="tvbf.tvmaze.update")
+    feed = {"9401": 10, "9402": 10}
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json=feed)
+    )
+    for i in (9401, 9402):
+        respx.get(f"https://api.tvmaze.com/shows/{i}").mock(return_value=httpx.Response(404))
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 0
+    assert result.shows_failed == 2
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "succeeded", "an all-gone run must not fail"
+    assert any("work list may be stale" in r.message for r in caplog.records)

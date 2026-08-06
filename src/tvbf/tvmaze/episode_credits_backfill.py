@@ -8,8 +8,9 @@ from uuid import UUID
 from sqlalchemy import select
 
 from tvbf.tvmaze import models as m
+from tvbf.tvmaze.client import is_gone_upstream
 from tvbf.tvmaze.ingest import SessionFactory, _owned_session
-from tvbf.tvmaze.runs import finalize_run, record_progress
+from tvbf.tvmaze.runs import finalize_run, record_progress, warn_if_all_gone
 from tvbf.tvmaze.season_credits import write_season_credits
 
 log = logging.getLogger(__name__)
@@ -99,19 +100,33 @@ async def run_episode_credits_backfill(
     processed = 0
     failed = 0
     consecutive_failed_shows = 0
+    # Season-grained, deliberately: `failed` counts seasons, and warn_if_all_gone
+    # compares the two. A show-grained counter here would be comparing shows to
+    # seasons and the warning would essentially never fire.
+    gone_seasons = 0
 
     for show_id, group in groupby(todo, key=lambda row: row[0]):
         show_succeeded = False
+        # True while every failure on this show has been a 404. That means the
+        # seasons are gone — the show itself may be deleted, or these may be
+        # phantom seasons on a live show, which is what NEU-961's 245 season
+        # 404s actually were. Either way it is a data condition rather than an
+        # outage, which is all this flag needs to decide (NEU-1006).
+        show_only_gone = True
         for _, season_id in group:
             try:
                 await write_season_credits(
                     client=client, session_factory=session_factory, season_id=season_id
                 )
-            except Exception:
+            except Exception as e:
                 log.exception(
                     "episode credits backfill: season %d of show %d failed", season_id, show_id
                 )
                 failed += 1
+                if is_gone_upstream(e):
+                    gone_seasons += 1
+                else:
+                    show_only_gone = False
                 async with _owned_session(session_factory) as s:
                     await record_progress(s, run_id, failed_delta=1)
                     await s.commit()
@@ -125,6 +140,13 @@ async def run_episode_credits_backfill(
 
         if show_succeeded:
             consecutive_failed_shows = 0
+            continue
+
+        if show_only_gone:
+            # Every season of this show 404d, so nothing here is evidence that
+            # upstream is broken. Leave the counter untouched rather than reset
+            # it, so a real outage interleaved with gone seasons still
+            # accumulates toward the abort.
             continue
 
         consecutive_failed_shows += 1
@@ -143,6 +165,7 @@ async def run_episode_credits_backfill(
             return BackfillResult(processed, failed)
 
     async with _owned_session(session_factory) as s:
+        warn_if_all_gone(log, processed=processed, failed=failed, gone=gone_seasons, noun="seasons")
         await finalize_run(s, run_id, status="succeeded")
         await s.commit()
 

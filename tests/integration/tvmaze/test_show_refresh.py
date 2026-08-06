@@ -82,11 +82,15 @@ class FakeClient:
         return self._season_episodes.get(season_id, [])
 
 
-def _http_error(show_id: int) -> httpx.HTTPStatusError:
+def _http_error(show_id: int, status: int = 500) -> httpx.HTTPStatusError:
+    """500 by default — a persistent upstream failure, which still aborts.
+
+    Pass `404` for a show deleted upstream, which since NEU-1006 must not.
+    """
     return httpx.HTTPStatusError(
         "boom",
         request=httpx.Request("GET", f"https://api.tvmaze.com/shows/{show_id}"),
-        response=httpx.Response(500),
+        response=httpx.Response(status),
     )
 
 
@@ -469,3 +473,47 @@ async def test_successful_run_is_finalized_as_succeeded(session, run_id):
         )
     ).scalar_one()
     assert refreshed.status == "succeeded"
+
+
+async def test_a_band_of_deleted_shows_does_not_abort_the_run(session, run_id):
+    """NEU-1006 against the loop that actually aborted twice in prod.
+
+    Runs d3ce3a7d and bb2711e6 both died here on a contiguous id band of 404s
+    while TV Maze was entirely healthy — the second having processed nothing at
+    all, and it would have on every retry, because failures stamp no watermark.
+    """
+    session.add_all([m.Show(id=i, name=f"Gone {i}", tvmaze_updated=1) for i in (61, 62, 63)])
+    session.add(m.Show(id=64, name="Alive", tvmaze_updated=1))
+    await session.commit()
+
+    class GoneBand(FakeClient):
+        async def get_show(self, show_id: int, *, embed: list[str] | None = None) -> dict:
+            if show_id in (61, 62, 63):
+                raise _http_error(show_id, 404)
+            return await super().get_show(show_id, embed=embed)
+
+    client = GoneBand({64: show_payload(64)})
+    result = await run_show_refresh(
+        session_factory=lambda: session, client=client, run_id=run_id, failure_threshold=2
+    )
+
+    assert result.shows_failed == 3, "404s must still be counted"
+    assert result.shows_processed == 1, "the run must reach the live show past the dead band"
+    assert (await _refreshed_show(session, 64)).credits_synced_at is not None
+
+
+async def test_persistent_5xx_still_aborts_show_refresh(session, run_id):
+    """The preserved behaviour, asserted in the same loop as the test above."""
+    session.add_all([m.Show(id=i, name=f"Broken {i}", tvmaze_updated=1) for i in (71, 72, 73)])
+    await session.commit()
+
+    class AllBroken(FakeClient):
+        async def get_show(self, show_id: int, *, embed: list[str] | None = None) -> dict:
+            raise _http_error(show_id, 500)
+
+    result = await run_show_refresh(
+        session_factory=lambda: session, client=AllBroken({}), run_id=run_id, failure_threshold=2
+    )
+
+    assert result.shows_processed == 0
+    assert result.shows_failed == 2, "aborted at the threshold, before the third show"

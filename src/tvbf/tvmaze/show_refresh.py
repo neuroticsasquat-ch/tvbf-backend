@@ -11,7 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.api_payloads import TVMazeEpisode, TVMazeShow
-from tvbf.tvmaze.runs import finalize_run, record_progress
+from tvbf.tvmaze.client import is_gone_upstream
+from tvbf.tvmaze.runs import finalize_run, record_progress, warn_if_all_gone
 from tvbf.tvmaze.season_credits import refresh_show_season_credits
 from tvbf.tvmaze.upsert import (
     mark_credits_synced,
@@ -93,6 +94,7 @@ async def run_show_refresh(
     processed = 0
     failed = 0
     consecutive_failures = 0
+    gone = 0
 
     for show_id in todo:
         try:
@@ -101,7 +103,12 @@ async def run_show_refresh(
         except httpx.HTTPStatusError as e:
             log.warning("show refresh: skipping show %d after http error: %s", show_id, e)
             failed += 1
-            consecutive_failures += 1
+            # 404 means gone, not broken (NEU-1006). This is the loop that
+            # aborted twice on a contiguous band of deleted shows.
+            if is_gone_upstream(e):
+                gone += 1
+            else:
+                consecutive_failures += 1
             async with _owned_session(session_factory) as s:
                 await record_progress(s, run_id, failed_delta=1)
                 await s.commit()
@@ -184,6 +191,7 @@ async def run_show_refresh(
             )
 
     async with _owned_session(session_factory) as s:
+        warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="shows")
         await finalize_run(s, run_id, status="succeeded")
         await s.commit()
 

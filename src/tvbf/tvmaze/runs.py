@@ -1,3 +1,4 @@
+import logging
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
@@ -139,3 +140,26 @@ async def mark_stale_runs_cancelled(session: AsyncSession, *, stale_after_minute
         )
     )
     return result.rowcount or 0  # type: ignore[attr-defined]  # CursorResult has rowcount
+
+
+def warn_if_all_gone(
+    log: logging.Logger, *, processed: int, failed: int, gone: int, noun: str
+) -> None:
+    """Log when a run achieved nothing and every failure was a deleted entity.
+
+    Not a failure condition: a work list that happens to be entirely deleted
+    entities is a normal small day, and failing on it would reintroduce exactly
+    the wedge NEU-1006 removes. But it is also what a stale work list looks
+    like, so it is worth saying out loud.
+
+    `gone == failed` is load-bearing. Without it, a run with nine persistent
+    5xx and one 404 would report "all 1 entities were gone upstream" — false,
+    and most misleading precisely during a partial outage, which is when
+    someone is reading the logs.
+    """
+    if processed == 0 and gone and gone == failed:
+        log.warning(
+            "all %d attempted %s were gone upstream and none succeeded; the work list may be stale",
+            gone,
+            noun,
+        )
