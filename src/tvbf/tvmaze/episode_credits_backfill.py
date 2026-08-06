@@ -39,8 +39,17 @@ async def _load_todo(session_factory: SessionFactory) -> Sequence[tuple[int, int
     async with _owned_session(session_factory) as s:
         rows = (
             await s.execute(
+                # Tombstoned shows are excluded: their seasons can never be
+                # stamped, because /seasons/{id}/episodes 404s once the parent
+                # show is gone. Left in, they would sit in this work list
+                # forever, re-fetched and re-failed by every run — the exact
+                # condition NEU-967 needed 58 hand-deletions to clear (ADR-0005).
                 select(m.Season.show_id, m.Season.id)
-                .where(m.Season.credits_synced_at.is_(None))
+                .join(m.Show, m.Show.id == m.Season.show_id)
+                .where(
+                    m.Season.credits_synced_at.is_(None),
+                    m.Show.deleted_upstream_at.is_(None),
+                )
                 .order_by(m.Season.show_id, m.Season.number, m.Season.id)
             )
         ).all()
