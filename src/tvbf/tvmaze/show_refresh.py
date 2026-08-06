@@ -140,7 +140,10 @@ async def run_show_refresh(
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
                 episodes = [TVMazeEpisode.model_validate(e) for e in episodes_payload]
-                await upsert_show_payload(s, show, episodes=episodes)
+                # prune_seasons: _REFRESH_EMBEDS includes seasons, so the
+                # payload is authoritative (ADR-0004). This is also the vehicle
+                # for NEU-967's one-off cleanup of already-accrued phantoms.
+                await upsert_show_payload(s, show, episodes=episodes, prune_seasons=True)
                 await upsert_show_cast(s, show_id=show.id, entries=show.embedded.cast)
                 await upsert_show_crew(s, show_id=show.id, entries=show.embedded.crew)
                 await mark_credits_synced(s, show_id=show.id)

@@ -24,6 +24,10 @@ A per-row timestamp recording that a particular kind of data has been fetched fo
 The recurring job that re-fetches only the entities upstream reports as changed since the last run.
 _Avoid_: sync, refresh
 
+**Phantom record**:
+A mirrored row for an entity upstream has deleted. Distinguishable only by the fetch that names its parent — a phantom season is revealed by its show's payload no longer listing it, never by anything about the row itself. The mirror deletes phantoms rather than tombstoning them (ADR-0004).
+_Avoid_: orphan, stale row
+
 ### People and credits
 
 **Person**:

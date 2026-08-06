@@ -77,7 +77,9 @@ async def run_update(
         try:
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
-                await upsert_show_payload(s, show, episodes=episodes)
+                # prune_seasons: this fetch requests _DEFAULT_EMBEDS, which
+                # includes seasons, so the payload is authoritative (ADR-0004).
+                await upsert_show_payload(s, show, episodes=episodes, prune_seasons=True)
                 if akas_payload is not None:
                     akas = [TVMazeAka.model_validate(a) for a in akas_payload]
                     await upsert_akas(s, show_id=show.id, akas=akas)
