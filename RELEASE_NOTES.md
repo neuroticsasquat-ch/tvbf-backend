@@ -1,5 +1,26 @@
 # Release notes
 
+## 0.2.1 — 2026-08-06
+
+### Admin
+
+- Reject concurrent runs of the same kind ([NEU-966](https://linear.app/neuroticsasquatch/issue/NEU-966)) ([#189](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/189))
+
+### Browse
+
+- Expose episode crew on the browse API ([NEU-963](https://linear.app/neuroticsasquatch/issue/NEU-963)) ([#193](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/193))
+
+### Scripts
+
+- Rate-base the episode-credits failure band and widen it
+
+### Tvmaze
+
+- Add episode credit table definitions and season watermark ([NEU-959](https://linear.app/neuroticsasquatch/issue/NEU-959)) ([#190](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/190))
+- Fetch episode credits per season and cut over ownership ([NEU-960](https://linear.app/neuroticsasquatch/issue/NEU-960)) ([#191](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/191))
+- Season credit backfill pass + admin routes ([NEU-961](https://linear.app/neuroticsasquatch/issue/NEU-961)) ([#194](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/194))
+- Prune seasons deleted upstream from the mirror ([NEU-967](https://linear.app/neuroticsasquatch/issue/NEU-967)) ([#197](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/197))
+
 ## 0.2.0 — 2026-08-04
 
 ### Browse
