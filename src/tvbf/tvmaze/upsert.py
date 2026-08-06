@@ -211,11 +211,45 @@ async def upsert_episodes(
         await session.execute(stmt)
 
 
+async def prune_missing_seasons(
+    session: AsyncSession, *, show_id: int, payload_seasons: list[TVMazeSeason]
+) -> int:
+    """Delete this show's seasons that the payload does not name. Returns the count.
+
+    The show fetch is authoritative for the show's season set (ADR-0004) — the
+    same argument ADR-0003 makes for a season response owning its credits, one
+    level up. Without this the mirror never forgets a season TV Maze created and
+    later deleted, and the episode-credits pass 404s on it forever.
+
+    **Diff by id, never by `(show_id, number)`.** Upstream sometimes carries two
+    seasons with the same number for one show — the quirk that keeps a UNIQUE
+    constraint off `(show_id, number)` — and deduplicates them later. The
+    correct outcome there is "delete the id that is gone, keep the id that
+    remains", which only an id-set diff expresses.
+
+    An empty `payload_seasons` under an opted-in caller is an authoritative
+    zero and deletes every season of the show. That is why the opt-in lives in
+    the caller and not in an `if not seasons: skip` guard here — see
+    `upsert_show_payload`.
+    """
+    stmt = delete(m.Season).where(m.Season.show_id == show_id)
+    if payload_ids := {s.id for s in payload_seasons}:
+        stmt = stmt.where(m.Season.id.not_in(payload_ids))
+    result = await session.execute(stmt)
+    pruned: int = result.rowcount  # type: ignore[attr-defined]
+    if pruned:
+        # Rare by construction, so this is signal rather than noise: it is the
+        # only record of the cleanup actually happening.
+        log.info("show %d: pruned %d season(s) deleted upstream", show_id, pruned)
+    return pruned
+
+
 async def upsert_show_payload(
     session: AsyncSession,
     show: TVMazeShow,
     *,
     episodes: list[TVMazeEpisode] | None = None,
+    prune_seasons: bool = False,
 ) -> int:
     """Upsert a complete show payload (show + its genres + seasons + episodes) in order.
 
@@ -226,11 +260,32 @@ async def upsert_show_payload(
     skips the embed entirely can pass the full list, and a caller whose specials
     fetch failed still writes whatever the embed carried.
 
+    `prune_seasons` makes this payload authoritative for the show's season set,
+    deleting mirrored seasons it does not name. It is **opt-in per caller and
+    must stay that way**: `TVMazeEmbedded.seasons` defaults to `[]`, so this
+    function cannot tell "no seasons upstream" from "the caller didn't request
+    `embed[]=seasons`" — and `get_show` explicitly supports `embed=[]`. Pass
+    True only when the fetch actually requested the seasons embed. An implicit
+    `if not seasons: skip` is *not* an acceptable substitute: a show
+    legitimately having zero seasons exists, and that guard conflates it with
+    the missing-embed case, reintroducing the leak for exactly the shows where
+    pruning matters.
+
+    Order is load-bearing: the prune runs **between** the season upsert and the
+    episode upsert. `upsert_episodes` resolves each episode's `season_id` from a
+    live query over the show's seasons, so pruning first means that map holds
+    only survivors — and in the duplicate-number case the survivor wins the
+    lookup and the phantom's episodes are re-pointed to it. Prune afterwards and
+    those episodes would instead be bound to a row about to disappear, and get
+    their `season_id` nulled by the FK's ON DELETE SET NULL.
+
     Caller owns transaction boundaries (commit/rollback).
     """
     await upsert_show(session, show)
     for season in show.embedded.seasons:
         await upsert_season(session, show_id=show.id, season=season)
+    if prune_seasons:
+        await prune_missing_seasons(session, show_id=show.id, payload_seasons=show.embedded.seasons)
     merged: dict[int, TVMazeEpisode] = {ep.id: ep for ep in show.embedded.episodes}
     if episodes is not None:
         merged.update({ep.id: ep for ep in episodes})

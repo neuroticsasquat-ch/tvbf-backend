@@ -2,6 +2,7 @@
 
 **Status:** accepted (2026-08-04)
 **Amends:** [ADR-0001](./0001-tvmaze-second-ingest-axis.md)
+**Extended by:** [ADR-0004](./0004-the-show-fetch-owns-the-season-set.md) — the same authority argument, one level up: a show fetch owns its season set.
 
 Every episode-level credit — guest cast and episode crew alike — is fetched from `/seasons/{id}/episodes?embed[]=guestcast&embed[]=guestcrew`, one request per season, as part of the show axis. The person axis no longer writes credits of any kind.
 
