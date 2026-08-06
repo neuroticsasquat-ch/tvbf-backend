@@ -426,3 +426,148 @@ async def test_update_prunes_a_season_the_payload_has_dropped(session):
         (await session.execute(select(m.Season.id).where(m.Season.show_id == 1))).scalars().all()
     )
     assert set(seasons) == {1001}, "the daily must drop a season the payload no longer names"
+
+
+@respx.mock
+async def test_update_tombstones_a_show_absent_from_the_feed(session):
+    """NEU-1005 end-to-end on the daily path (ADR-0005)."""
+    from tvbf.tvmaze.tombstone import _MIN_FEED_ABSOLUTE
+
+    prior_run = await create_run(session, kind="initial")
+    await session.commit()
+    await finalize_run(session, prior_run, status="succeeded", last_update_cursor=1)
+
+    # Mirrored but gone upstream.
+    session.add(m.Show(id=4242, name="Cancelled Pilot", tvmaze_updated=5))
+    await session.commit()
+
+    # A feed big enough to clear the plausibility floors, naming show 1 but not 4242.
+    feed = {"1": 10}
+    feed.update({str(i): 1 for i in range(600_000, 600_000 + _MIN_FEED_ABSOLUTE)})
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json=feed)
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 10))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com", rate_calls=50, rate_window=1, retry_base_delay=0.01
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    # A show the feed DOES name must stay live. Without this, a feed-key type
+    # regression (int vs str) would tombstone the catalogue and still pass.
+    live = (
+        await session.execute(
+            select(m.Show).where(m.Show.id == 1).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert live.deleted_upstream_at is None, "a show named by the feed must stay live"
+
+    row = (
+        await session.execute(
+            select(m.Show).where(m.Show.id == 4242).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert row.deleted_upstream_at is not None, "absent from the feed means gone upstream"
+    assert row.name == "Cancelled Pilot", "the row must survive — tombstone, not delete"
+
+
+@respx.mock
+async def test_an_aborted_update_tombstones_nothing(session):
+    """A run that gave up partway never saw the whole catalogue, so it must not judge it."""
+    from tvbf.tvmaze.tombstone import _MIN_FEED_ABSOLUTE
+
+    prior_run = await create_run(session, kind="initial")
+    await session.commit()
+    await finalize_run(session, prior_run, status="succeeded", last_update_cursor=1)
+
+    session.add(m.Show(id=4343, name="Still Here", tvmaze_updated=5))
+    await session.commit()
+
+    feed = {"1": 10, "2": 10}
+    feed.update({str(i): 1 for i in range(600_000, 600_000 + _MIN_FEED_ABSOLUTE)})
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json=feed)
+    )
+    # Every fetch 500s, so the run aborts on consecutive failures.
+    # Matches /shows/{id} with its embed query, but not /shows/{id}/episodes.
+    respx.get(url__regex=r"https://api\.tvmaze\.com/shows/\d+(\?|$)").mock(
+        return_value=httpx.Response(500)
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com",
+        rate_calls=50,
+        rate_window=1,
+        retry_max_attempts=1,
+        retry_base_delay=0.001,
+    ) as c:
+        result = await run_update(
+            session_factory=lambda: session, client=c, run_id=run_id, failure_threshold=2
+        )
+
+    assert result.shows_processed == 0
+    row = (
+        await session.execute(
+            select(m.Show).where(m.Show.id == 4343).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert row.deleted_upstream_at is None, "an aborted run must not tombstone"
+
+
+@respx.mock
+async def test_an_implausible_feed_skips_tombstoning_but_the_daily_still_succeeds(session):
+    """The guard must degrade to a skipped pass, not a failed run."""
+    prior_run = await create_run(session, kind="initial")
+    await session.commit()
+    await finalize_run(session, prior_run, status="succeeded", last_update_cursor=1)
+
+    session.add(m.Show(id=4444, name="Untouched", tvmaze_updated=5))
+    await session.commit()
+
+    # A feed far under the absolute floor — exactly the truncated-200 case.
+    respx.get("https://api.tvmaze.com/updates/shows").mock(
+        return_value=httpx.Response(200, json={"1": 10})
+    )
+    respx.get("https://api.tvmaze.com/shows/1").mock(
+        return_value=httpx.Response(200, json=make_show(1, 10))
+    )
+    _mock_akas_default_empty()
+    _mock_episodes_default_empty()
+    _mock_season_episodes_default_empty()
+
+    run_id = await create_run(session, kind="update")
+    await session.commit()
+    async with TVMazeClient(
+        "https://api.tvmaze.com", rate_calls=50, rate_window=1, retry_base_delay=0.01
+    ) as c:
+        result = await run_update(session_factory=lambda: session, client=c, run_id=run_id)
+
+    assert result.shows_processed == 1
+    row = (
+        await session.execute(
+            select(m.IngestRun).where(m.IngestRun.id == run_id),
+            execution_options={"populate_existing": True},
+        )
+    ).scalar_one()
+    assert row.status == "succeeded", "an implausible feed must not fail the daily"
+
+    show = (
+        await session.execute(
+            select(m.Show).where(m.Show.id == 4444).execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+    assert show.deleted_upstream_at is None

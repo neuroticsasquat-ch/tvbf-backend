@@ -94,6 +94,11 @@ class Show(Base):
     rating_average: Mapped[Decimal | None] = mapped_column(Numeric(3, 1))
     ratings_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set when the show stops appearing in /updates/shows, i.e. TV Maze has
+    # deleted it. The row is never removed: app.user_show_watch and
+    # app.user_show_rating cascade from here, so a delete would destroy user
+    # data that nothing upstream could restore (ADR-0005).
+    deleted_upstream_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ShowAka(Base):

@@ -2,6 +2,9 @@
 
 **Status:** accepted (2026-08-06)
 **Extends:** [ADR-0003](./0003-episode-credits-are-fetched-per-season.md)
+**Amended by:** [ADR-0005](./0005-shows-deleted-upstream-are-tombstoned.md)
+
+> The delete-don't-tombstone decision below is scoped to **seasons** and does not generalise upward. Shows deleted upstream are *tombstoned*, because `app.user_show_watch` and `app.user_show_rating` cascade from `tvmaze.show` — so the "deletion is recoverable by construction" argument fails, a hard delete cannot even run when `import_ne.show_resolution` references the row, and `app.activity_event` would orphan silently. See ADR-0005.
 
 A show payload fetched with `embed[]=seasons` owns that show's season set. Seasons the payload does not name are deleted from the mirror. This is ADR-0003's argument — a season response is authoritative for every credit on every episode it contains — applied one level up.
 

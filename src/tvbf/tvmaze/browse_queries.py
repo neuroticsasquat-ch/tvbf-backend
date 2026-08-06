@@ -335,7 +335,11 @@ async def list_shows(
     if sort not in ALLOWED_SORT_KEYS:
         raise ValueError(f"invalid sort key: {sort}")
 
-    base = select(m.Show)
+    # Tombstoned shows are gone upstream and must not be discoverable — nobody
+    # should be able to newly find or add one (ADR-0005). Deliberately scoped to
+    # discovery: `get_show_with_seasons` and every /me surface still serve them,
+    # so a user already tracking one keeps their list, ratings and history.
+    base = select(m.Show).where(m.Show.deleted_upstream_at.is_(None))
     if filters.search:
         # Token-based AND match against an accent- and punctuation-folded form of
         # the show name OR any of its AKAs. Folding both the column and the token

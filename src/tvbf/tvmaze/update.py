@@ -13,6 +13,7 @@ from tvbf.tvmaze.runs import (
     record_progress,
 )
 from tvbf.tvmaze.season_credits import refresh_show_season_credits
+from tvbf.tvmaze.tombstone import reconcile_tombstones
 from tvbf.tvmaze.upsert import (
     mark_akas_synced,
     upsert_akas,
@@ -110,6 +111,14 @@ async def run_update(
         # Season credits go last, and outside the show's transaction: they FK to
         # episode.id, so the episode rows written above must be committed first.
         await refresh_show_season_credits(client=client, session_factory=session_factory, show=show)
+
+    # Tombstone shows deleted upstream (ADR-0005). Runs only after the loop
+    # completes normally — every abort path above returns early, so a run that
+    # gave up partway never reconciles against a catalogue it only half saw.
+    # The full feed is already in hand, so this costs no upstream requests.
+    async with _owned_session(session_factory) as s:
+        await reconcile_tombstones(s, feed_ids=set(updates))
+        await s.commit()
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=max_epoch)

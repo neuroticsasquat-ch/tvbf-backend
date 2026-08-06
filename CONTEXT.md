@@ -25,8 +25,14 @@ The recurring job that re-fetches only the entities upstream reports as changed 
 _Avoid_: sync, refresh
 
 **Phantom record**:
-A mirrored row for an entity upstream has deleted. Distinguishable only by the fetch that names its parent — a phantom season is revealed by its show's payload no longer listing it, never by anything about the row itself. The mirror deletes phantoms rather than tombstoning them (ADR-0004).
+A mirrored row for an entity upstream has deleted. Revealed by the fetch that names its parent — a phantom season by its show's payload no longer listing it, a phantom show by its absence from `/updates/shows` — never by anything about the row itself.
+
+What happens next differs by grain, deliberately: **phantom seasons are deleted** (ADR-0004), **phantom shows are tombstoned** (ADR-0005). Deleting a season is recoverable — the next show fetch re-creates it with the same upstream id — and no user data references one. Deleting a show is not: `app.user_show_watch` and `app.user_show_rating` cascade from it, and nothing upstream knows a user was tracking it.
 _Avoid_: orphan, stale row
+
+**Tombstone**:
+Marking a mirrored row as gone upstream instead of removing it — `show.deleted_upstream_at`. A tombstoned show is hidden from discovery (browse, search) but stays fully functional for users already tracking it, and is resurrected if it reappears upstream. Not a synonym for phantom: a phantom is the situation, a tombstone is one of the two responses to it.
+_Avoid_: soft delete, archived, disabled
 
 ### People and credits
 
