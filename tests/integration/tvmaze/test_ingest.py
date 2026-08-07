@@ -125,9 +125,12 @@ async def test_initial_ingest_aborts_after_consecutive_http_failures(session):
     respx.get("https://api.tvmaze.com/updates/shows").mock(
         return_value=httpx.Response(200, json={"1": 100, "2": 200, "3": 300})
     )
-    respx.get("https://api.tvmaze.com/shows/1").mock(return_value=httpx.Response(404))
-    respx.get("https://api.tvmaze.com/shows/2").mock(return_value=httpx.Response(404))
-    respx.get("https://api.tvmaze.com/shows/3").mock(return_value=httpx.Response(404))
+    # 5xx, not 404. Since NEU-1006 a 404 means "this entity is gone", which is
+    # a data condition and deliberately does NOT count toward the abort — only
+    # persistent upstream failures do. This test guards that surviving path.
+    respx.get("https://api.tvmaze.com/shows/1").mock(return_value=httpx.Response(500))
+    respx.get("https://api.tvmaze.com/shows/2").mock(return_value=httpx.Response(500))
+    respx.get("https://api.tvmaze.com/shows/3").mock(return_value=httpx.Response(500))
 
     _mock_akas_default_empty()
     _mock_episodes_default_empty()
