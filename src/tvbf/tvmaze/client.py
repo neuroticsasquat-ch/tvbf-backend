@@ -75,6 +75,11 @@ def get_rate_limiter(calls: int, window_seconds: float) -> DatabaseRateLimiter:
     cannot happen today; a second budget warns rather than failing silently,
     because the symptom otherwise is invisible (NEU-957). Size a new caller
     from settings too.
+
+    The warning is per process, so it catches a divergence *within* one and not
+    between two. Two processes reading different `TVMAZE_RATE_LIMIT_*` values
+    would size the same shared bucket differently and neither would say so —
+    a real limitation, and the reason both read the same env.
     """
     # The membership half only matters if someone bypassed `reset_rate_limiters`
     # and cleared the cache alone: the budget would then be a miss while still

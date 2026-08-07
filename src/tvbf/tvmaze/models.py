@@ -406,8 +406,10 @@ class RateBudget(Base):
     # Fractional by design — refill is `elapsed × rate`, which lands mid-token
     # far more often than not.
     tokens: Mapped[float] = mapped_column(Double, nullable=False)
-    # Written with `clock_timestamp()`, never `now()`: `now()` is transaction
-    # start time, which drifts backwards under lock contention.
+    # The default only ever stamps the seed row. Every write from the limiter
+    # uses `clock_timestamp()`, never `now()`: `now()` is transaction-start
+    # time, so an acquirer that waited on the row lock would measure elapsed
+    # time from before it waited and over-refill.
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )

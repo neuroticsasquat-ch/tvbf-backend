@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
+from tvbf.logging_config import configure_logging
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.runs import create_run, find_live_run
 from tvbf.tvmaze.update import run_update_job
@@ -69,10 +70,17 @@ async def run_daily(settings: Settings) -> bool:
         )
     if live is not None:
         # Someone triggered a daily by hand minutes before the schedule fired.
-        # A daily is happening, so the deadman must stay quiet — withholding the
-        # ping here would alert on the one case that needs no attention.
+        # Exit 0 — this task did nothing wrong, and failing would have Coolify
+        # notify on a benign condition.
+        #
+        # Deliberately no success ping. `POST /admin/update` pings nothing, so a
+        # success ping here would report a run whose outcome we never learn: if
+        # that hand-triggered run later failed, Coolify would not see it (this
+        # process exited 0) and the deadman would already be fed. Staying silent
+        # leaves the check in its started state, so the grace period expires and
+        # someone looks — a spurious alert on a rare day, in exchange for never
+        # swallowing a failed one.
         log.info("an update run is already in flight (%s); nothing to do", live.id)
-        await _ping(settings.healthcheck_daily_url)
         return True
 
     async with SessionLocal() as s:
@@ -97,12 +105,7 @@ async def run_daily(settings: Settings) -> bool:
 
 def main() -> int:
     settings = get_settings()
-    logging.basicConfig(
-        level=settings.log_level,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        force=True,
-    )
+    configure_logging(settings.log_level)
     try:
         ok = asyncio.run(run_daily(settings))
     except Exception:

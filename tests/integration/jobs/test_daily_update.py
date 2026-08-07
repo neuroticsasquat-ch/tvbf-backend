@@ -99,9 +99,15 @@ async def test_a_ping_that_fails_is_swallowed(session, worker, caplog):
 
 
 @respx.mock
-async def test_a_live_update_run_is_left_alone_and_still_pings_success(session, monkeypatch):
-    """An operator triggered a daily minutes before the schedule fired. A daily
-    *is* happening, so the deadman must stay quiet."""
+async def test_a_live_update_run_is_left_alone_and_reports_no_outcome(session, monkeypatch):
+    """An operator triggered a daily minutes before the schedule fired.
+
+    Exit 0 — this task did nothing wrong. But no success ping either: the
+    hand-triggered run pings nothing itself, so claiming success here would feed
+    the deadman for a run whose outcome we never learn. Leaving the check in its
+    started state trades a spurious alert on a rare day for never swallowing a
+    failed one.
+    """
 
     async def _must_not_run(run_id, settings):
         raise AssertionError("started a second update run alongside a live one")
@@ -110,13 +116,13 @@ async def test_a_live_update_run_is_left_alone_and_still_pings_success(session, 
     live_id = await create_run(session, kind="update")
     await session.commit()
 
-    respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    success = respx.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
+    start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
 
-    # `/fail` is deliberately not mocked: respx raises on an unmocked request,
-    # so pinging it here would fail the test rather than pass silently.
+    # Neither the base URL nor `/fail` is mocked: respx raises on an unmocked
+    # request, so a ping to either fails this test rather than passing silently.
     assert await daily_update.run_daily(_settings(healthcheck_daily_url=HEALTHCHECK)) is True
-    assert success.called
+    assert start.called
+    assert len(respx.calls) == 1, "the skip path pinged something beyond /start"
 
     runs = (await session.execute(select(m.IngestRun.id))).scalars().all()
     assert runs == [live_id], "the live run should be the only one"
