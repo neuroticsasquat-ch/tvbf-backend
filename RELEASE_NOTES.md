@@ -1,5 +1,16 @@
 # Release notes
 
+## 0.2.2 — 2026-08-07
+
+### Scripts
+
+- Band crew volume on tracked shows, not the whole catalogue ([#200](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/200))
+
+### Tvmaze
+
+- Tombstone shows deleted upstream ([NEU-1005](https://linear.app/neuroticsasquatch/issue/NEU-1005)) ([#201](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/201))
+- Gone entities must not trip the consecutive-failure abort ([NEU-1006](https://linear.app/neuroticsasquatch/issue/NEU-1006)) ([#202](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/202))
+
 ## 0.2.1 — 2026-08-06
 
 ### Admin
