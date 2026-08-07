@@ -20,7 +20,7 @@ from tvbf.tvmaze.person_update import run_person_update
 from tvbf.tvmaze.ratings_backfill import run_ratings_backfill
 from tvbf.tvmaze.runs import create_run, finalize_run, find_live_run
 from tvbf.tvmaze.show_refresh import run_show_refresh
-from tvbf.tvmaze.update import run_update
+from tvbf.tvmaze.update import run_update_job
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -45,11 +45,14 @@ async def _start_run(
 
     Refuses with 409 when a run of `kind` is already in flight. Two runs of
     one kind corrupt nothing — the upserts are idempotent — but the TV Maze
-    rate limiter is process-wide and `@cache`d (NEU-955), so they split one
-    18 req/10s budget and each simply crawls. On a multi-hour backfill an
-    accidental double-POST therefore doubles the wall-clock.
+    request budget is shared (NEU-955, ADR-0006), so they split one 18 req/10s
+    allowance and each simply crawls. On a multi-hour backfill an accidental
+    double-POST therefore doubles the wall-clock.
 
-    Scoped per kind, so a stuck backfill never blocks an urgent daily.
+    Scoped per kind, so a stuck backfill never blocks an urgent daily. The
+    `tvbf.jobs.daily_update` CLI applies the same per-kind check, which is
+    safe precisely because the budget spans processes: a daily running
+    alongside an in-app backfill is slower, not over the cap.
 
     Advisory, not atomic: the guard, the insert and the commit are three
     statements, so two requests interleaving between the SELECT and the
@@ -87,27 +90,6 @@ async def _background_ingest(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("background ingest crashed")
-        async with SessionLocal() as s:
-            await finalize_run(s, run_id, status="failed", error=str(e))
-            await s.commit()
-
-
-async def _background_update(run_id: UUID, settings: Settings) -> None:
-    try:
-        async with TVMazeClient(
-            base_url=settings.tvmaze_base_url,
-            rate_calls=settings.tvmaze_rate_limit_requests,
-            rate_window=settings.tvmaze_rate_limit_window_seconds,
-            retry_max_attempts=settings.tvmaze_retry_max_attempts,
-        ) as client:
-            await run_update(
-                session_factory=_session_factory,
-                client=client,
-                run_id=run_id,
-                failure_threshold=settings.ingest_consecutive_failure_threshold,
-            )
-    except Exception as e:
-        log.exception("background update crashed")
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()
@@ -245,7 +227,7 @@ async def trigger_update(
     settings: Settings = Depends(get_settings),
     session: AsyncSession = Depends(get_session),
 ) -> dict[str, str]:
-    return await _start_run(session, settings, "update", _background_update)
+    return await _start_run(session, settings, "update", run_update_job)
 
 
 @router.get("/ingest/{run_id}")

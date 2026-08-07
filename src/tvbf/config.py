@@ -23,6 +23,13 @@ class Settings(BaseSettings):
     )
     ingest_stale_run_minutes: int = Field(default=15, alias="INGEST_STALE_RUN_MINUTES")
 
+    # healthchecks.io deadman for the daily update, which runs as a Coolify
+    # scheduled task. Coolify notifies when a task *fails*; it cannot notify
+    # that one never ran — suspended and forgotten, container down, scheduler
+    # broken. That gap is the whole reason for this. Unset makes every ping a
+    # no-op, so local runs and tests never call out.
+    healthcheck_daily_url: str | None = Field(default=None, alias="HEALTHCHECK_DAILY_URL")
+
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 
     log_level: str = Field(default="INFO", alias="LOG_LEVEL")

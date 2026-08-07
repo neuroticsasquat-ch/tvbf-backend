@@ -435,8 +435,10 @@ if [[ "$TARGET" == "prod" ]]; then
   cat <<'NEXT'
 
 Remaining post-run steps (not automated — they change repo state):
-  1. Re-enable the daily-update cron:
-       gh workflow enable "Daily TV Maze update"
+  1. If you suspended the daily update in Coolify before this pass, resume it
+     (Coolify → tvbf-backend → Scheduled Tasks → "daily-update"). Optional
+     either way: the TV Maze budget is shared across processes, so a daily
+     running alongside a pass is slower, never over the cap.
   2. Unfreeze main — merging release/v0.2.1 is safe again.
   3. Record the numbers above as a comment on NEU-961 and close it.
   4. NEU-964 and NEU-965 (the frontend crew surfaces) are now unblocked.

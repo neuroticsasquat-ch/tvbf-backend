@@ -8,11 +8,13 @@ from sqlalchemy import (
     CheckConstraint,
     Date,
     DateTime,
+    Double,
     ForeignKey,
     Index,
     Integer,
     Numeric,
     PrimaryKeyConstraint,
+    SmallInteger,
     String,
     Text,
     Time,
@@ -380,3 +382,32 @@ class IngestRun(Base):
     shows_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_progress_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class RateBudget(Base):
+    """The TV Maze request budget, as one token bucket every process shares.
+
+    TV Maze's cap applies to us as a whole. An in-process limiter could express
+    that only while every job ran inside the app; the daily now runs as its own
+    process (`tvbf.jobs.daily_update`), so the budget has to live somewhere both
+    can see (ADR-0006).
+
+    One row, and the check constraint says so: a second row would be a second
+    budget, which is the failure this exists to prevent.
+    """
+
+    __tablename__ = "rate_budget"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_rate_budget_single_row"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    # Fractional by design — refill is `elapsed × rate`, which lands mid-token
+    # far more often than not.
+    tokens: Mapped[float] = mapped_column(Double, nullable=False)
+    # Written with `clock_timestamp()`, never `now()`: `now()` is transaction
+    # start time, which drifts backwards under lock contention.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
