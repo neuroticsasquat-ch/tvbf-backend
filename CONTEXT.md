@@ -82,6 +82,10 @@ _Avoid_: billing order, sort order
 The complete itemized set of a person's credits — cast, crew, guest and episode crew — as presented on their page.
 _Avoid_: credits list, appearances
 
+**Credit group**:
+All of one person's credits of a single kind on a single show, presented as one filmography entry — "Director · 12 episodes of *Severance*" rather than twelve rows. A presentation concept only: the API returns credits individually and grouping happens client-side. Grouping never merges across kinds, so a person who both acted in and directed a show has a cast entry and an episode-crew entry for it.
+_Avoid_: credit cluster, merged credit
+
 ### Shows and episodes
 
 **Show**:
