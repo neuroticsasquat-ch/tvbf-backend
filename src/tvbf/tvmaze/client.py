@@ -3,14 +3,23 @@ import logging
 import time
 from collections import deque
 from functools import cache
+from typing import Protocol
 
 import httpx
+
+from tvbf.tvmaze.rate_budget import DatabaseRateLimiter
 
 log = logging.getLogger(__name__)
 
 
 class RateLimiter:
-    """Sliding-window token bucket. Allows up to `calls` calls per `window_seconds`."""
+    """Sliding-window token bucket, per process. Allows `calls` per `window_seconds`.
+
+    No longer the default — `get_rate_limiter` returns a `DatabaseRateLimiter`
+    so the budget spans processes (ADR-0006). This survives as the isolated
+    limiter tests pass via `limiter=`, which is what keeps the unit suite off
+    the database.
+    """
 
     def __init__(self, calls: int, window_seconds: float):
         self._calls = calls
@@ -39,8 +48,8 @@ _seen_budgets: set[tuple[int, float]] = set()
 
 
 @cache
-def get_rate_limiter(calls: int, window_seconds: float) -> RateLimiter:
-    """The process-wide limiter for one request budget.
+def get_rate_limiter(calls: int, window_seconds: float) -> DatabaseRateLimiter:
+    """The limiter for one request budget, shared by every process.
 
     TV Maze's cap applies to us as a whole, not to each job. Every admin route
     builds its own `TVMazeClient`, so a per-instance limiter let two concurrent
@@ -49,12 +58,16 @@ def get_rate_limiter(calls: int, window_seconds: float) -> RateLimiter:
     concurrent jobs split a single budget and simply run slower, which is the
     intended behaviour.
 
+    The bucket lives in Postgres, so that holds across processes too — which it
+    has to, now the daily update runs as its own process rather than as a task
+    inside the app (ADR-0006). Caching stays worthwhile even so: the instance is
+    cheap, but the cache is what makes a divergent budget detectable at all.
+
     Cached rather than built at import so the settings that size it are read
     when the first client is constructed. Tests reset it through
-    `reset_rate_limiters()`, which `tests/conftest.py` calls between tests so
-    timestamps never leak. Do not call `get_rate_limiter.cache_clear()`
-    directly — it leaves `_seen_budgets` populated, so the cache and the seen
-    set fall out of step.
+    `reset_rate_limiters()`, which `tests/conftest.py` calls between tests. Do
+    not call `get_rate_limiter.cache_clear()` directly — it leaves
+    `_seen_budgets` populated, so the cache and the seen set fall out of step.
 
     The cache is keyed by budget, so callers asking for *different* numbers get
     different buckets — which would reintroduce exactly the overshoot this
@@ -62,6 +75,11 @@ def get_rate_limiter(calls: int, window_seconds: float) -> RateLimiter:
     cannot happen today; a second budget warns rather than failing silently,
     because the symptom otherwise is invisible (NEU-957). Size a new caller
     from settings too.
+
+    The warning is per process, so it catches a divergence *within* one and not
+    between two. Two processes reading different `TVMAZE_RATE_LIMIT_*` values
+    would size the same shared bucket differently and neither would say so —
+    a real limitation, and the reason both read the same env.
     """
     # The membership half only matters if someone bypassed `reset_rate_limiters`
     # and cleared the cache alone: the budget would then be a miss while still
@@ -76,14 +94,16 @@ def get_rate_limiter(calls: int, window_seconds: float) -> RateLimiter:
             sorted(_seen_budgets),
         )
     _seen_budgets.add((calls, window_seconds))
-    return RateLimiter(calls, window_seconds)
+    # Looked up as a module global on purpose: `tests/conftest.py` swaps this
+    # name for the in-process `RateLimiter` so no unit test needs a database.
+    return DatabaseRateLimiter(calls, window_seconds)
 
 
 def reset_rate_limiters() -> None:
     """Drop the cached limiters and the budgets seen so far.
 
-    For tests only — `tests/conftest.py` calls this between tests so neither a
-    limiter's timestamps nor the divergence warning leaks into the next one.
+    For tests only — `tests/conftest.py` calls this between tests so the
+    divergence warning does not leak into the next one.
     """
     get_rate_limiter.cache_clear()
     _seen_budgets.clear()
@@ -109,6 +129,12 @@ def is_gone_upstream(exc: BaseException) -> bool:
     return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
 
 
+class Limiter(Protocol):
+    """Anything that can pace requests. `limiter=` accepts any of them."""
+
+    async def acquire(self) -> None: ...
+
+
 class TVMazeClient:
     def __init__(
         self,
@@ -118,7 +144,7 @@ class TVMazeClient:
         retry_max_attempts: int = 5,
         retry_base_delay: float = 0.5,
         timeout: float = 30.0,
-        limiter: RateLimiter | None = None,
+        limiter: Limiter | None = None,
     ):
         self._base_url = base_url.rstrip("/")
         # Shared by default; pass `limiter` explicitly for an isolated budget.

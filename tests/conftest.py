@@ -96,22 +96,38 @@ def _stub_outbound_email():
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """Hand every test a fresh TV Maze rate limiter.
+    """Hand every test a fresh, in-process TV Maze rate limiter.
+
+    Two things happen here.
 
     `get_rate_limiter` is `@cache`d so all clients in a process share one
-    budget (NEU-955). Left alone, its timestamp deque would carry across tests
-    and make a later test sleep off an earlier test's requests, and the
-    second-budget warning (NEU-957) would fire on whichever test happened to
-    ask for a different budget second.
+    budget (NEU-955). Left alone, its bucket would carry across tests and make
+    a later test wait off an earlier test's requests, and the second-budget
+    warning (NEU-957) would fire on whichever test happened to ask for a
+    different budget second.
+
+    It also returns a `DatabaseRateLimiter` in production, because the budget
+    now spans processes (ADR-0006). Swapping in the in-process `RateLimiter`
+    keeps `tests/unit` free of a database — ~50 client constructions across the
+    suite do not pass `limiter=`, and making each one a DB round-trip per
+    request would buy nothing: the shared bucket has its own integration tests
+    in `tests/integration/tvmaze/test_rate_budget.py`.
 
     Like `_stub_outbound_email`, this deliberately does not request
     `monkeypatch` — an autouse fixture that does would run its teardown after
     the `session` fixture's and break the admin tests' `asyncio.create_task`
     patching.
     """
+    from tvbf.tvmaze import client as client_module
+
+    original = client_module.DatabaseRateLimiter
+    client_module.DatabaseRateLimiter = client_module.RateLimiter  # type: ignore[assignment]
     reset_rate_limiters()
-    yield
-    reset_rate_limiters()
+    try:
+        yield
+    finally:
+        reset_rate_limiters()
+        client_module.DatabaseRateLimiter = original  # type: ignore[assignment]
 
 
 @pytest.fixture

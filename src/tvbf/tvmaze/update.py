@@ -3,6 +3,8 @@ from uuid import UUID
 
 import httpx
 
+from tvbf.config import Settings
+from tvbf.db import SessionLocal
 from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
 from tvbf.tvmaze.client import TVMazeClient, is_gone_upstream
 from tvbf.tvmaze.ingest import IngestResult, SessionFactory, _fetch_episodes, _owned_session
@@ -22,6 +24,39 @@ from tvbf.tvmaze.upsert import (
 )
 
 log = logging.getLogger(__name__)
+
+
+def _session_factory():
+    return SessionLocal()
+
+
+async def run_update_job(run_id: UUID, settings: Settings) -> None:
+    """One daily-delta cycle, wired from settings and guaranteed to finalize.
+
+    Lives here rather than in `routers/admin.py` because it now has two callers:
+    `POST /admin/update` spawns it with `create_task`, and the
+    `tvbf.jobs.daily_update` CLI awaits it (NEU-1008). Sharing the body is what
+    stops the scheduled daily and the manual trigger drifting apart — `await`
+    versus `create_task` is the only difference between them.
+    """
+    try:
+        async with TVMazeClient(
+            base_url=settings.tvmaze_base_url,
+            rate_calls=settings.tvmaze_rate_limit_requests,
+            rate_window=settings.tvmaze_rate_limit_window_seconds,
+            retry_max_attempts=settings.tvmaze_retry_max_attempts,
+        ) as client:
+            await run_update(
+                session_factory=_session_factory,
+                client=client,
+                run_id=run_id,
+                failure_threshold=settings.ingest_consecutive_failure_threshold,
+            )
+    except Exception as e:
+        log.exception("background update crashed")
+        async with SessionLocal() as s:
+            await finalize_run(s, run_id, status="failed", error=str(e))
+            await s.commit()
 
 
 async def run_update(

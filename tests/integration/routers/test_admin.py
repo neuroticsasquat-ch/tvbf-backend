@@ -63,18 +63,18 @@ async def test_trigger_update_route_creates_run_and_returns_id(session, monkeypa
 
 
 async def test_background_update_marks_run_failed_on_crash(session, monkeypatch):
-    from tvbf.routers.admin import _background_update
     from tvbf.tvmaze.runs import create_run
+    from tvbf.tvmaze.update import run_update_job
 
     async def boom(**kwargs):
         raise RuntimeError("simulated background crash")
 
-    monkeypatch.setattr("tvbf.routers.admin.run_update", boom)
+    monkeypatch.setattr("tvbf.tvmaze.update.run_update", boom)
 
     run_id = await create_run(session, kind="update")
     await session.commit()
 
-    await _background_update(run_id, get_settings())
+    await run_update_job(run_id, get_settings())
 
     row = (
         await session.execute(

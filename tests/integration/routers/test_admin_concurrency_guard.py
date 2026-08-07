@@ -32,7 +32,10 @@ AUTH = {"Authorization": "Bearer shh"}
 
 BACKGROUND_FNS = [
     "_background_ingest",
-    "_background_update",
+    # Shared with the `tvbf.jobs.daily_update` CLI, so it lives in `update.py`
+    # rather than the router — but it is still bound as a name in the router's
+    # module namespace, which is what `setattr` needs (NEU-1008).
+    "run_update_job",
     "_background_backfill_akas",
     "_background_backfill_ratings",
     "_background_show_refresh",
