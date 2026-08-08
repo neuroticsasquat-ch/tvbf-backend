@@ -9,9 +9,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeShow
-from tvbf.tvmaze.client import TVMazeClient
-from tvbf.tvmaze.runs import finalize_run, record_progress
+from tvbf.tvmaze.api_payloads import TVMazeAka, TVMazeEpisode, TVMazeShow
+from tvbf.tvmaze.client import TVMazeClient, is_gone_upstream
+from tvbf.tvmaze.runs import finalize_run, record_progress, warn_if_all_gone
 from tvbf.tvmaze.upsert import mark_akas_synced, upsert_akas, upsert_show_payload
 
 log = logging.getLogger(__name__)
@@ -34,6 +34,32 @@ async def _owned_session(session_factory: SessionFactory) -> AsyncIterator[Async
         yield s
 
 
+async def _fetch_episodes(client: TVMazeClient, show_id: int) -> list[TVMazeEpisode] | None:
+    """Fetch and parse a show's full episode list, or None if either step failed.
+
+    Both ongoing paths already carry `embed[]=episodes`, which silently omits
+    specials — this endpoint is the only source for them. Failure is soft on
+    purpose: `upsert_show_payload` then falls back to the embed's episodes, so
+    the show still gets its update. Failing the whole show instead would be
+    worse on the daily delta, whose cursor advances past failed shows and so
+    would not retry them.
+
+    Parsing happens here, inside the same guard, so a single unparseable
+    special can't take down a show whose ordinary episodes are fine.
+    """
+    try:
+        payload = await client.get_show_episodes(show_id)
+        return [TVMazeEpisode.model_validate(e) for e in payload]
+    except Exception as e:
+        log.warning(
+            "episodes fetch failed for show %d; falling back to the embed, so "
+            "specials will be missing until the next update: %s",
+            show_id,
+            e,
+        )
+        return None
+
+
 async def run_initial_ingest(
     *,
     session_factory: SessionFactory,
@@ -50,6 +76,7 @@ async def run_initial_ingest(
     processed = 0
     failed = 0
     consecutive_failures = 0
+    gone = 0
 
     for show_id in todo:
         try:
@@ -57,7 +84,11 @@ async def run_initial_ingest(
         except httpx.HTTPStatusError as e:
             log.warning("skipping show %d after http error: %s", show_id, e)
             failed += 1
-            consecutive_failures += 1
+            # 404 means gone, not broken (NEU-1006). See is_gone_upstream.
+            if is_gone_upstream(e):
+                gone += 1
+            else:
+                consecutive_failures += 1
             async with _owned_session(session_factory) as s:
                 await record_progress(s, run_id, failed_delta=1)
                 await s.commit()
@@ -91,6 +122,8 @@ async def run_initial_ingest(
                 return IngestResult(processed, failed, cursor)
             continue
 
+        episodes = await _fetch_episodes(client, show_id)
+
         try:
             akas_payload = await client.get_akas(show_id)
         except Exception as e:
@@ -104,7 +137,9 @@ async def run_initial_ingest(
         try:
             async with _owned_session(session_factory) as s:
                 show = TVMazeShow.model_validate(payload)
-                await upsert_show_payload(s, show)
+                # prune_seasons: this fetch requests _DEFAULT_EMBEDS, which
+                # includes seasons, so the payload is authoritative (ADR-0004).
+                await upsert_show_payload(s, show, episodes=episodes, prune_seasons=True)
                 if akas_payload is not None:
                     akas = [TVMazeAka.model_validate(a) for a in akas_payload]
                     await upsert_akas(s, show_id=show.id, akas=akas)
@@ -132,6 +167,7 @@ async def run_initial_ingest(
                 return IngestResult(processed, failed, cursor)
 
     async with _owned_session(session_factory) as s:
+        warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="shows")
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=cursor)
         await s.commit()
 

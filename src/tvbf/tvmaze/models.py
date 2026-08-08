@@ -4,18 +4,23 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import (
     BigInteger,
+    Boolean,
     CheckConstraint,
     Date,
     DateTime,
+    Double,
     ForeignKey,
+    Index,
     Integer,
     Numeric,
     PrimaryKeyConstraint,
+    SmallInteger,
     String,
     Text,
     Time,
     UniqueConstraint,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -90,6 +95,12 @@ class Show(Base):
     akas_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     rating_average: Mapped[Decimal | None] = mapped_column(Numeric(3, 1))
     ratings_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Set when the show stops appearing in /updates/shows, i.e. TV Maze has
+    # deleted it. The row is never removed: app.user_show_watch and
+    # app.user_show_rating cascade from here, so a delete would destroy user
+    # data that nothing upstream could restore (ADR-0005).
+    deleted_upstream_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ShowAka(Base):
@@ -127,6 +138,10 @@ class Season(Base):
     image_medium: Mapped[str | None] = mapped_column(Text)
     image_original: Mapped[str | None] = mapped_column(Text)
     summary: Mapped[str | None] = mapped_column(Text)
+    # Episode-credit pass watermark. Absence of credit rows cannot stand in for
+    # "not yet fetched": 22.5% of episodes carry no crew credits and a whole
+    # season legitimately may have none. See ADR-0003.
+    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class Episode(Base):
@@ -165,11 +180,187 @@ class ShowGenre(Base):
     genre_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.genre.id"), nullable=False)
 
 
+class Person(Base):
+    __tablename__ = "person"
+    __table_args__ = {"schema": SCHEMA}
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    country_code: Mapped[str | None] = mapped_column(Text)
+    country_name: Mapped[str | None] = mapped_column(Text)
+    timezone: Mapped[str | None] = mapped_column(Text)
+    birthday: Mapped[date | None] = mapped_column(Date)
+    deathday: Mapped[date | None] = mapped_column(Date)
+    gender: Mapped[str | None] = mapped_column(Text)
+    image_medium: Mapped[str | None] = mapped_column(Text)
+    image_original: Mapped[str | None] = mapped_column(Text)
+    tvmaze_updated: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    ingested_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # No credits watermark here, unlike `show` and `season`: person rows carry no
+    # credits of their own since ADR-0003, and the column that used to sequence
+    # the retired initial pass went with it (NEU-962).
+
+
+class Character(Base):
+    __tablename__ = "character"
+    __table_args__ = {"schema": SCHEMA}
+    # No show_id: upstream provides none (/characters/{id} has no show link),
+    # and the character->show relationship is carried by the credit rows.
+    # A character is not owned by one person — The Simpsons credits both
+    # Hank Azaria and Harry Shearer as Carl Carlson.
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    image_medium: Mapped[str | None] = mapped_column(Text)
+    image_original: Mapped[str | None] = mapped_column(Text)
+
+
+class CrewRole(Base):
+    __tablename__ = "crew_role"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_crew_role_name"),
+        {"schema": SCHEMA},
+    )
+    # Upstream sends crew type as a bare string with no id, exactly like genre.
+    # Modeled on Genre: local autoincrement id, unique name.
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ShowCast(Base):
+    __tablename__ = "show_cast"
+    __table_args__ = (
+        Index("ix_show_cast_show_id_sort", "show_id", "sort_order"),
+        Index("ix_show_cast_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+    # No UNIQUE(show_id, person_id, character_id) — deliberate. Refresh is
+    # delete-then-insert, so there is nothing to conflict on, and a uniqueness
+    # assumption over upstream data is what broke ingestion on tvmaze.season.
+    # sort_order preserves upstream billing order.
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"), nullable=False)
+    is_self: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    is_voice: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class ShowCrew(Base):
+    __tablename__ = "show_crew"
+    __table_args__ = (
+        Index("ix_show_crew_show_id_sort", "show_id", "sort_order"),
+        Index("ix_show_crew_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    role_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.crew_role.id"), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class EpisodeGuestCast(Base):
+    __tablename__ = "episode_guest_cast"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id",
+            "person_id",
+            "character_id",
+            name="uq_egc_episode_person_character",
+        ),
+        Index("ix_egc_episode_id_sort", "episode_id", "sort_order"),
+        Index("ix_egc_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+    # Still written by the person axis today; ownership moves to the season
+    # fetch, whose refresh grain is one season's episodes at a time (ADR-0003).
+    # That single writer is what makes a unique key possible. It has to be
+    # three-part: one character is played by more than one person on 17 of
+    # 1,043 sampled episodes, so (episode_id, character_id) would silently drop
+    # legitimate rows.
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    character_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"), nullable=False)
+    is_self: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    is_voice: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class EpisodeCrewRole(Base):
+    __tablename__ = "episode_crew_role"
+    __table_args__ = (
+        UniqueConstraint("name", name="uq_episode_crew_role_name"),
+        {"schema": SCHEMA},
+    )
+    # Kept separate from crew_role deliberately: the vocabularies are disjoint.
+    # Episode-level values are Writer, Director, Story, Teleplay; none of them
+    # appear among crew_role's 233 production-function names. See ADR-0003.
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class EpisodeCrew(Base):
+    __tablename__ = "episode_crew"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id", "person_id", "role_id", name="uq_episode_crew_episode_person_role"
+        ),
+        Index("ix_episode_crew_episode_id_sort", "episode_id", "sort_order"),
+        Index("ix_episode_crew_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+    # Three-part key for the same reason as episode_guest_cast: one person holds
+    # more than one crew role on 36 of 1,043 sampled episodes.
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    episode_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    role_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode_crew_role.id"), nullable=False
+    )
+    sort_order: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
 class IngestRun(Base):
     __tablename__ = "ingest_run"
     __table_args__ = (
         CheckConstraint(
-            "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill')",
+            # `person_initial` was dropped in NEU-962. Historical rows of that
+            # kind survive in prod: the migration re-adds this constraint NOT
+            # VALID (unconditionally — every migrated database gets it that way)
+            # so the cancelled pass-C run stays readable while no new one can be
+            # written. NOT VALID skips only the scan of existing rows; writes are
+            # enforced either way, so what this declaration says is what every
+            # database does. Tests build from `create_all` and never see the
+            # migration, so they get an ordinary validated constraint from here.
+            "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
+            "'show_refresh', 'person_update', 'episode_credits_backfill')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(
@@ -180,7 +371,7 @@ class IngestRun(Base):
     )
 
     id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
-    kind: Mapped[str] = mapped_column(String(16), nullable=False)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
     status: Mapped[str] = mapped_column(String(16), nullable=False)
     started_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
@@ -191,3 +382,34 @@ class IngestRun(Base):
     shows_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_progress_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     error: Mapped[str | None] = mapped_column(Text)
+
+
+class RateBudget(Base):
+    """The TV Maze request budget, as one token bucket every process shares.
+
+    TV Maze's cap applies to us as a whole. An in-process limiter could express
+    that only while every job ran inside the app; the daily now runs as its own
+    process (`tvbf.jobs.daily_update`), so the budget has to live somewhere both
+    can see (ADR-0006).
+
+    One row, and the check constraint says so: a second row would be a second
+    budget, which is the failure this exists to prevent.
+    """
+
+    __tablename__ = "rate_budget"
+    __table_args__ = (
+        CheckConstraint("id = 1", name="ck_rate_budget_single_row"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(SmallInteger, primary_key=True, autoincrement=False)
+    # Fractional by design — refill is `elapsed × rate`, which lands mid-token
+    # far more often than not.
+    tokens: Mapped[float] = mapped_column(Double, nullable=False)
+    # The default only ever stamps the seed row. Every write from the limiter
+    # uses `clock_timestamp()`, never `now()`: `now()` is transaction-start
+    # time, so an acquirer that waited on the row lock would measure elapsed
+    # time from before it waited and over-refill.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )

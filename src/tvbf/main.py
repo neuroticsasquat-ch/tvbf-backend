@@ -1,4 +1,3 @@
-import logging
 import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.integrations.linear import LinearClient
+from tvbf.logging_config import configure_logging
 from tvbf.routers import (
     admin,
     admin_invites,
@@ -46,15 +46,6 @@ if dsn := os.environ.get("SENTRY_DSN"):
     )
 
 
-def _configure_logging(level: str) -> None:
-    logging.basicConfig(
-        level=level,
-        format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
-        datefmt="%Y-%m-%dT%H:%M:%S",
-        force=True,
-    )
-
-
 async def run_startup_cleanup(session: AsyncSession, stale_after_minutes: int) -> int:
     count = await mark_stale_runs_cancelled(session, stale_after_minutes=stale_after_minutes)
     return count
@@ -83,7 +74,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
 def create_app() -> FastAPI:
     settings = get_settings()
-    _configure_logging(settings.log_level)
+    configure_logging(settings.log_level)
     app = FastAPI(title="tvbf-backend", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,

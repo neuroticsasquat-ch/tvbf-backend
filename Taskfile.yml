@@ -165,6 +165,41 @@ tasks:
         curl -sk https://api.tvbf.localhost/admin/backfill-ratings/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  credits:backfill:
+    desc: POST /admin/backfill-episode-credits
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-episode-credits
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  credits:backfill:status:
+    desc: 'GET /admin/backfill-episode-credits/<id> — task credits:backfill:status -- <uuid>'
+    cmds:
+      - >
+        curl -sk https://api.tvbf.localhost/admin/backfill-episode-credits/{{.CLI_ARGS}}
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  refresh:shows:
+    desc: POST /admin/refresh-shows
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/refresh-shows
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  refresh:shows:status:
+    desc: 'GET /admin/refresh-shows/<id> — task refresh:shows:status -- <uuid>'
+    cmds:
+      - >
+        curl -sk https://api.tvbf.localhost/admin/refresh-shows/{{.CLI_ARGS}}
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  people:update:
+    desc: POST /admin/update-people
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/update-people
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
