@@ -90,13 +90,30 @@ _MAX_CONNECTIONS = 10
 # The documented figure and the real one agree, so milestone 3's estimate stands.
 APPEND_TO_RESPONSE_LIMIT = 20
 
-# What the migration needs off the series request, per the project spec. Not the
-# final list — NEU-1031's coverage audit decides that, and every entry it adds
-# costs a season slot out of the budget above.
+# The decided list (NEU-1031 §1). Eleven namespaces, leaving nine season slots
+# out of the 20 above.
+#
+# Going from the provisional three to eleven costs +12,618 requests — about 11
+# minutes on a pass that runs an hour and a half either way — because 2.9% of
+# shows have more than nine seasons and pay one extra `get_tv_season` each.
+# Against that, every namespace left off is a field that becomes a multi-hour
+# backfill later, which is exactly how the TV Maze mirror accumulated four of
+# them. Four namespaces are omitted and none of them for cost: `credits` is
+# strictly weaker than `aggregate_credits`, `recommendations` and `similar` are
+# TMDB-computed and volatile rather than catalog facts, and `reviews` is another
+# product's user-generated content.
 DEFAULT_APPEND: tuple[str, ...] = (
-    "external_ids",
-    "alternative_titles",
     "aggregate_credits",
+    "alternative_titles",
+    "content_ratings",
+    "episode_groups",
+    "external_ids",
+    "images",
+    "keywords",
+    "screened_theatrically",
+    "translations",
+    "videos",
+    "watch/providers",
 )
 
 
@@ -270,6 +287,26 @@ class TMDBClient:
             )
         params = {"append_to_response": ",".join(append)} if append else None
         resp = await self._request("GET", f"{self._base_url}/tv/{series_id}", params=params)
+        return resp.json()
+
+    async def find_by_external_id(self, external_id: str, external_source: str) -> dict:
+        """Look a series up by somebody else's id — `tvdb_id`, `imdb_id`, …
+
+        Tiers 1 and 2 of the migration's mapping, and the only exact way in:
+        TMDB offers no reverse lookup other than `/find`. The response is
+        partitioned by media type (`tv_results`, `movie_results`, …) and each
+        entry is a trimmed series object — notably **without** `status`, so a
+        caller wanting the full row still fetches `get_tv_series` afterwards.
+
+        `external_source` is TMDB's own enum and is passed through verbatim; an
+        unsupported value answers 422 rather than an empty result, which is the
+        loud failure worth keeping.
+        """
+        resp = await self._request(
+            "GET",
+            f"{self._base_url}/find/{external_id}",
+            params={"external_source": external_source},
+        )
         return resp.json()
 
     async def get_tv_season(self, series_id: int, season_number: int) -> dict:
