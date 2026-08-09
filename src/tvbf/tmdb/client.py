@@ -309,6 +309,22 @@ class TMDBClient:
         )
         return resp.json()
 
+    async def search_tv(self, query: str) -> dict:
+        """Free-text series search — tier 3 of the migration's mapping.
+
+        Deliberately **only** `query`. TMDB also takes `first_air_date_year`,
+        and passing it would be the wrong kind of help: it filters upstream to
+        an exact year, where the mapping rule allows ±1, and it would quietly
+        change what "exactly one result" counts — a title with four candidates
+        would come back as one and be accepted as unambiguous. The year check
+        belongs on our side of the wire, against the unfiltered result set.
+
+        Paging is not followed either. The caller wants `total_results == 1`, so
+        a second page is by construction a result it would reject.
+        """
+        resp = await self._request("GET", f"{self._base_url}/search/tv", params={"query": query})
+        return resp.json()
+
     async def get_tv_season(self, series_id: int, season_number: int) -> dict:
         """One season with its full episode list.
 
