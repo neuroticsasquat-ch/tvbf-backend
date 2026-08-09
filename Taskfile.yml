@@ -48,7 +48,7 @@ tasks:
         for db in tvbf tvbf_test; do
           docker exec tbc_postgresql_db psql -U root -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
             || docker exec tbc_postgresql_db psql -U root -d postgres -c "CREATE DATABASE $db"
-          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS tvmaze;"
+          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS tvmaze; CREATE SCHEMA IF NOT EXISTS catalog;"
         done
 
   migrate:
