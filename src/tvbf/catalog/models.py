@@ -209,11 +209,34 @@ class Show(Base):
         # external id is stored but never searched.
         Index("ix_show_tvdb_id", "tvdb_id"),
         Index("ix_show_imdb_id", "imdb_id"),
+        CheckConstraint(
+            "match_method IS NULL OR match_method IN ('tvdb_id', 'imdb_id', 'title_year')",
+            name="ck_show_match_method",
+        ),
         {"schema": SCHEMA},
     )
 
     id: Mapped[int] = mapped_column(BigInteger, _surrogate(_SHOW_ID_START), primary_key=True)
     tmdb_id: Mapped[int | None] = mapped_column(Integer)
+    # How the migration arrived at this row's `tmdb_id` (NEU-1043) — one of
+    # `tvdb_id` / `imdb_id` / `title_year`, mirroring the three mapping tiers.
+    #
+    # **The point of it is that two of those tiers are exact and one is not.**
+    # A bare `tmdb_id` makes a `/find` hit and a title guess indistinguishable
+    # forever; this column is what lets tier 3 be read more sceptically, audited,
+    # or retracted as a batch (`WHERE match_method = 'title_year'`) if the
+    # go/no-go turns one up wrong.
+    #
+    # NULL means *this row was not mapped by the migration* — either nothing
+    # matched it, or it is a row the TMDB ingest inserted directly, which knows
+    # its `tmdb_id` without having had to match anything. It is not a fourth
+    # tier, and `tmdb_id IS NULL AND match_method IS NULL` remains the
+    # locally-authored row of ADR-0008.
+    #
+    # Unlike `status`, this vocabulary is ours, so a CHECK constraint is right:
+    # a typo'd method is a bug in our own writer rather than an upstream value
+    # we do not control.
+    match_method: Mapped[str | None] = mapped_column(Text)
 
     name: Mapped[str] = mapped_column(Text, nullable=False)
     # The untranslated title, in the show's own language. Together with

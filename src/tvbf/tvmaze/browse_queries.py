@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.repos import episode_rating_repo, show_rating_repo
 from tvbf.sorting import SQL_LEADING_ARTICLE_PATTERN
+from tvbf.sql_fold import folded
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.schemas import ALLOWED_SORT_KEYS, ShowFilters
 
@@ -302,20 +303,6 @@ async def list_person_episode_crew_credits(
     return list((await session.execute(stmt)).tuples().all())
 
 
-def _fold(expr):
-    """Accent- and punctuation-folded form of a text SQL expression or value.
-
-    Strips punctuation and whitespace (preserving letters of every script),
-    lowercases, then removes diacritics via the ``unaccent`` extension. Applied
-    identically to the searched column and to the query token so both sides of
-    the comparison normalize under the same rules — "shogun" matches "Shōgun"
-    and "spiderman" matches "Spider-Man", while non-Latin scripts pass through
-    unchanged so native-title search keeps working.
-    """
-    stripped = func.regexp_replace(expr, "[[:punct:][:space:]]+", "", "g")
-    return func.immutable_unaccent(func.lower(stripped))
-
-
 def _strip_punct_space(token: str) -> str:
     """Token with punctuation and whitespace removed. Used only to detect tokens
     that fold to nothing (e.g. "--"): ``unaccent`` never maps a non-empty letter
@@ -351,9 +338,9 @@ async def list_shows(
             # Search was all punctuation/whitespace — match nothing, not everything.
             base = base.where(false())
         for token in usable:
-            needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
-            aka_subq = select(m.ShowAka.show_id).where(_fold(m.ShowAka.name).like(needle))
-            base = base.where(or_(_fold(m.Show.name).like(needle), m.Show.id.in_(aka_subq)))
+            needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
+            aka_subq = select(m.ShowAka.show_id).where(folded(m.ShowAka.name).like(needle))
+            base = base.where(or_(folded(m.Show.name).like(needle), m.Show.id.in_(aka_subq)))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:
@@ -397,7 +384,7 @@ async def search_people(
     ~1.3M crew names into the title predicate would make "smith" return most of
     the catalog. `list_shows` is untouched by this.
 
-    Reuses `_fold` so the column and each query token normalize under identical
+    Reuses `folded` so the column and each query token normalize under identical
     rules, which matters more for names than for titles — "visnjic" has to reach
     "Goran Višnjić" because nobody types the diacritics. Backed by
     `ix_person_name_folded_trgm`.
@@ -417,8 +404,8 @@ async def search_people(
 
     base = select(m.Person)
     for token in usable:
-        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
-        base = base.where(_fold(m.Person.name).like(needle))
+        needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
+        base = base.where(folded(m.Person.name).like(needle))
 
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
@@ -456,8 +443,8 @@ async def hydrate_matched_aka(
     # Best (shortest) AKA per show that matches every folded token.
     aka_query = select(m.ShowAka.show_id, m.ShowAka.name).where(m.ShowAka.show_id.in_(show_ids))
     for token in tokens:
-        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
-        aka_query = aka_query.where(_fold(m.ShowAka.name).like(needle))
+        needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
+        aka_query = aka_query.where(folded(m.ShowAka.name).like(needle))
     aka_rows = (await session.execute(aka_query)).all()
     best_by_show: dict[int, str] = {}
     for sid, aname in aka_rows:
@@ -469,8 +456,8 @@ async def hydrate_matched_aka(
     # characters like ł/ø that NFKD does not decompose.
     name_query = select(m.Show.id).where(m.Show.id.in_(show_ids))
     for token in tokens:
-        needle = func.concat("%", _fold(literal(token, literal_execute=True)), "%")
-        name_query = name_query.where(_fold(m.Show.name).like(needle))
+        needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
+        name_query = name_query.where(folded(m.Show.name).like(needle))
     name_matched_ids = set((await session.execute(name_query)).scalars().all())
 
     result: dict[int, str | None] = {}

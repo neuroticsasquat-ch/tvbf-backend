@@ -178,6 +178,24 @@ async def test_find_by_external_id_returns_the_empty_partitions_as_they_come():
     assert found["tv_results"] == []
 
 
+@respx.mock
+async def test_search_tv_sends_the_title_and_nothing_else():
+    """No `first_air_date_year`, deliberately.
+
+    Filtering upstream by year would both narrow past the ±1 the mapping rule
+    allows and change what `total_results == 1` counts — a four-candidate title
+    would come back as one and read as unambiguous.
+    """
+    route = respx.get(f"{BASE}/search/tv").mock(
+        return_value=httpx.Response(200, json={"results": [{"id": 1396}], "total_results": 1})
+    )
+    async with _client() as c:
+        found = await c.search_tv("Breaking Bad")
+
+    assert found["total_results"] == 1
+    assert dict(route.calls.last.request.url.params) == {"query": "Breaking Bad"}
+
+
 # --- plan_append ------------------------------------------------------------
 
 
