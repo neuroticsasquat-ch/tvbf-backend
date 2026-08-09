@@ -18,6 +18,29 @@ class Settings(BaseSettings):
     )
     tvmaze_retry_max_attempts: int = Field(default=5, alias="TVMAZE_RETRY_MAX_ATTEMPTS")
 
+    # TMDB. The credential is the account's **API Read Access Token** (the long
+    # JWT), sent as `Authorization: Bearer` — never the `api_key` query
+    # parameter, which lands in access logs, proxy logs and any error report
+    # that echoes a URL. TMDB labels the bearer style "v4 auth"; it authenticates
+    # the v3 endpoints this app calls, and the v3 key is not interchangeable
+    # with it.
+    #
+    # Optional because nothing reads TMDB yet: requiring it would break every
+    # running deploy the moment this lands. `TMDBClient` raises when it is
+    # missing, so the failure surfaces at the call site rather than at import.
+    # Server-side only — nothing TMDB-shaped reaches the SPA.
+    tmdb_read_access_token: str | None = Field(default=None, alias="TMDB_READ_ACCESS_TOKEN")
+    tmdb_base_url: str = Field(default="https://api.themoviedb.org/3", alias="TMDB_BASE_URL")
+    tmdb_image_base_url: str = Field(
+        default="https://image.tmdb.org/t/p", alias="TMDB_IMAGE_BASE_URL"
+    )
+    # 20 req/s against a documented ceiling "somewhere in the 40 requests per
+    # second range" with a CDN-level 50/s. Half the ceiling is still 11× TV
+    # Maze and no deadline needs more.
+    tmdb_rate_limit_requests: int = Field(default=20, alias="TMDB_RATE_LIMIT_REQUESTS")
+    tmdb_rate_limit_window_seconds: int = Field(default=1, alias="TMDB_RATE_LIMIT_WINDOW_SECONDS")
+    tmdb_retry_max_attempts: int = Field(default=5, alias="TMDB_RETRY_MAX_ATTEMPTS")
+
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
     )
