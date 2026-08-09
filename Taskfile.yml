@@ -205,6 +205,11 @@ tasks:
     cmds:
       - docker compose exec tvbf-backend python -m tvbf.jobs.watch_archive
 
+  copy:catalog:
+    desc: Copy tvmaze.* into catalog.* with ids preserved (idempotent; NEU-1042)
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.catalog_copy
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
