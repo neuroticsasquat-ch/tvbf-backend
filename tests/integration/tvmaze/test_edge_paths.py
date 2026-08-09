@@ -12,9 +12,10 @@ import pytest
 import respx
 from sqlalchemy import select
 
+from tvbf.rate_budget import RateLimiter
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.browse_queries import hydrate_show_refs
-from tvbf.tvmaze.client import RateLimiter, TVMazeClient
+from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.runs import create_run
 from tvbf.tvmaze.update import run_update
