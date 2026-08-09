@@ -155,7 +155,12 @@ UPDATE app."user" SET
     ELSE 'user-' || substring(id::text, 1, 8) || '@anon.local'
   END,
   password_hash = :'anon_hash';
-TRUNCATE app.session, app.login_attempt, app.invite CASCADE;
+-- `watch_archive` denormalises the real email and display name onto every row
+-- (NEU-1029), so anonymising `app."user"` alone would leave them sitting in a
+-- local copy. It cannot be UPDATEd -- the append-only trigger forbids that --
+-- and TRUNCATE is the right answer anyway: the archive is a production
+-- artifact, and `task archive:watches` regenerates a local one on demand.
+TRUNCATE app.session, app.login_attempt, app.invite, app.watch_archive CASCADE;
 SQL
   if [[ -n "$ADMIN_EMAIL_VAL" ]]; then
     echo "  ✓ Admin user preserved: log in as $ADMIN_EMAIL_VAL / 'localdev'."

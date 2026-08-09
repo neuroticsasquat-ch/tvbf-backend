@@ -200,6 +200,11 @@ tasks:
         curl -sk -X POST https://api.tvbf.localhost/admin/update-people
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  archive:watches:
+    desc: Snapshot every watch and rating into app.watch_archive (idempotent)
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.watch_archive
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
