@@ -32,8 +32,10 @@ async def test_engine():
     async with engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA IF EXISTS tvmaze CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
+        await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
         await conn.execute(text("CREATE SCHEMA tvmaze"))
         await conn.execute(text("CREATE SCHEMA app"))
+        await conn.execute(text("CREATE SCHEMA catalog"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
@@ -51,6 +53,7 @@ async def test_engine():
     async with engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA IF EXISTS tvmaze CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
+        await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
     await engine.dispose()
 
 
@@ -140,7 +143,7 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
         result = await conn.execute(
             text(
                 "SELECT schemaname || '.' || tablename FROM pg_tables "
-                "WHERE schemaname IN ('tvmaze', 'app')"
+                "WHERE schemaname IN ('tvmaze', 'app', 'catalog')"
             )
         )
         tables = [r[0] for r in result]

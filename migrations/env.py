@@ -22,7 +22,7 @@ target_metadata = Base.metadata
 
 def include_name(name, type_, parent_names):
     if type_ == "schema":
-        return name in ("tvmaze", "app")
+        return name in ("tvmaze", "app", "catalog")
     return True
 
 
