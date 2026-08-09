@@ -1,17 +1,27 @@
 # TV Binge Friend
 
-A web app for tracking TV watching with a social layer, built on a local mirror of the TV Maze catalog. This glossary fixes the vocabulary used across `tvbf-backend`, `tvbf-frontend`, specs, plans and tickets.
+A web app for tracking TV watching with a social layer, built on a local mirror of an upstream TV catalog. This glossary fixes the vocabulary used across `tvbf-backend`, `tvbf-frontend`, specs, plans and tickets.
+
+**The upstream source is changing.** TMDB replaces TV Maze as the catalog source (ADR-0007), and the mirror moves from the `tvmaze` schema to a source-neutral `catalog` schema. Entries below marked _(transitional)_ describe vocabulary that is TV Maze-specific and retires with it.
 
 ## Language
 
 ### The catalog
 
 **Catalog mirror**:
-Our local copy of TV Maze's data. Authoritative for reads; never written to by users.
+Our local copy of the upstream catalog. Authoritative for reads; never written to by users. Deliberately not named for its source — that has changed once already.
 _Avoid_: cache, snapshot
 
+**Surrogate id**:
+The internal, generated primary key of a catalog row (`catalog.show.id`, `catalog.episode.id`). Everything user-facing and everything in `app` references this, never the upstream key (ADR-0008). The upstream id lives alongside as a unique natural key.
+_Avoid_: internal id, local id, pk
+
+**Locally-authored row**:
+A catalog row with no upstream counterpart — `tmdb_id IS NULL`. The sanctioned way to hold a show or episode a user tracks that upstream does not list. Permanent, not a migration artifact; ingest never deletes or overwrites one.
+_Avoid_: orphan, manual entry, stub
+
 **Ingest axis**:
-An independently-fetched region of the catalog mirror, with its own upstream full-list feed, watermark, initial ingest and daily delta. There are two: the show axis and the person axis.
+An independently-fetched region of the catalog mirror, with its own upstream full-list feed, watermark, initial ingest and daily delta. _(transitional: the TV Maze split into show and person axes does not survive — TMDB returns credits on the show request.)_
 
 **Pass**:
 A one-time run over an entire ingest axis to populate or repair a region of the mirror. Measured in hours of rate-limited request budget, and treated as unrepeatable in practice.
@@ -41,7 +51,9 @@ A real human in the catalog — actor, director, producer. Identified by a TV Ma
 _Avoid_: actor, talent, contributor
 
 **Character**:
-A fictional or self-portrayed role, identified by a TV Maze character id. A character is not owned by one person: two people can be credited as the same character, and one person can play many.
+A fictional or self-portrayed role, **scoped to one show** and identified by `(show_id, name)`. A character is not owned by one person: two people can be credited as the same character, and one person can play many.
+
+The scope narrowed from global when the source changed (ADR-0007). TMDB models character as free text on a credit, so we intern per show — the same pattern as crew role. Measured cost in prod: of 1,508,888 characters, 2,621 were played by more than one person (all preserved by per-show interning) and exactly **one** spanned more than one show.
 _Avoid_: role, part
 
 **Credit**:
