@@ -205,6 +205,28 @@ tasks:
     cmds:
       - docker compose exec tvbf-backend python -m tvbf.jobs.watch_archive
 
+  reconcile:capture:
+    desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
+    # Two things are deliberate. `silent` — go-task's own banner goes to stdout
+    # and would corrupt the artifact; `-T` — docker would otherwise add a TTY's
+    # carriage returns. And the write goes via a temp file: a bare
+    # `> baseline.json` truncates *before* the command runs, so a capture that
+    # failed would leave the cutover's acceptance baseline empty.
+    silent: true
+    cmds:
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile capture
+        {{.CLI_ARGS}} > docs/migration/.reconciliation-baseline.tmp
+      - mv docs/migration/.reconciliation-baseline.tmp docs/migration/reconciliation-baseline.json
+
+  reconcile:verify:
+    desc: 'Diff the database against docs/migration/reconciliation-baseline.json (exit 1 on any change)'
+    cmds:
+      # The baseline rides stdin — `docs/` is not mounted into the container.
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile verify --baseline -
+        {{.CLI_ARGS}} < docs/migration/reconciliation-baseline.json
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
