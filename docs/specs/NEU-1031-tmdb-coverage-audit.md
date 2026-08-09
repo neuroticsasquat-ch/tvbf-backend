@@ -91,6 +91,9 @@ before the frontend hard-codes five options. `in_production` is a genuinely sepa
 boolean, and that *is* measured — The Simpsons is `Returning Series` + `in_production:
 true`; Breaking Bad is `Ended` + `false`.
 
+> **Confirmed by NEU-1032** — see [the wider sweep](#d1-addendum--the-wider-sweep-neu-1032).
+> All five values observed, no sixth, and `To Be Determined` scatters rather than mapping.
+
 Today's vocabulary and its distribution in our mirror:
 
 | Ours | Rows | TMDB equivalent |
@@ -121,6 +124,65 @@ the moment the catalog switches. If those labels are unwanted, the display map i
 work in NEU-1037 — the stored value stays TMDB's.
 
 Post-migration filter set: **All · Returning Series · Ended · Canceled · In Production · Planned.**
+
+### D1 addendum — the wider sweep (NEU-1032)
+
+Measured 2026-08-09, `scripts/probe_tmdb_status_vocabulary.py`: **1,000 shows**, 250 sampled
+from each of our four statuses (deterministic `md5(id)` ordering, restricted to shows
+carrying an external id), resolved to TMDB by exact `/find` on `tvdb_id` then `imdb_id` —
+no title matching, so a wrong show cannot enter the tally. **754 resolved**; the other 246
+returned zero or more than one result and were dropped rather than guessed at.
+
+**The five-value vocabulary is confirmed and complete.** Every documented value appeared and
+no sixth did:
+
+| TMDB status | Observed | `in_production` |
+| -- | --: | -- |
+| `Returning Series` | 334 | true ×334 |
+| `Ended` | 283 | false ×283 |
+| `In Production` | 67 | true ×67 |
+| `Canceled` | 39 | false ×39 |
+| `Planned` | 31 | true ×31 |
+
+NEU-1037 can hard-code the five. `is_ended` covers 322 of 754 shows (42.7%), of which
+**39 are `Canceled`** — the shows a straight `status == "Ended"` port would have
+misclassified as still running.
+
+**Where `To Be Determined` lands: nowhere in particular.** It scatters across the vocabulary
+in roughly the proportions of the catalog at large, which is the answer — it was never a
+TMDB-shaped distinction, so there is nothing to migrate it to and nothing to preserve.
+
+| Ours | → `Returning Series` | → `Ended` | → `Canceled` | → `In Production` | → `Planned` |
+| -- | --: | --: | --: | --: | --: |
+| `To Be Determined` (225) | 65.3% | 29.8% | 4.9% | — | — |
+| `Ended` (212) | 14.2% | 76.9% | 9.0% | — | — |
+| `Running` (200) | 72.5% | 23.5% | 3.5% | 0.5% | — |
+| `In Development` (117) | 10.3% | 5.1% | 1.7% | 56.4% | 26.5% |
+
+Two things follow that are worth naming. **Our own statuses are substantially stale** — 23.5%
+of shows we call `Running` have ended upstream and 14.2% of our `Ended` are returning — so
+users will see status corrections at cutover that look like bugs and are not. And
+**`In Development` resolves worst of the four** (117 of 250, against 200–225 elsewhere). Note
+this is *not* the project spec's "only 31.6% carry a join key" finding — the sample is already
+restricted to shows holding an external id, so every one of the 250 had a key to try. The gap
+is TMDB not recognising those ids, which is what you would expect of titles that may never have
+aired. Unresolved shows there are a mapping problem for milestone 5, not a status problem.
+
+**One caveat on `in_production`.** D1 calls it "a genuinely separate boolean carrying
+information `status` does not". Across all 754 shows it was **perfectly determined by
+`status`** — true for `Returning Series` / `In Production` / `Planned`, false for `Ended` /
+`Canceled`, with no exceptions. It stays modeled, because it rides the same request and the
+claim is about TMDB's model rather than one sample, but nothing should be built on the
+assumption that it adds a distinction.
+
+**A second question answered off the same payloads.** TMDB was checked for TV Maze's
+duplicate-season-number quirk — the reason `tvmaze.season` carries no `UNIQUE (show_id,
+number)`. **0 of the 754 resolved shows** reused a `season_number`. (Resolved, not sampled:
+the other 246 were never fetched, so they can neither show the quirk nor vouch for its
+absence.) NEU-1032 still declined to add the constraint: 754 is a rounding error against the
+228,611 TV series in TMDB's daily export, upserts conflict-target `tmdb_id` so the pair buys
+nothing, and the downside is an integrity error that kills a multi-hour pass on a long-tail
+show. A plain index carries the lookups.
 
 ### D2 — Specials: adopt season 0, and stop counting them
 

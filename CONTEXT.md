@@ -108,7 +108,11 @@ An alternate title for a show, usually a foreign-market name. Semantically *a na
 _Avoid_: alias, alternate name
 
 **Special**:
-An episode upstream marks with a null number — a Christmas episode, a retrospective, a DVD extra. Excluded from the episode embed, so it requires its own fetch.
+An episode in **season 0** — a Christmas episode, a retrospective, a DVD extra. It carries a real episode number like any other; season 0 is what marks it.
+
+Specials are **excluded from completion math, aired counts and Watch Next**, which is upstream's own convention: a show's episode and season counts exclude season 0. A user is not held short of "finished" by a DVD extra.
+
+The definition changed with the source (ADR-0007). TV Maze marked a special with a *null episode number* inside its real season and returned it outside the episode embed, so it needed its own fetch; TMDB parks specials in season 0 and returns them in that season's payload like anything else.
 _Avoid_: extra, bonus episode
 
 ### The app

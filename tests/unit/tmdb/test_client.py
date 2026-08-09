@@ -108,7 +108,7 @@ async def test_series_request_appends_the_default_namespaces():
     async with _client() as c:
         await c.get_tv_series(1396)
     appended = respx.calls.last.request.url.params["append_to_response"]
-    assert appended == "external_ids,alternative_titles,aggregate_credits"
+    assert appended == ",".join(DEFAULT_APPEND)
 
 
 @respx.mock
@@ -150,6 +150,34 @@ async def test_season_request_fetches_one_season():
     assert season["season_number"] == 3
 
 
+# --- /find ------------------------------------------------------------------
+
+
+@respx.mock
+async def test_find_by_external_id_passes_the_source_through():
+    route = respx.get(f"{BASE}/find/tt0903747").mock(
+        return_value=httpx.Response(200, json={"tv_results": [{"id": 1396}]})
+    )
+    async with _client() as c:
+        found = await c.find_by_external_id("tt0903747", "imdb_id")
+
+    assert found["tv_results"] == [{"id": 1396}]
+    assert route.calls.last.request.url.params["external_source"] == "imdb_id"
+
+
+@respx.mock
+async def test_find_by_external_id_returns_the_empty_partitions_as_they_come():
+    """No result is an ordinary answer, not an error — the mapping tiers fall
+    through to the next one on it."""
+    respx.get(f"{BASE}/find/999").mock(
+        return_value=httpx.Response(200, json={"tv_results": [], "movie_results": []})
+    )
+    async with _client() as c:
+        found = await c.find_by_external_id("999", "tvdb_id")
+
+    assert found["tv_results"] == []
+
+
 # --- plan_append ------------------------------------------------------------
 
 
@@ -160,20 +188,28 @@ def test_plan_append_rides_every_season_when_they_fit():
 
 
 def test_plan_append_splits_a_show_that_exceeds_the_cap():
-    """The Simpsons' 36 seasons against 3 namespaces: 17 ride along, 19 don't."""
+    """The Simpsons' 36 seasons against the decided 11 namespaces: 9 ride along."""
+    room = APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND)
     append, overflow = plan_append(range(1, 37))
     assert len(append) == APPEND_TO_RESPONSE_LIMIT
-    assert append[:3] == list(DEFAULT_APPEND)
-    assert append[3:] == [season_key(n) for n in range(1, 18)]
-    assert overflow == list(range(18, 37))
+    assert append[: len(DEFAULT_APPEND)] == list(DEFAULT_APPEND)
+    assert append[len(DEFAULT_APPEND) :] == [season_key(n) for n in range(1, 1 + room)]
+    assert overflow == list(range(1 + room, 37))
+
+
+def test_the_decided_namespace_list_leaves_room_for_seasons():
+    """Eleven namespaces against a cap of 20 (NEU-1031 §1). A twelfth is a
+    decision about the season budget, not a free addition."""
+    assert len(DEFAULT_APPEND) == 11
+    assert APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND) == 9
 
 
 def test_namespaces_and_seasons_draw_on_one_budget():
     """Adding a namespace costs a season — the reason this arithmetic lives next
     to the constant rather than in each caller."""
-    _, with_three = plan_append(range(1, 37))
-    _, with_eight = plan_append(range(1, 37), namespaces=[f"ns{i}" for i in range(8)])
-    assert len(with_eight) == len(with_three) + 5
+    _, baseline = plan_append(range(1, 37))
+    _, one_more = plan_append(range(1, 37), namespaces=[*DEFAULT_APPEND, "one_more"])
+    assert len(one_more) == len(baseline) + 1
 
 
 def test_plan_append_preserves_season_zero():
