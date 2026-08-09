@@ -1,26 +1,12 @@
 import asyncio
-import logging
 import time
 
 import httpx
 import pytest
 import respx
 
-from tvbf.tvmaze.client import (
-    RateLimiter,
-    TVMazeClient,
-    get_rate_limiter,
-    reset_rate_limiters,
-)
-
-
-async def test_rate_limiter_enforces_rate():
-    limiter = RateLimiter(calls=3, window_seconds=1)
-    start = time.monotonic()
-    for _ in range(6):
-        await limiter.acquire()
-    elapsed = time.monotonic() - start
-    assert elapsed >= 1.0, f"6 calls at 3/s should take >= 1s, took {elapsed:.3f}s"
+from tvbf.rate_budget import RateLimiter, get_rate_limiter
+from tvbf.tvmaze.client import TVMazeClient
 
 
 @respx.mock
@@ -251,9 +237,9 @@ class _CountingLimiter(RateLimiter):
         super().__init__(calls, window_seconds)
         self.acquired = 0
 
-    async def acquire(self) -> None:
-        self.acquired += 1
-        await super().acquire()
+    async def acquire(self, n: int = 1) -> None:
+        self.acquired += n
+        await super().acquire(n)
 
 
 @respx.mock
@@ -319,49 +305,3 @@ async def test_an_injected_limiter_replaces_the_shared_one():
     assert get_rate_limiter.cache_info().currsize == 0, (
         "an injected limiter should not have built the process-wide one"
     )
-
-
-def test_get_rate_limiter_returns_one_instance_per_budget():
-    assert get_rate_limiter(18, 10.0) is get_rate_limiter(18, 10.0)
-    assert get_rate_limiter(18, 10.0) is not get_rate_limiter(9, 10.0)
-
-
-def test_a_second_distinct_budget_warns(caplog):
-    """NEU-957: diverging budgets undo the shared limiter, silently.
-
-    Two callers sizing themselves differently get two buckets, which is the
-    overshoot NEU-955 removed. Nothing fails, so the warning is the only
-    signal anyone gets.
-    """
-    with caplog.at_level(logging.WARNING, logger="tvbf.tvmaze.client"):
-        get_rate_limiter(18, 10.0)
-        get_rate_limiter(9, 10.0)
-
-    warnings = [r for r in caplog.records if r.name == "tvbf.tvmaze.client"]
-    assert len(warnings) == 1
-    message = warnings[0].getMessage()
-    # Both budgets are named: the one just asked for, and the one already held.
-    assert "9 per 10.0s" in message
-    assert "(18, 10.0)" in message
-
-
-def test_one_budget_asked_for_repeatedly_stays_quiet(caplog):
-    with caplog.at_level(logging.WARNING, logger="tvbf.tvmaze.client"):
-        first = get_rate_limiter(18, 10.0)
-        second = get_rate_limiter(18, 10.0)
-
-    assert first is second
-    assert [r for r in caplog.records if r.name == "tvbf.tvmaze.client"] == []
-
-
-def test_reset_rate_limiters_clears_the_seen_budgets(caplog):
-    """Without clearing `_seen_budgets`, the warning would fire on whichever
-    test happened to ask for a different budget next."""
-    get_rate_limiter(18, 10.0)
-    reset_rate_limiters()
-
-    with caplog.at_level(logging.WARNING, logger="tvbf.tvmaze.client"):
-        get_rate_limiter(9, 10.0)
-
-    assert [r for r in caplog.records if r.name == "tvbf.tvmaze.client"] == []
-    assert get_rate_limiter.cache_info().currsize == 1

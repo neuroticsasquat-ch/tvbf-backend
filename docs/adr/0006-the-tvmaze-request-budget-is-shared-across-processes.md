@@ -1,6 +1,6 @@
 # ADR-0006: The TV Maze request budget is shared across processes
 
-**Status:** accepted (NEU-1008)
+**Status:** accepted (NEU-1008), amended by NEU-1027
 **Amends:** the process-wide limiter established by NEU-955
 
 ## Context
@@ -87,3 +87,55 @@ divergence within one process, not between two.
 `limiter=` remains the escape hatch, and `tests/conftest.py` swaps the in-process
 `RateLimiter` back in for the whole suite. Without that, every unit test that
 builds a `TVMazeClient` would need a database.
+
+## Amendment (NEU-1027): keyed buckets and block leasing
+
+TMDB needs its own ceiling, so the bucket became keyed. A `Bucket` names the
+table, key column and key value holding one source's budget;
+`get_rate_limiter(source, …)` resolves a source name against a module-level
+registry, and the module moved from `tvbf/tvmaze/rate_budget.py` to
+`tvbf/rate_budget.py` because it is no longer TV Maze-specific. New budgets are
+rows in `catalog.rate_budget`, keyed by source. **TV Maze keeps
+`tvmaze.rate_budget` id 1 and its calibration**: migrating a live token bucket
+mid-ingest buys nothing, and both upstreams run side by side until cutover. The
+divergent-budget warning is now per source — two *sources* on different numbers
+are the normal case and say nothing.
+
+`table` and `key_column` are interpolated into SQL rather than bound, which is
+unavoidable for an identifier. They may only ever come from the registry.
+
+**Blocks are leased.** "Every upstream request costs a database round-trip" was
+sized against 1.8 req/s. At TMDB's 20 req/s it is 20 serialised transactions per
+second through one row — roughly 20× the pressure this design was validated at,
+on the component whose failure mode is lock timeouts surfacing as job failures.
+So a limiter takes `lease` tokens in one locked transaction and spends them
+locally, taking lock traffic back to ~1/s.
+
+This does not weaken the cross-process guarantee: the block is deducted
+atomically *before* any of it is spent, so no other process can see a token that
+has been leased. A process that dies mid-lease forfeits the unspent remainder,
+which errs slow — the same direction the refill already errs. A grant may be
+short: a caller wanting 25 against a bucket holding 3 takes the 3 and comes
+back, so a lease larger than capacity is still grantable and a waiting caller
+never blocks other processes out of tokens it is not using.
+
+`lease=1` is the default and is behaviour-identical to the pre-amendment
+limiter, token for token. That is what leaves TV Maze untouched, and it is the
+reason "do not optimise the round-trip away" above still stands for TV Maze:
+leasing is a concession to a rate an order of magnitude higher, not a general
+improvement.
+
+The per-instance lease is also why `get_rate_limiter` caching matters more than
+before: two instances for one source in one process would hold two leases
+against the same budget. `Budget` is a value object rather than three loose
+arguments for the same reason — `functools.cache` keys on the literal call, so
+`(20, 1.0)`, `(20, 1.0, 1)` and `(20, 1.0, lease=1)` would otherwise be three
+cache entries and three leases.
+
+"Multiple waiters retry-poll, so there is no queue and no ordering guarantee"
+above now holds only *between* processes. Within one, `acquire` holds a local
+`asyncio.Lock` across the wait, so callers of one limiter queue. That is not the
+row lock — the transaction is long committed before anything sleeps — and it
+costs no throughput, because everyone queued is contending for the same budget
+anyway. It does mean a waiter blocks a caller the leased remainder could have
+served, which errs slow.

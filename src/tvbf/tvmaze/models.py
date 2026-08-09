@@ -394,6 +394,10 @@ class RateBudget(Base):
 
     One row, and the check constraint says so: a second row would be a second
     budget, which is the failure this exists to prevent.
+
+    Every budget added since is a row in `catalog.rate_budget`, keyed by source
+    (NEU-1027). This one stays where it is until cutover: migrating a live
+    token bucket mid-ingest buys nothing.
     """
 
     __tablename__ = "rate_budget"
