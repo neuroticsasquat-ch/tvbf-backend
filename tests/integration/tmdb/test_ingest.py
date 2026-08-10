@@ -313,6 +313,21 @@ async def test_a_series_gone_upstream_does_not_count_toward_the_abort(session):
 
 
 @respx.mock
+async def test_the_progress_log_separates_gone_from_real_failures(session, caplog):
+    """`ingest_run.shows_failed` is one column and counts both, so over ~229k ids
+    an operator polling the run row cannot tell a thousand deleted series from a
+    thousand broken requests. The log line is what makes that legible."""
+    respx.get(f"{BASE}/tv/1").mock(return_value=httpx.Response(404))
+    respx.get(f"{BASE}/tv/2").mock(return_value=httpx.Response(500))
+    mock_series(1396, [1])
+
+    with caplog.at_level("INFO", logger="tvbf.tmdb.ingest"):
+        await _run(session, [1, 2, 1396], failure_threshold=10)
+
+    assert "1/3 processed, 2 failed (1 gone upstream, 1 real)" in caplog.text
+
+
+@respx.mock
 async def test_consecutive_real_failures_abort_the_run(session):
     for series_id in range(1, 11):
         respx.get(f"{BASE}/tv/{series_id}").mock(return_value=httpx.Response(500))

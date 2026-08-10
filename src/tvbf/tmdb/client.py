@@ -121,8 +121,13 @@ def is_gone_upstream(exc: BaseException) -> bool:
     """True when TMDB says this series no longer exists.
 
     404 only, and deliberately narrow — the same rule `tvmaze.client` applies,
-    restated here rather than imported because that module retires with the
-    schema it serves (NEU-1050) and the replacement must not depend on it.
+    restated rather than imported because it is one predicate over an `httpx`
+    exception with no TV Maze content in it, and because `tvmaze/client.py` is
+    deleted outright by NEU-1050. Note this is *not* a claim that nothing here
+    may touch `tvmaze`: `tmdb/ingest.py` deliberately imports `tvmaze.runs`,
+    because the run rows genuinely are shared and relocating them is that same
+    ticket's job. Copying a line beats an import that retires; copying a module
+    would not.
 
     `_request` already retries timeouts, network errors, 429s and 5xx to
     exhaustion before raising, so an `HTTPStatusError` reaching a run loop is

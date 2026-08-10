@@ -44,6 +44,21 @@ against the live API on 2026-08-10:
 Correctness does not rest on the guess — the reconcile step covers whatever it
 missed. The guess only decides how many shows cost two requests instead of one.
 
+## How long it takes: ~8.7 hours, and the budget is not why
+
+**Measured 2026-08-10 over a 150-show sample spread through the export: 7.27
+shows/sec, so ~8.7 hours for the full ~229k.** The project spec's ~3.2-hour
+figure was derived from the request budget and does not survive contact — this
+is the same correction NEU-1065 had to make to the enrichment pass, for the same
+reason. The loop is **sequential**, so throughput is set by round-trip latency;
+at ~1.05 requests per show the pass draws about 7.6 req/s against a 20 req/s
+allowance, and the budget is never the binding constraint. Widening the append
+list or the season window would therefore buy less than it looks like it should,
+and concurrency is the only lever that would matter.
+
+The pass is resumable and per-show idempotent, so it is safe to kill and restart
+across that window rather than holding one process open for it.
+
 ## What this ingest deliberately does not do
 
 **It writes no `last_update_cursor`.** TV Maze's cursor was a per-show epoch the
@@ -97,11 +112,37 @@ SPECULATIVE_SEASONS: tuple[int, ...] = tuple(
 )
 
 
+# How often to log a running total. At the measured 7.27 shows/sec this is a
+# line every ~2 minutes over an 8.7-hour pass — frequent enough to tell "slow"
+# from "wedged", sparse enough not to bury the per-show warnings.
+_PROGRESS_EVERY = 1000
+
+
 @dataclass
 class CatalogIngestResult:
     shows_processed: int
     shows_failed: int
     shows_gone: int
+
+
+def _log_progress(processed: int, failed: int, gone: int, total: int) -> None:
+    """A running total, with the two kinds of failure kept apart.
+
+    `ingest_run.shows_failed` is one column and counts both, so an operator
+    polling the run row over ~229k ids sees a failure count they cannot read: a
+    thousand series TMDB has deleted looks exactly like a thousand broken
+    requests. Splitting `gone` out here is what makes the difference legible
+    without a schema change, and the denominator is what makes a bare
+    `shows_processed` mean something.
+    """
+    log.info(
+        "catalog ingest: %d/%d processed, %d failed (%d gone upstream, %d real)",
+        processed,
+        total,
+        failed,
+        gone,
+        failed - gone,
+    )
 
 
 SessionFactory = Callable[[], AsyncSession]
@@ -232,7 +273,10 @@ async def run_catalog_ingest(
 
         processed += 1
         consecutive_failures = 0
+        if processed % _PROGRESS_EVERY == 0:
+            _log_progress(processed, failed, gone, len(todo))
 
+    _log_progress(processed, failed, gone, len(todo))
     warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="series")
     async with _owned_session(session_factory) as s:
         # No `last_update_cursor`: TMDB's delta is a date range rather than a
