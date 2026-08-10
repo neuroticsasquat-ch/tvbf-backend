@@ -1,8 +1,11 @@
 # Migration artifacts
 
-Fixed home for the TMDB migration's reconciliation baseline (NEU-1030). The
+Fixed home for the TMDB migration's reconciliation baseline (NEU-1030) and the
+one-off repair scripts the migration's production runs turn out to need. The
 location is pinned here rather than improvised at cutover, because milestone 5's
-go/no-go re-runs the same harness against the same file.
+go/no-go re-runs the same harness against the same file — and because a
+procedure that only exists in somebody's terminal history is a procedure that
+will not survive to the day it is needed.
 
 ## `reconciliation-baseline.json`
 
@@ -53,3 +56,20 @@ ran that should not have.
 After cutover, add `--spine catalog` so the episode→show joins resolve against
 the new schema. The show ids are unchanged by design (TV Maze ids are preserved
 as `catalog.show.id`), which is what lets one baseline span both spines.
+
+## `neu-1043-collision-remediation.sql`
+
+A **one-off** repair for the first production enrichment run (2026-08-10), to be
+run once that pass finishes and before the NEU-1034 ingest. NEU-1043 orders the
+mapping tiers correctly within a show but not between shows, so a tier-3 title
+guess on a low-id row could take a `tmdb_id` that a higher-id row matched
+exactly. NEU-1065 fixes the cause in code; this script repairs the data.
+
+**Its input is the run's log, not the database.** The database records that a row
+is unmatched, never that it lost a contest or to whom, so the collisions have to
+be lifted out of the enrichment log first — step 1 in the file's header. Lose the
+log and the only way back is another enrichment run, capturing the warnings.
+
+It repairs only collisions that were *logged*. A tier-3 false positive that
+contested nothing is invisible to both the log and the database, and is caught
+only by reading `match_method = 'title_year'` rows by hand.
