@@ -59,11 +59,16 @@ as `catalog.show.id`), which is what lets one baseline span both spines.
 
 ## `neu-1043-collision-remediation.sql`
 
-A **one-off** repair for the first production enrichment run (2026-08-10), to be
-run once that pass finishes and before the NEU-1034 ingest. NEU-1043 orders the
-mapping tiers correctly within a show but not between shows, so a tier-3 title
-guess on a low-id row could take a `tmdb_id` that a higher-id row matched
-exactly. NEU-1065 fixes the cause in code; this script repairs the data.
+**Executed against production 2026-08-10.** 107 collisions, 18 repairable: 18
+guesses retracted, 18 exact matches stamped, and no row on either side carried
+user data. NEU-1043 orders the mapping tiers correctly within a show but not
+between shows, so a tier-3 title guess on a low-id row could take a `tmdb_id`
+that a higher-id row matched exactly. NEU-1065 fixes the cause in code; this
+script repaired the data.
+
+Kept runnable rather than reduced to a record: another enrichment pass before
+NEU-1065 lands would produce the same class of collision, and its inspection
+queries are reusable against any run's log.
 
 **Its input is the run's log, not the database.** The database records that a row
 is unmatched, never that it lost a contest or to whom, so the collisions have to
