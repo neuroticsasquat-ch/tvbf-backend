@@ -110,6 +110,25 @@ async def refresh_runtime(session: AsyncSession, *, show_id: int) -> int | None:
     return runtime
 
 
+async def mark_series_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Stamp the show as fully mirrored — the ingest's resumability watermark.
+
+    Kept out of `upsert_series_payload` on purpose. That function writes
+    whatever payload it is handed, including the narrower ones a delta or a
+    single-season re-fetch produces; this asserts something stronger, that a
+    *complete* pass covered the show, and only the caller doing the complete
+    pass can say so. `mark_akas_synced` splits the same way for the same reason.
+
+    Load-bearing because the work list is `tmdb_synced_at IS NULL` rather than
+    "no row exists": the migration copied ~89k TV Maze shows into `catalog` and
+    mapped a `tmdb_id` onto most of them, so row-exists would skip precisely the
+    shows users track. See `tvbf.tmdb.ingest`.
+    """
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(tmdb_synced_at=func.now())
+    )
+
+
 async def _upsert_by_tmdb_id(
     session: AsyncSession, model: Any, rows: list[dict[str, Any]]
 ) -> dict[Any, int]:

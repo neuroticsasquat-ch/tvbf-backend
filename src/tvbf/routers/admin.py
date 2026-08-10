@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.deps import get_session, require_admin
+from tvbf.tmdb.client import TMDBClient
+from tvbf.tmdb.ingest import run_catalog_ingest
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.akas_backfill import run_akas_backfill
 from tvbf.tvmaze.client import TVMazeClient
@@ -90,6 +92,35 @@ async def _background_ingest(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("background ingest crashed")
+        async with SessionLocal() as s:
+            await finalize_run(s, run_id, status="failed", error=str(e))
+            await s.commit()
+
+
+async def _background_catalog_ingest(run_id: UUID, settings: Settings) -> None:
+    """The TMDB full-catalog pass (NEU-1034).
+
+    A background task rather than a CLI, unlike `catalog_copy` and
+    `tmdb_enrichment`: those are minutes-to-hours one-shots with nothing to
+    poll, where this is a multi-hour pass whose progress an operator watches —
+    the shape `/admin/ingest` and the AKA backfill already have.
+    """
+    try:
+        async with TMDBClient(
+            base_url=settings.tmdb_base_url,
+            read_access_token=settings.tmdb_read_access_token,
+            rate_calls=settings.tmdb_rate_limit_requests,
+            rate_window=settings.tmdb_rate_limit_window_seconds,
+            retry_max_attempts=settings.tmdb_retry_max_attempts,
+        ) as client:
+            await run_catalog_ingest(
+                session_factory=_session_factory,
+                client=client,
+                run_id=run_id,
+                failure_threshold=settings.ingest_consecutive_failure_threshold,
+            )
+    except Exception as e:
+        log.exception("background catalog ingest crashed")
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()
@@ -236,6 +267,26 @@ async def get_run_status(run_id: UUID, session: AsyncSession = Depends(get_sessi
         await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))
     ).scalar_one_or_none()
     if row is None:
+        raise HTTPException(status_code=404, detail="run not found")
+    return _serialize_run(row)
+
+
+@router.post("/catalog-ingest", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_catalog_ingest(
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    return await _start_run(session, settings, "catalog_initial", _background_catalog_ingest)
+
+
+@router.get("/catalog-ingest/{run_id}")
+async def get_catalog_ingest_status(
+    run_id: UUID, session: AsyncSession = Depends(get_session)
+) -> dict:
+    row = (
+        await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))
+    ).scalar_one_or_none()
+    if row is None or row.kind != "catalog_initial":
         raise HTTPException(status_code=404, detail="run not found")
     return _serialize_run(row)
 

@@ -359,8 +359,16 @@ class IngestRun(Base):
             # enforced either way, so what this declaration says is what every
             # database does. Tests build from `create_all` and never see the
             # migration, so they get an ordinary validated constraint from here.
+            # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034). It
+            # runs against `catalog`, not this schema, and shares this table
+            # anyway: run rows are operational metadata rather than catalog
+            # data, and a second copy of them would mean a second stale-run
+            # cleanup, a second liveness guard and a second status route for no
+            # gain. Relocating them is NEU-1050's, alongside everything else
+            # this schema still holds — nothing drops `tvmaze` before then.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
-            "'show_refresh', 'person_update', 'episode_credits_backfill')",
+            "'show_refresh', 'person_update', 'episode_credits_backfill', "
+            "'catalog_initial')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

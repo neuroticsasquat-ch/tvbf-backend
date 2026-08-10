@@ -117,6 +117,26 @@ DEFAULT_APPEND: tuple[str, ...] = (
 )
 
 
+def is_gone_upstream(exc: BaseException) -> bool:
+    """True when TMDB says this series no longer exists.
+
+    404 only, and deliberately narrow — the same rule `tvmaze.client` applies,
+    restated here rather than imported because that module retires with the
+    schema it serves (NEU-1050) and the replacement must not depend on it.
+
+    `_request` already retries timeouts, network errors, 429s and 5xx to
+    exhaustion before raising, so an `HTTPStatusError` reaching a run loop is
+    never transient: a surfacing 5xx is a *persistent* upstream failure and must
+    still count toward the consecutive-failure abort. A 404 is a permanent data
+    condition — the daily export lists an id `/tv/{id}` no longer serves — and
+    counting it says "upstream is broken" when upstream is fine (NEU-1006).
+
+    Not widened to any 4xx: a 400 or 401 is a bug in our request or our config,
+    and silently absorbing those would be worse than counting them.
+    """
+    return isinstance(exc, httpx.HTTPStatusError) and exc.response.status_code == 404
+
+
 def season_key(season_number: int) -> str:
     """The `append_to_response` entry that rides one season's episode list."""
     return f"season/{season_number}"
