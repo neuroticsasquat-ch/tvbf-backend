@@ -62,7 +62,32 @@ TMDB has since added is to run the pass again.
 A show whose `tmdb_id` is already held by another catalog row is left unmatched
 and counted as a collision rather than raising. TV Maze carries genuine duplicate
 show entries, and two of them mapping to one TMDB series is data to look at in
-the human queue, not a reason to kill a 90-minute pass.
+the human queue, not a reason to kill a three-and-a-half-hour pass.
+
+## Known limitation: tiers are ordered within a show, not between shows
+
+**This module has a real bug and it was deliberately not fixed.** Candidates
+stream in `ORDER BY id` and the first row to claim a `tmdb_id` keeps it, so a
+tier-3 title guess on a low-id row can beat a tier-1 exact `/find` hit on a
+higher-id row — resolving the clearest evidence of ambiguity with the weakest
+tier. The production run hit it 18 times out of 107 collisions (NEU-1065); the
+worked case is `Lads Army` taking TMDB 747 from `Bad Lads Army`, which held the
+exact tvdb link.
+
+Those 18 rows were repaired by hand — `docs/migration/neu-1043-collision-remediation.sql`.
+The fix (two sweeps: every exact tier across the whole catalog first, then
+title+year over the remainder) was **superseded rather than implemented**,
+because the window in which it could matter has closed:
+
+- a re-run skips rows that already have a `tmdb_id`, so the 8,631 existing
+  `title_year` matches would never be re-evaluated, and the unmatched remainder
+  has already failed all three tiers; and
+- **after the full TMDB ingest, every series has a catalog row carrying its
+  `tmdb_id`**, so anything this module matches is refused by the `NOT EXISTS`
+  guard and logged as a collision. It cannot match at all past that point.
+
+If you ever re-map from scratch — the one scenario that revives the problem —
+implement the two-sweep order first. NEU-1065 has the design.
 """
 
 import logging
@@ -96,8 +121,8 @@ _COLLISION = "collision"
 # admitting the reboot of a show whose original is the row being matched.
 _PREMIERE_YEAR_DRIFT = 1
 
-# Shows per commit. The pass is ~90 minutes at 20 req/s over 89k shows, so it
-# has to checkpoint: a crash at minute 80 must not throw away 80 minutes of
+# Shows per commit. The pass is ~3.5 hours over 89k shows, so it has to
+# checkpoint: a crash three hours in must not throw away three hours of
 # upstream calls. Small enough that a batch is seconds of work, large enough
 # that commits are not the cost.
 _BATCH_SIZE = 500
@@ -298,7 +323,7 @@ async def enrich_show_ids(
 
     **This function owns its transaction boundaries**, unlike `copy_to_catalog`
     next door. The copy is 44 seconds of SQL that either happened or did not;
-    this is 90 minutes of rate-limited upstream calls, and work that cannot be
+    this is three and a half hours of upstream calls, and work that cannot be
     reproduced for free has to be committed as it is done.
 
     `limit` caps how many shows are considered — the way to try a hundred before

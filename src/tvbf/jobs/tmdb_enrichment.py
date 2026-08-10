@@ -14,8 +14,11 @@ nothing at all and a run that matched everything both exit 0; the counts in the
 log are the thing to read.
 
 Run it **after** `task copy:catalog` and **before** the full TMDB ingest. At prod
-scale it considers ~89k shows at 20 req/s — call it 90 minutes, with up to three
-upstream calls for a show that falls through all three tiers. It commits every
+scale it considers ~89k shows, with up to three upstream calls for a show that
+falls through all three tiers. **Measured 3h28m** on 2026-08-10, not the 90
+minutes first estimated from the 20 req/s budget: the loop is sequential, so
+throughput is set by round-trip latency (~7-8 shows/sec) and the budget is never
+the binding constraint. It commits every
 500 shows and skips anything already mapped, so interrupting it costs at most the
 current batch and re-running picks up where it stopped.
 
