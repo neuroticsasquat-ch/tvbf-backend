@@ -137,6 +137,20 @@ tasks:
         curl -sk https://api.tvbf.localhost/admin/ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  ingest:catalog:
+    desc: 'POST /admin/catalog-ingest — the full TMDB catalog pass, ~8.7h for 229k series (NEU-1034)'
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/catalog-ingest
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
+  ingest:catalog:status:
+    desc: 'GET /admin/catalog-ingest/<id> — task ingest:catalog:status -- <uuid>'
+    cmds:
+      - >
+        curl -sk https://api.tvbf.localhost/admin/catalog-ingest/{{.CLI_ARGS}}
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   akas:backfill:
     desc: POST /admin/backfill-akas
     cmds:

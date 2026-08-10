@@ -359,6 +359,20 @@ class Show(Base):
     ingested_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # When a **complete** TMDB payload was last mirrored onto this row — the
+    # full catalog ingest's resumability watermark (NEU-1034), and the same
+    # device `tvmaze.show.akas_synced_at` already is.
+    #
+    # It exists because "already ingested" and "row already present" are
+    # different questions here, where under TV Maze they were the same one. The
+    # migration copies ~89k shows into this table (NEU-1042) and maps a
+    # `tmdb_id` onto most of them (NEU-1043), so those rows exist and are
+    # correctly identified while still holding TV Maze data. An ingest resuming
+    # on row-existence would skip exactly the shows users track.
+    #
+    # NULL therefore means *no full TMDB pass has covered this row yet* — true
+    # of a copied row, and true of a locally-authored one forever.
+    tmdb_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the show stops appearing in the daily id export, i.e. TMDB has
     # deleted it. The row is never removed: `app.user_show_watch` and
     # `app.user_show_rating` cascade from here, so a delete would destroy user
