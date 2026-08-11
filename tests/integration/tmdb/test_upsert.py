@@ -13,6 +13,8 @@ from tests.fixtures.tmdb.series_factory import (
     make_cast_member,
     make_crew_member,
     make_episode,
+    make_episode_crew_member,
+    make_guest_star,
     make_job,
     make_role,
     make_season_detail,
@@ -895,6 +897,384 @@ class TestShowCredits:
         await _write(session, make_series(1396, aggregate_credits=make_aggregate_credits()))
 
         assert await _count(session, m.ShowCast) == 0
+
+
+class TestEpisodeCredits:
+    """Episode `guest_stars` / `crew` into `episode_guest_cast` / `episode_crew`
+    (NEU-1040).
+
+    These rode a dedicated ~29-hour pass under TV Maze (ADR-0003) and ride the
+    season payload here, so the properties that matter are about grain rather
+    than about scheduling: that an episode's director lands as crew and not as
+    guest cast, that a returning guest resolves to the show's character rather
+    than a per-episode copy, and that a re-ingest neither duplicates nor drops.
+    """
+
+    async def test_a_director_is_crew_and_a_guest_star_is_cast(self, session):
+        """The ticket's acceptance criterion, and the one confusion the two flat
+        lists invite: they are shaped almost identically."""
+        show_id = await _write(session, _series_with_episode_credits())
+
+        guests = await _guest_cast(session, show_id)
+        crew = await _episode_crew(session, show_id)
+
+        assert [(g.Person.name, g.Character.name) for g in guests] == [("Guest", "Victim")]
+        assert [(c.Person.name, c.CrewRole.department, c.CrewRole.job) for c in crew] == [
+            ("Director", "Directing", "Director")
+        ]
+
+    async def test_credit_order_is_stored_per_episode(self, session):
+        show_id = await _write(
+            session,
+            _series_with_episode_credits(
+                guest_stars=[
+                    make_guest_star(11, "Second", "Bystander", order=1),
+                    make_guest_star(12, "First", "Victim", order=0),
+                ]
+            ),
+        )
+
+        guests = await _guest_cast(session, show_id)
+
+        assert [(g.Person.name, g.EpisodeGuestCast.credit_order) for g in guests] == [
+            ("First", 0),
+            ("Second", 1),
+        ]
+
+    async def test_a_guest_character_interns_against_the_show_not_the_episode(self, session):
+        """A returning guest is the same character. Interning per episode would
+        mint a row per appearance and break the character page the show cast
+        already fills."""
+        episodes = [
+            make_episode(1, 1, 1, guest_stars=[make_guest_star(9, "Guest", "Tuco")]),
+            make_episode(2, 1, 2, guest_stars=[make_guest_star(9, "Guest", "Tuco")]),
+        ]
+        show_id = await _write(session, _series_with_episodes(episodes))
+
+        guests = await _guest_cast(session, show_id)
+
+        assert len(guests) == 2
+        assert len({g.Character.id for g in guests}) == 1
+        assert await _count(session, m.Character) == 1
+
+    async def test_a_guest_shares_the_character_the_show_cast_interned(self, session):
+        """The two writers run off different payloads against one `character`
+        table, which is why `_write_credits` declines to prune it."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(9, "Guest", "Tuco")])],
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(9, "Guest", [make_role("Tuco", 4)])]
+                ),
+            ),
+        )
+
+        guests = await _guest_cast(session, show_id)
+        cast = await _cast(session, show_id)
+
+        assert await _count(session, m.Character) == 1
+        show_character = cast[0][1]
+        assert show_character is not None
+        assert guests[0].Character.id == show_character.id
+        # One person, credited at both grains.
+        assert await _count(session, m.Person) == 1
+
+    async def test_episode_crew_shares_the_show_crew_vocabulary(self, session):
+        """One `crew_role` lookup, not `tvmaze`'s two — measured 100% overlap."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        crew=[make_episode_crew_member(5, "Michelle", "Directing", "Director")],
+                    )
+                ],
+                aggregate_credits=make_aggregate_credits(
+                    crew=[
+                        make_crew_member(6, "Vince", "Directing", [make_job("Director", 9)]),
+                    ]
+                ),
+            ),
+        )
+
+        assert await _count(session, m.CrewRole) == 1
+        episode_crew = await _episode_crew(session, show_id)
+        show_crew = await _crew(session, show_id)
+        assert episode_crew[0].CrewRole.id == show_crew[0][1].id
+
+    async def test_one_person_in_two_crew_roles_on_one_episode_is_two_rows(self, session):
+        """Three-part uniqueness. Two-part on `(episode, person)` would silently
+        drop the second — one person holds more than one role on 36 of 1,043
+        sampled episodes."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        crew=[
+                            make_episode_crew_member(5, "Vince", "Directing", "Director"),
+                            make_episode_crew_member(5, "Vince", "Writing", "Writer"),
+                        ],
+                    )
+                ]
+            ),
+        )
+
+        crew = await _episode_crew(session, show_id)
+
+        assert [(c.CrewRole.department, c.CrewRole.job) for c in crew] == [
+            ("Directing", "Director"),
+            ("Writing", "Writer"),
+        ]
+        assert await _count(session, m.Person) == 1
+
+    async def test_two_people_as_one_character_on_one_episode_is_two_rows(self, session):
+        """The other half of three-part uniqueness — one character played by two
+        people on 17 of 1,043 sampled episodes."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        guest_stars=[
+                            make_guest_star(1, "Actor A", "Twin"),
+                            make_guest_star(2, "Actor B", "Twin"),
+                        ],
+                    )
+                ]
+            ),
+        )
+
+        guests = await _guest_cast(session, show_id)
+
+        assert [g.Person.name for g in guests] == ["Actor A", "Actor B"]
+        assert await _count(session, m.Character) == 1
+
+    async def test_a_blank_character_is_stored_as_no_character(self, session):
+        """`character_id` is nullable and `uq_egc_episode_person_character` is
+        `NULLS NOT DISTINCT`, so the row has to survive *and* stay unique."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Extra", "  ")])]
+            ),
+        )
+
+        guests = await _guest_cast(session, show_id)
+
+        assert len(guests) == 1
+        assert guests[0].EpisodeGuestCast.character_id is None
+        assert await _count(session, m.Character) == 0
+
+    async def test_re_ingesting_the_same_show_duplicates_nothing(self, session):
+        """`NULLS NOT DISTINCT` earns its keep here: a null-character guest would
+        never conflict under the default and would accumulate a copy per pass."""
+        payload = _series_with_episodes(
+            [
+                make_episode(
+                    1,
+                    1,
+                    1,
+                    guest_stars=[
+                        make_guest_star(1, "Guest", "Victim"),
+                        make_guest_star(2, "Extra", ""),
+                    ],
+                    crew=[make_episode_crew_member(5, "Vince", "Directing", "Director")],
+                )
+            ]
+        )
+        await _write(session, payload)
+
+        await _write(session, payload)
+
+        assert await _count(session, m.EpisodeGuestCast) == 2
+        assert await _count(session, m.EpisodeCrew) == 1
+
+    async def test_a_dropped_credit_is_removed_on_the_next_pass(self, session):
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        guest_stars=[
+                            make_guest_star(1, "Guest", "Victim"),
+                            make_guest_star(2, "Cut", "Bystander"),
+                        ],
+                    )
+                ]
+            ),
+        )
+
+        await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest", "Victim")])]
+            ),
+        )
+
+        assert [g.Person.name for g in await _guest_cast(session, show_id)] == ["Guest"]
+        assert await _count(session, m.EpisodeGuestCast) == 1
+
+    async def test_an_episode_without_the_key_keeps_the_credits_it_had(self, session):
+        """ "Absent" and "empty" differ per episode, exactly as they do per
+        namespace. A payload that never mentioned `guest_stars` must not clear a
+        guest list a season fetch established."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest", "Victim")])]
+            ),
+        )
+        bare = make_episode(1, 1, 1)
+        del bare["guest_stars"]
+        del bare["crew"]
+
+        await _write(session, _series_with_episodes([bare]))
+
+        assert await _count(session, m.EpisodeGuestCast) == 1
+        assert len(await _guest_cast(session, show_id)) == 1
+
+    async def test_an_empty_list_clears_the_credits(self, session):
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest", "Victim")])]
+            ),
+        )
+
+        await _write(session, _series_with_episodes([make_episode(1, 1, 1)]))
+
+        assert await _count(session, m.EpisodeGuestCast) == 0
+        assert await _guest_cast(session, show_id) == []
+
+    async def test_one_season_re_fetched_leaves_another_seasons_credits_alone(self, session):
+        """The delete is scoped to the episodes the payload carried. A show-wide
+        one would empty every season a narrow re-fetch did not include."""
+        payload = make_series(1396, seasons=2, episodes_per_season=1)
+        for number in (1, 2):
+            payload[f"season/{number}"]["episodes"] = [
+                make_episode(
+                    number,
+                    number,
+                    1,
+                    guest_stars=[make_guest_star(number, f"Guest {number}", "Victim")],
+                )
+            ]
+        show_id = await _write(session, payload)
+
+        narrow = make_series(1396, seasons=2, episodes_per_season=1, append_seasons=False)
+        narrow["season/1"] = make_season_detail(
+            1, [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest 1", "Survivor")])]
+        )
+        await _write(session, narrow)
+
+        guests = await _guest_cast(session, show_id)
+        assert sorted(g.Character.name for g in guests) == ["Survivor", "Victim"]
+
+    async def test_a_crew_entry_missing_its_department_is_skipped_not_fatal(self, session):
+        """`crew_role` is NOT NULL in both columns. Measured never to happen — so
+        one malformed entry must cost that row and not the show's whole payload."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        crew=[
+                            make_episode_crew_member(5, "Vince", "", "Director"),
+                            make_episode_crew_member(6, "Michelle", "Writing", "Writer"),
+                        ],
+                    )
+                ]
+            ),
+        )
+
+        crew = await _episode_crew(session, show_id)
+
+        assert [(c.Person.name, c.CrewRole.job) for c in crew] == [("Michelle", "Writer")]
+
+    async def test_an_episode_arriving_twice_credits_it_once(self, session):
+        """An appended `season/N` and a `get_tv_season` overflow can both carry
+        the same episode. It resolves to one surrogate id, so its guest list must
+        be spent once rather than merged with itself."""
+        episode = make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest", "Victim")])
+        payload = make_series(1396, seasons=1, episodes_per_season=1)
+        payload["season/1"]["episodes"] = [episode]
+
+        show_id = await _write(
+            session,
+            payload,
+            seasons=[TMDBSeasonDetail.model_validate(make_season_detail(1, [episode]))],
+        )
+
+        assert await _count(session, m.EpisodeGuestCast) == 1
+        assert len(await _guest_cast(session, show_id)) == 1
+
+
+def _series_with_episodes(episodes: list[dict], **overrides) -> dict:
+    """A one-season show whose appended `season/1` carries exactly `episodes`."""
+    payload = make_series(1396, seasons=1, episodes_per_season=1, **overrides)
+    payload["season/1"]["episodes"] = episodes
+    return payload
+
+
+def _series_with_episode_credits(**episode_overrides) -> dict:
+    return _series_with_episodes(
+        [
+            make_episode(
+                1,
+                1,
+                1,
+                **{
+                    "guest_stars": [make_guest_star(1, "Guest", "Victim")],
+                    "crew": [make_episode_crew_member(2, "Director", "Directing", "Director")],
+                    **episode_overrides,
+                },
+            )
+        ]
+    )
+
+
+async def _guest_cast(session, show_id: int):
+    """This episode-grain cast in credit order — the shape a read path wants."""
+    rows = await session.execute(
+        select(m.EpisodeGuestCast, m.Character, m.Person)
+        .join(m.Person, m.Person.id == m.EpisodeGuestCast.person_id)
+        .outerjoin(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
+        .join(m.Episode, m.Episode.id == m.EpisodeGuestCast.episode_id)
+        .where(m.Episode.show_id == show_id)
+        .order_by(m.EpisodeGuestCast.credit_order.asc().nullslast(), m.Person.name)
+        .execution_options(populate_existing=True)
+    )
+    return list(rows.all())
+
+
+async def _episode_crew(session, show_id: int):
+    rows = await session.execute(
+        select(m.EpisodeCrew, m.CrewRole, m.Person)
+        .join(m.Person, m.Person.id == m.EpisodeCrew.person_id)
+        .join(m.CrewRole, m.CrewRole.id == m.EpisodeCrew.role_id)
+        .join(m.Episode, m.Episode.id == m.EpisodeCrew.episode_id)
+        .where(m.Episode.show_id == show_id)
+        .order_by(m.CrewRole.department, m.CrewRole.job)
+        .execution_options(populate_existing=True)
+    )
+    return list(rows.all())
 
 
 async def _cast(session, show_id: int) -> list[tuple[m.ShowCast, m.Character | None, m.Person]]:

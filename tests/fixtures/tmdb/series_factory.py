@@ -35,8 +35,10 @@ def make_episode(
         "still_path": "/still.jpg",
         "vote_average": 8.1,
         "vote_count": 100,
-        # NEU-1038's, and unparsed here on purpose — present so the fixture
-        # matches the payload a real fetch hands to the parser.
+        # Present and empty, because a real season payload always sends both keys
+        # (measured on every one of 8,916 sampled entries). Empty is an
+        # authoritative zero here, not "the caller did not ask" — a test for the
+        # absent case has to drop the keys explicitly.
         "crew": [],
         "guest_stars": [],
     } | overrides
@@ -148,6 +150,54 @@ def make_crew_member(
             "department": department,
             "jobs": jobs,
             "total_episode_count": sum(j["episode_count"] or 0 for j in jobs),
+        }
+        | overrides
+    )
+
+
+def make_guest_star(
+    tmdb_person_id: int,
+    name: str,
+    character: str,
+    *,
+    order: int = 0,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """An entry of an episode's `guest_stars[]`.
+
+    Flat, unlike `aggregate_credits.cast`: one episode, one character, so there
+    is no `roles[]` and no `episode_count`.
+    """
+    return (
+        _credit_person(tmdb_person_id, name)
+        | {
+            "character": character,
+            "credit_id": f"guest-{tmdb_person_id}-{character}",
+            "order": order,
+        }
+        | overrides
+    )
+
+
+def make_episode_crew_member(
+    tmdb_person_id: int,
+    name: str,
+    department: str,
+    job: str,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """An entry of an episode's `crew[]`.
+
+    `department` and `job` sit on the entry itself rather than in a nested
+    `jobs[]`, and there is **no** `order` — measured absent on all 7,456 sampled
+    episode-crew entries.
+    """
+    return (
+        _credit_person(tmdb_person_id, name)
+        | {
+            "department": department,
+            "job": job,
+            "credit_id": f"ecrew-{tmdb_person_id}-{job}",
         }
         | overrides
     )
