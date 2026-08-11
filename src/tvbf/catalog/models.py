@@ -210,7 +210,7 @@ class Show(Base):
         Index("ix_show_tvdb_id", "tvdb_id"),
         Index("ix_show_imdb_id", "imdb_id"),
         CheckConstraint(
-            "match_method IS NULL OR match_method IN ('tvdb_id', 'imdb_id', 'title_year')",
+            "match_method IS NULL OR match_method IN ('tvdb_id', 'imdb_id', 'title_year', 'human')",
             name="ck_show_match_method",
         ),
         {"schema": SCHEMA},
@@ -219,7 +219,8 @@ class Show(Base):
     id: Mapped[int] = mapped_column(BigInteger, _surrogate(_SHOW_ID_START), primary_key=True)
     tmdb_id: Mapped[int | None] = mapped_column(Integer)
     # How the migration arrived at this row's `tmdb_id` (NEU-1043) — one of
-    # `tvdb_id` / `imdb_id` / `title_year`, mirroring the three mapping tiers.
+    # `tvdb_id` / `imdb_id` / `title_year`, mirroring the three mapping tiers,
+    # plus `human` for a row the matching queue resolved by hand (NEU-1044).
     #
     # **The point of it is that two of those tiers are exact and one is not.**
     # A bare `tmdb_id` makes a `/find` hit and a title guess indistinguishable
@@ -232,6 +233,12 @@ class Show(Base):
     # its `tmdb_id` without having had to match anything. It is not a fourth
     # tier, and `tmdb_id IS NULL AND match_method IS NULL` remains the
     # locally-authored row of ADR-0008.
+    #
+    # `human` says a person decided this row, and `tmdb_id` says what they
+    # decided: an id means they confirmed that series, NULL means they looked
+    # and found no TMDB counterpart, so the row is locally-authored on purpose
+    # rather than by omission. Both are terminal — `human` is the only value
+    # this migration's automated passes will never write.
     #
     # Unlike `status`, this vocabulary is ours, so a CHECK constraint is right:
     # a typo'd method is a bug in our own writer rather than an upstream value

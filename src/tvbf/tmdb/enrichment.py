@@ -103,11 +103,19 @@ from tvbf.tmdb.client import TMDBClient
 
 log = logging.getLogger(__name__)
 
-# The `match_method` vocabulary, mirrored by `ck_show_match_method`.
+# The three tiers this pass can write, in the order it tries them. Not the whole
+# `ck_show_match_method` vocabulary: the constraint also permits `human`, which
+# only NEU-1044's queue writes and which therefore has no place in a tally of
+# what the automated pass achieved.
 MATCH_TVDB_ID = "tvdb_id"
 MATCH_IMDB_ID = "imdb_id"
 MATCH_TITLE_YEAR = "title_year"
 MATCH_METHODS: tuple[str, ...] = (MATCH_TVDB_ID, MATCH_IMDB_ID, MATCH_TITLE_YEAR)
+
+# A human verdict from the matching queue (NEU-1044), defined here so the one
+# module that owns this vocabulary owns all of it. Deliberately outside
+# `MATCH_METHODS` — see above.
+MATCH_HUMAN = "human"
 
 # Outcomes that are not a match. Local to the tally; never written to a row.
 _UNMATCHED = "unmatched"
