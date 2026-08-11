@@ -213,6 +213,21 @@ class Show(Base):
             "match_method IS NULL OR match_method IN ('tvdb_id', 'imdb_id', 'title_year', 'human')",
             name="ck_show_match_method",
         ),
+        # Not for reading — nothing queries a show *by* its last-aired episode.
+        # These exist because both columns are `ON DELETE SET NULL` FKs into
+        # `catalog.episode`, and Postgres has to find the referencing rows every
+        # time an episode is deleted. Unindexed, that is a sequential scan of all
+        # 255,010 shows **per deleted episode**: measured against production on
+        # 2026-08-11, deleting a single show with 10-40 episodes ran past 60
+        # seconds and was still going. With them it is an index lookup.
+        #
+        # Every other FK into the catalog spine already has a leading index, by
+        # accident of being part of a lookup path. These two have no read path, so
+        # nothing gave them one — which is exactly why the cost stayed invisible
+        # until `show_prune` (NEU-1066) became the first pass to delete episodes
+        # in bulk.
+        Index("ix_show_last_episode_to_air_id", "last_episode_to_air_id"),
+        Index("ix_show_next_episode_to_air_id", "next_episode_to_air_id"),
         {"schema": SCHEMA},
     )
 
