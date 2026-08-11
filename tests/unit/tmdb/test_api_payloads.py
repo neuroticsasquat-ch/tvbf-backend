@@ -8,9 +8,20 @@ the fields. Every fixture is built from real upstream key names — see
 import pytest
 from pydantic import ValidationError
 
-from tests.fixtures.tmdb.series_factory import make_season_detail, make_series
+from tests.fixtures.tmdb.series_factory import (
+    make_aggregate_credits,
+    make_cast_member,
+    make_crew_member,
+    make_job,
+    make_role,
+    make_season_detail,
+    make_series,
+)
 from tvbf.tmdb.api_payloads import (
+    TMDBAggregateCast,
+    TMDBAggregateCredits,
     TMDBEpisode,
+    TMDBRole,
     TMDBSeasonDetail,
     TMDBSeasonSummary,
     TMDBSeries,
@@ -120,6 +131,7 @@ class TestNamespacePresence:
     @pytest.mark.parametrize(
         "field",
         [
+            "aggregate_credits",
             "external_ids",
             "alternative_titles",
             "content_ratings",
@@ -201,3 +213,73 @@ class TestUnknownFields:
         series = TMDBSeries.model_validate(make_series(softcore=False, brand_new_field=1))
 
         assert series.name == "Show 1396"
+
+
+class TestAggregateCredits:
+    """The nesting is the whole point of taking this namespace over `credits`:
+    `episode_count` arrives per role, not per person."""
+
+    def test_a_cast_entry_carries_a_role_per_character(self):
+        credits = TMDBAggregateCredits.model_validate(
+            make_aggregate_credits(
+                cast=[
+                    make_cast_member(
+                        1, "Tatiana Maslany", [make_role("Sarah", 50), make_role("Helena", 30)]
+                    )
+                ]
+            )
+        )
+
+        member = credits.cast[0]
+        assert [(r.character, r.episode_count) for r in member.roles] == [
+            ("Sarah", 50),
+            ("Helena", 30),
+        ]
+        assert member.total_episode_count == 80
+
+    def test_a_crew_entry_carries_the_department_and_a_job_per_credit(self):
+        """`department` sits on the entry and `job` on each nested credit — the
+        `(department, job)` pair `crew_role` interns is assembled across the two
+        levels, so a parser that lost either half would intern nothing."""
+        credits = TMDBAggregateCredits.model_validate(
+            make_aggregate_credits(
+                crew=[
+                    make_crew_member(
+                        9,
+                        "Vince Gilligan",
+                        "Writing",
+                        [make_job("Writer", 29), make_job("Story", 3)],
+                    )
+                ]
+            )
+        )
+
+        member = credits.crew[0]
+        assert member.department == "Writing"
+        assert [(j.job, j.episode_count) for j in member.jobs] == [("Writer", 29), ("Story", 3)]
+
+    def test_billing_order_reads_the_upstream_key_alone(self):
+        """`order` is the upstream spelling; `billing_order` is the column. The
+        alias binds one way only, so a fixture using the column name must fail
+        rather than parse to `None` and read as an unranked cast."""
+        member = make_cast_member(1, "Lead", [make_role("Walter", 62)], order=3)
+        assert TMDBAggregateCast.model_validate(member).billing_order == 3
+
+        member["billing_order"] = member.pop("order")
+        assert TMDBAggregateCast.model_validate(member).billing_order is None
+
+    @pytest.mark.parametrize("blank", ["", None])
+    def test_a_blank_character_parses_to_none(self, blank):
+        """Free text upstream, and blank in 1 of 7,629 sampled roles. `None` is
+        what keeps `catalog.character` from interning a role nobody played."""
+        role = TMDBRole.model_validate({"credit_id": "x", "character": blank, "episode_count": 1})
+
+        assert role.character is None
+
+    def test_a_crew_entry_has_no_order(self):
+        """Measured absent on all 2,066 sampled show-crew entries, which is why
+        `catalog.show_crew` carries no ordering column and `episode_count` is the
+        sort key instead."""
+        member = make_crew_member(9, "A Writer", "Writing", [make_job("Writer", 29)])
+
+        assert "order" not in member

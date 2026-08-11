@@ -30,9 +30,15 @@ it, so a fixture that spells the upstream key wrong fails here rather than
 parsing to `None` and looking like missing data — the failure mode
 `TVMazeExternals` documents from the original ingest.
 
-Credits — `aggregate_credits`, and episode `crew` / `guest_stars` — are
-deliberately absent. `catalog` has no credit tables until NEU-1038, and a parser
-with nowhere to write is a shape nobody validates.
+**`aggregate_credits` nests, where `credits` is flat.** A cast entry is a
+*person* carrying `roles: [{credit_id, character, episode_count}]`, and a crew
+entry a person carrying `jobs: [{credit_id, job, episode_count}]` — so one entry
+becomes several credit rows, and `episode_count` arrives per role rather than
+per person (NEU-1039). That nesting is the whole reason the audit takes this
+namespace over `credits`, which carries the same people with no counts at all.
+
+Episode `crew` / `guest_stars` are still absent: they ride the season payload
+rather than this one, and they are NEU-1040's.
 """
 
 from datetime import date, datetime
@@ -118,6 +124,88 @@ class TMDBCreatedBy(_Payload):
     original_name: OptionalStr = None
     gender: int | None = None
     profile_path: OptionalStr = None
+
+
+class TMDBRole(_Payload):
+    """One character a cast member played, from `aggregate_credits.cast[].roles[]`.
+
+    `character` is `OptionalStr` rather than `str` because it is free text that
+    upstream sometimes leaves blank — 1 of 7,629 sampled roles
+    (`scripts/probe_tmdb_credit_shapes.py`). Coercing `""` to `None` here is what
+    keeps `catalog.character` from interning a role nobody played.
+    """
+
+    credit_id: OptionalStr = None
+    character: OptionalStr = None
+    episode_count: int | None = None
+
+
+class TMDBJob(_Payload):
+    """One job a crew member held, from `aggregate_credits.crew[].jobs[]`.
+
+    The `department` half of the `(department, job)` pair is not here — it sits
+    on the crew entry, one level up, and applies to every job under it.
+    """
+
+    credit_id: OptionalStr = None
+    job: OptionalStr = None
+    episode_count: int | None = None
+
+
+class TMDBCreditPerson(_Payload):
+    """The person half of a credit, identical across cast and crew entries.
+
+    TMDB returns a person inline on each credit and the ingest makes no
+    per-person request, so the fields here are the whole of what `catalog.person`
+    can ever know — the audit's person inventory (§5) and no more.
+
+    `total_episode_count` is the exception that proves the grain: it is the
+    audit's §8 correction, it belongs to the *entry* rather than the person, and
+    it therefore lands on each credit row the entry produces rather than on
+    `catalog.person`. It sits here only because cast and crew both carry it.
+    """
+
+    tmdb_person_id: int = Field(alias="id")
+    name: str
+    original_name: OptionalStr = None
+    gender: int | None = None
+    known_for_department: OptionalStr = None
+    popularity: float | None = None
+    profile_path: OptionalStr = None
+    adult: bool = False
+    # This person's episodes across the show, summed over their roles by TMDB —
+    # the entry-level total, denormalised onto each row the entry produces.
+    total_episode_count: int | None = None
+
+
+class TMDBAggregateCast(TMDBCreditPerson):
+    """One cast entry — a person and every character they played on the show."""
+
+    roles: list[TMDBRole] = Field(default_factory=list)
+    # Named for the column it lands in, and read from `order` alone. Kept
+    # despite `episode_count` being the sort key: it is the only signal for a
+    # top-billed lead who appears in fewer episodes than a recurring supporting
+    # actor.
+    billing_order: int | None = Field(default=None, alias="order")
+
+
+class TMDBAggregateCrew(TMDBCreditPerson):
+    """One crew entry — a person and every job they held on the show.
+
+    No `order`: TMDB sends none on a crew entry, measured across 2,066 sampled
+    show-crew entries. `episode_count` is the ordering.
+    """
+
+    jobs: list[TMDBJob] = Field(default_factory=list)
+    department: OptionalStr = None
+
+
+class TMDBAggregateCredits(_Payload):
+    """The `aggregate_credits` namespace. Also carries `id`, which we ignore —
+    it is the *show's* id, which the caller already has."""
+
+    cast: list[TMDBAggregateCast] = Field(default_factory=list)
+    crew: list[TMDBAggregateCrew] = Field(default_factory=list)
 
 
 class TMDBEpisode(_Payload):
@@ -384,6 +472,7 @@ class TMDBSeries(_Payload):
     last_episode_to_air: TMDBEpisode | None = None
     next_episode_to_air: TMDBEpisode | None = None
 
+    aggregate_credits: TMDBAggregateCredits | None = None
     external_ids: TMDBExternalIds | None = None
     alternative_titles: TMDBResults[TMDBAlternativeTitle] | None = None
     content_ratings: TMDBResults[TMDBContentRating] | None = None

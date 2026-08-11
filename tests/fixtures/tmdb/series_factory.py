@@ -74,6 +74,95 @@ def make_season_detail(
     } | overrides
 
 
+def make_role(
+    character: str, episode_count: int, credit_id: str | None = None, **overrides: Any
+) -> dict[str, Any]:
+    """An entry of a cast member's `roles[]` — the nesting that makes
+    `episode_count` a per-character measure."""
+    return {
+        "credit_id": credit_id if credit_id is not None else f"role-{character}",
+        "character": character,
+        "episode_count": episode_count,
+    } | overrides
+
+
+def make_job(job: str, episode_count: int, credit_id: str | None = None) -> dict[str, Any]:
+    """An entry of a crew member's `jobs[]`. Carries no `department` — that sits
+    on the crew entry above it."""
+    return {
+        "credit_id": credit_id if credit_id is not None else f"job-{job}",
+        "job": job,
+        "episode_count": episode_count,
+    }
+
+
+def _credit_person(tmdb_person_id: int, name: str) -> dict[str, Any]:
+    return {
+        "adult": False,
+        "gender": 2,
+        "id": tmdb_person_id,
+        "known_for_department": "Acting",
+        "name": name,
+        "original_name": name,
+        "popularity": 12.3,
+        "profile_path": "/profile.jpg",
+    }
+
+
+def make_cast_member(
+    tmdb_person_id: int,
+    name: str,
+    roles: list[dict[str, Any]],
+    *,
+    order: int = 0,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """An entry of `aggregate_credits.cast`. Carries `order`, unlike crew."""
+    return (
+        _credit_person(tmdb_person_id, name)
+        | {
+            "roles": roles,
+            # Upstream states this itself; summing the nested counts is the closest
+            # a fixture can get without inventing a number. `None` is skipped
+            # rather than coerced, because a role of unknown size adds nothing
+            # knowable to the entry total.
+            "total_episode_count": sum(r["episode_count"] or 0 for r in roles),
+            "order": order,
+        }
+        | overrides
+    )
+
+
+def make_crew_member(
+    tmdb_person_id: int,
+    name: str,
+    department: str,
+    jobs: list[dict[str, Any]],
+    **overrides: Any,
+) -> dict[str, Any]:
+    """An entry of `aggregate_credits.crew`. Carries **no** `order` — measured
+    absent on all 2,066 sampled show-crew entries."""
+    return (
+        _credit_person(tmdb_person_id, name)
+        | {
+            "department": department,
+            "jobs": jobs,
+            "total_episode_count": sum(j["episode_count"] or 0 for j in jobs),
+        }
+        | overrides
+    )
+
+
+def make_aggregate_credits(
+    cast: list[dict[str, Any]] | None = None,
+    crew: list[dict[str, Any]] | None = None,
+    tmdb_id: int = 1396,
+) -> dict[str, Any]:
+    """The `aggregate_credits` namespace. `id` is the *show's* id, which the
+    writer ignores because its caller already has it."""
+    return {"id": tmdb_id, "cast": cast or [], "crew": crew or []}
+
+
 def make_series(
     tmdb_id: int = 1396,
     *,
