@@ -19,6 +19,16 @@ from tvbf.tvmaze import models as m
 SHOW_CURSOR_KINDS: tuple[str, ...] = ("initial", "update")
 PERSON_CURSOR_KINDS: tuple[str, ...] = ("person_update",)
 
+# The TMDB catalog delta's lineage (NEU-1035). A single kind, because the full
+# catalog pass deliberately hands nothing forward: TMDB's delta is a date range
+# rather than a per-show epoch, so `catalog_initial` has no cursor to write and
+# `tmdb/update.py` bootstraps off that run's `started_at` instead.
+#
+# The scoping is what makes it safe for this lineage to store a *date* in a
+# column every other lineage stores a TV Maze epoch in. Nothing outside these
+# kinds can read it, and nothing inside them reads anything else.
+CATALOG_CURSOR_KINDS: tuple[str, ...] = ("catalog_update",)
+
 
 async def create_run(session: AsyncSession, kind: str) -> UUID:
     run = m.IngestRun(id=uuid4(), kind=kind, status="running")
@@ -88,6 +98,40 @@ async def get_last_successful_cursor(
         .limit(1)
     )
     return result.scalar_one_or_none()
+
+
+async def get_completed_pass_start(
+    session: AsyncSession, *, kinds: Sequence[str]
+) -> datetime | None:
+    """When a completed pass of `kinds` first began, or None if none completed.
+
+    Its one caller is the catalog delta bootstrapping off the full pass
+    (NEU-1035), and both halves of the question are load-bearing.
+
+    **A run must have succeeded**, because that is the only evidence the pass
+    covered the whole catalog; anything less and the delta would claim coverage
+    a half-finished pass never achieved.
+
+    **The date comes from the earliest attempt, not that successful run.** The
+    full pass is resumable and takes ~8.7 hours, so it is routinely several runs
+    of which only the last reaches `succeeded` — and a show mirrored by the
+    *first* attempt was stamped days before the last one started. Bootstrapping
+    from the successful run's `started_at` would step over every change made to
+    those shows in between, and nothing would ever pick them up again: they
+    carry `tmdb_synced_at`, so the full pass's own work list excludes them too.
+    `started_at` rather than `finished_at` for the same reason one scale down.
+    """
+    completed = await session.execute(
+        select(func.count())
+        .select_from(m.IngestRun)
+        .where(m.IngestRun.kind.in_(tuple(kinds)), m.IngestRun.status == "succeeded")
+    )
+    if not completed.scalar_one():
+        return None
+    earliest = await session.execute(
+        select(func.min(m.IngestRun.started_at)).where(m.IngestRun.kind.in_(tuple(kinds)))
+    )
+    return earliest.scalar_one_or_none()
 
 
 async def find_live_run(

@@ -151,6 +151,13 @@ tasks:
         curl -sk https://api.tvbf.localhost/admin/catalog-ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  update:catalog:
+    desc: 'POST /admin/catalog-update — one TMDB catalog delta from /tv/changes (NEU-1035)'
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/catalog-update
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   akas:backfill:
     desc: POST /admin/backfill-akas
     cmds:

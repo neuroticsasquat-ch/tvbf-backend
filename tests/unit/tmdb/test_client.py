@@ -1,3 +1,5 @@
+from datetime import date, timedelta
+
 import httpx
 import pytest
 import respx
@@ -5,6 +7,7 @@ import respx
 from tvbf.rate_budget import Budget, get_rate_limiter
 from tvbf.tmdb.client import (
     APPEND_TO_RESPONSE_LIMIT,
+    CHANGES_MAX_WINDOW_DAYS,
     DEFAULT_APPEND,
     TMDBClient,
     _budget,
@@ -148,6 +151,51 @@ async def test_season_request_fetches_one_season():
     async with _client() as c:
         season = await c.get_tv_season(1396, 3)
     assert season["season_number"] == 3
+
+
+# --- /tv/changes ------------------------------------------------------------
+
+
+@respx.mock
+async def test_changes_request_sends_the_window_and_the_page():
+    route = respx.get(f"{BASE}/tv/changes").mock(
+        return_value=httpx.Response(200, json={"results": [], "page": 2, "total_pages": 2})
+    )
+    async with _client() as c:
+        body = await c.get_tv_changes(start=date(2026, 8, 1), end=date(2026, 8, 10), page=2)
+
+    assert body["total_pages"] == 2
+    assert dict(route.calls.last.request.url.params) == {
+        "start_date": "2026-08-01",
+        "end_date": "2026-08-10",
+        "page": "2",
+    }
+
+
+@respx.mock
+async def test_changes_request_rejects_a_window_wider_than_tmdb_accepts():
+    """TMDB rejects it anyway; catching it here spends no token from a paced
+    budget on a request that cannot succeed, and names the way out."""
+    async with _client() as c:
+        with pytest.raises(ValueError, match="plan_windows"):
+            await c.get_tv_changes(
+                start=date(2026, 8, 1),
+                end=date(2026, 8, 1) + timedelta(days=CHANGES_MAX_WINDOW_DAYS + 1),
+            )
+    assert not respx.calls
+
+
+@respx.mock
+async def test_changes_request_accepts_exactly_the_maximum_window():
+    respx.get(f"{BASE}/tv/changes").mock(
+        return_value=httpx.Response(200, json={"results": [], "page": 1, "total_pages": 1})
+    )
+    start = date(2026, 8, 1)
+    async with _client() as c:
+        body = await c.get_tv_changes(
+            start=start, end=start + timedelta(days=CHANGES_MAX_WINDOW_DAYS)
+        )
+    assert body["total_pages"] == 1
 
 
 # --- /find ------------------------------------------------------------------
