@@ -15,10 +15,12 @@ apart because its two vocabularies are disjoint. TMDB emits the same
 appear at show level — 100% overlap — so a second lookup would hold a copy of the
 same values.
 
-**No `sort_order` on either crew table.** TMDB sends no `order` on a crew entry
-at all: 0 of 2,066 show-crew and 0 of 7,456 episode-crew entries. `episode_count`
-is the ordering, which is what NEU-1039 sorts on. Cast and guest stars do carry
-`order` and keep the column.
+**No ordering column on either crew table.** TMDB sends no `order` on a crew
+entry at all: 0 of 2,066 show-crew and 0 of 7,456 episode-crew entries.
+`episode_count` is the ordering, which is what NEU-1039 sorts on. Cast and guest
+stars do carry `order` and keep it — as `billing_order` and `credit_order`
+respectively, the two terms `CONTEXT.md` uses, rather than `tvmaze`'s one
+`sort_order` for both grains.
 
 **`character_id` is nullable.** TV Maze always sent a character object; TMDB
 sends free text that is occasionally empty (1 blank of 7,629 sampled roles). The
@@ -107,7 +109,7 @@ def upgrade() -> None:
         sa.Column("credit_id", sa.Text(), nullable=True),
         sa.Column("episode_count", sa.Integer(), nullable=True),
         sa.Column("total_episode_count", sa.Integer(), nullable=True),
-        sa.Column("sort_order", sa.Integer(), nullable=True),
+        sa.Column("billing_order", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(["character_id"], ["catalog.character.id"]),
         sa.ForeignKeyConstraint(["person_id"], ["catalog.person.id"]),
         sa.ForeignKeyConstraint(["show_id"], ["catalog.show.id"], ondelete="CASCADE"),
@@ -160,7 +162,7 @@ def upgrade() -> None:
         sa.Column("person_id", sa.BigInteger(), nullable=False),
         sa.Column("character_id", sa.BigInteger(), nullable=True),
         sa.Column("credit_id", sa.Text(), nullable=True),
-        sa.Column("sort_order", sa.Integer(), nullable=True),
+        sa.Column("credit_order", sa.Integer(), nullable=True),
         sa.ForeignKeyConstraint(["character_id"], ["catalog.character.id"]),
         sa.ForeignKeyConstraint(["episode_id"], ["catalog.episode.id"], ondelete="CASCADE"),
         sa.ForeignKeyConstraint(["person_id"], ["catalog.person.id"]),

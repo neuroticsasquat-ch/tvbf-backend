@@ -47,13 +47,15 @@ _Avoid_: soft delete, archived, disabled
 ### People and credits
 
 **Person**:
-A real human in the catalog — actor, director, producer. Identified by a TV Maze person id.
+A real human in the catalog — actor, director, producer. Reached only through credits: upstream returns a person inline on every cast, crew and guest credit, so there is no person fetch of its own (ADR-0003).
+
+A person carries a surrogate id like any other catalog row, but is the one whose id is **not carried over from TV Maze** — user data references no person, so there was nothing to line up and credits are re-ingested wholesale. `/people/{id}` URLs therefore change at cutover.
 _Avoid_: actor, talent, contributor
 
 **Character**:
 A fictional or self-portrayed role, **scoped to one show** and identified by `(show_id, name)`. A character is not owned by one person: two people can be credited as the same character, and one person can play many.
 
-The scope narrowed from global when the source changed (ADR-0007). TMDB models character as free text on a credit, so we intern per show — the same pattern as crew role. Measured cost in prod: of 1,508,888 characters, 2,621 were played by more than one person (all preserved by per-show interning) and exactly **one** spanned more than one show.
+The scope narrowed from global when the source changed (ADR-0007). TMDB models character as free text on a credit, so we intern per show — the same pattern as crew role. Measured cost in prod: of 1,509,298 characters, 2,621 were played by more than one person (all preserved by per-show interning) and exactly **one** spanned more than one show.
 _Avoid_: role, part
 
 **Credit**:

@@ -927,7 +927,7 @@ class Character(Base):
     thing behind it narrowed.
 
     **Narrowing to per-show is the one real model change of NEU-1038** and it was
-    measured before it was made: of 1,508,888 characters in prod, 2,621 are played
+    measured before it was made: of 1,509,298 characters in prod, 2,621 are played
     by more than one person — every one of them preserved, because recasting and
     voice ensembles happen *within* a show — and exactly **one** spans more than
     one show. Recorded in ADR-0007 and `CONTEXT.md`.
@@ -996,10 +996,10 @@ class ShowCast(Base):
 
     __tablename__ = "show_cast"
     __table_args__ = (
-        # `episode_count` is the sort key (NEU-1039), not `sort_order`: it is the
-        # measure `order` only ever proxied for, and it is the one ordering the
-        # crew table can share. Postgres scans an index backwards, so ascending
-        # serves the descending sort.
+        # `episode_count` is the sort key (NEU-1039), not `billing_order`: it is
+        # the measure `order` only ever proxied for, and it is the one ordering
+        # the crew table can share. Postgres scans an index backwards, so
+        # ascending serves the descending sort.
         Index("ix_show_cast_show_id_episode_count", "show_id", "episode_count"),
         Index("ix_show_cast_person_id", "person_id"),
         {"schema": SCHEMA},
@@ -1026,11 +1026,13 @@ class ShowCast(Base):
     # Episodes for this *person* across the show, summed over their roles by
     # TMDB. Denormalised across a person's rows, which is the grain TMDB gives it.
     total_episode_count: Mapped[int | None] = mapped_column(Integer)
-    # Upstream's `order` — billing order. Kept because the audit models it and it
-    # is the only signal for the top-billed lead of a show whose star appears in
-    # fewer episodes than a recurring supporting actor. Nullable, unlike
-    # `tvmaze.show_cast.sort_order`: nothing guarantees TMDB sends it.
-    sort_order: Mapped[int | None] = mapped_column(Integer)
+    # Upstream's `order`. Named for the glossary term rather than `tvmaze`'s
+    # `sort_order`, which `CONTEXT.md` lists under *Avoid* — the two grains have
+    # different orderings and one name for both hid that. Kept because the audit
+    # models it and it is the only signal for the top-billed lead of a show whose
+    # star appears in fewer episodes than a recurring supporting actor. Nullable,
+    # unlike `tvmaze.show_cast.sort_order`: nothing guarantees TMDB sends it.
+    billing_order: Mapped[int | None] = mapped_column(Integer)
 
 
 class ShowCrew(Base):
@@ -1039,7 +1041,7 @@ class ShowCrew(Base):
     One row per job, for the same reason `ShowCast` is one row per role:
     `jobs: [{credit_id, job, episode_count}]` nests under one crew entry.
 
-    **No `sort_order`, and that is measured rather than assumed.** Both
+    **No ordering column at all, and that is measured rather than assumed.** Both
     `tvmaze.show_crew` and `tvmaze.episode_crew` carry a NOT NULL `sort_order`;
     TMDB sends no `order` on a crew entry at all — 0 of 2,066 show-crew and 0 of
     7,456 episode-crew entries sampled
@@ -1108,8 +1110,11 @@ class EpisodeGuestCast(Base):
     # the show, not the episode.
     character_id: Mapped[int | None] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"))
     credit_id: Mapped[str | None] = mapped_column(Text)
-    # Upstream's `order`; a guest star entry does carry one, unlike crew.
-    sort_order: Mapped[int | None] = mapped_column(Integer)
+    # Upstream's `order`; a guest star entry does carry one, unlike crew. Credit
+    # order, not billing order — it is this episode's own credit sequence and
+    # means nothing compared across episodes, which is why `CONTEXT.md` keeps the
+    # two terms apart and puts `sort order` under *Avoid* for both.
+    credit_order: Mapped[int | None] = mapped_column(Integer)
 
 
 class EpisodeCrew(Base):

@@ -63,10 +63,10 @@ async def main() -> int:
     jobs_keys: set[str] = set()
     guest_keys: set[str] = set()
     episode_crew_keys: set[str] = set()
-    crew_has_order = Counter()
-    episode_crew_has_order = Counter()
-    character_blank = Counter()
-    guest_character_blank = Counter()
+    crew_has_order: Counter = Counter()
+    episode_crew_has_order: Counter = Counter()
+    character_blank: Counter = Counter()
+    guest_character_blank: Counter = Counter()
 
     settings = get_settings()
     async with TMDBClient(
@@ -106,9 +106,7 @@ async def main() -> int:
                     guest_character_blank[not (guest.get("character") or "").strip()] += 1
                 for member in ecrew:
                     episode_crew_has_order["order" in member] += 1
-                    episode_roles.add(
-                        (member.get("department") or "", member.get("job") or "")
-                    )
+                    episode_roles.add((member.get("department") or "", member.get("job") or ""))
 
             print(f"{label}: {len(cast)} cast, {len(crew)} crew entries")
 
@@ -126,7 +124,10 @@ async def main() -> int:
 
     print()
     print("=== Q2: does crew carry an `order`? ===")
-    print(f"show crew entries with `order`:    {crew_has_order[True]} of {sum(crew_has_order.values())}")
+    print(
+        f"show crew entries with `order`:    {crew_has_order[True]} "
+        f"of {sum(crew_has_order.values())}"
+    )
     print(
         f"episode crew entries with `order`: {episode_crew_has_order[True]} "
         f"of {sum(episode_crew_has_order.values())}"
@@ -135,7 +136,9 @@ async def main() -> int:
     print()
     print("=== Q3: how often is `character` blank? ===")
     print(f"cast roles blank:  {character_blank[True]} of {sum(character_blank.values())}")
-    print(f"guest stars blank: {guest_character_blank[True]} of {sum(guest_character_blank.values())}")
+    print(
+        f"guest stars blank: {guest_character_blank[True]} of {sum(guest_character_blank.values())}"
+    )
 
     print()
     print("=== Q4: measured key sets ===")

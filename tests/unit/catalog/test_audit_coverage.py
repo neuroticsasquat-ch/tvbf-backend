@@ -111,7 +111,7 @@ PERSON: dict[str, Target] = {
     # Free text on a credit upstream, interned per show here — the one real
     # model change of NEU-1038.
     "character": "character",
-    "order": ("show_cast", "sort_order"),
+    "order": ("show_cast", "billing_order"),
     # One shared lookup rather than tvmaze's two: measured, the show-level and
     # episode-level `(department, job)` vocabularies overlap 100%.
     "department": ("crew_role", "department"),

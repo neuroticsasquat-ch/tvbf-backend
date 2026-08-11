@@ -37,4 +37,6 @@ Verified before adopting: the season response is identical to the per-episode re
 
 **Episode crew is modelled as its own thing, not as guest cast's sibling.** Upstream names it `guestcrew` for symmetry with `guestcast`, but an episode's director is not a guest. Its vocabulary is disjoint from show-level `crew_role`: `Writer`, `Director`, `Story`, `Teleplay` appear in the episode-level data and none of them appear in the 233-name show-level lookup, which holds production functions like Creator and Executive Producer. It gets its own interned lookup, `episode_crew_role`.
 
+> **Superseded for `catalog` by [ADR-0007](0007-tmdb-replaces-tvmaze-as-the-catalog-source.md) (NEU-1038).** The disjointness is a TV Maze fact, not a general one — TMDB emits the same `(department, job)` pair at both grains, with 100% measured overlap — so `catalog` has one `crew_role` and no `episode_crew_role`. This paragraph continues to describe `tvmaze`, which keeps both tables until cutover.
+
 **A ~29-hour pass is ordinary, and that is the point.** Pass A was ~27h and pass C ~75h. Bringing episode credits into the same band is what moved this from "spike whether it is worth 23 days" to "build it". ADR-0002 still holds: none of this is fetched in a request path.

@@ -62,9 +62,24 @@ and engagement data.
 ## What this costs, accepted knowingly
 
 **Character stops being globally identified.** TMDB models character as free text on a
-credit. We intern per show instead (see CONTEXT.md). Measured impact: of 1,508,888
+credit. We intern per show instead (see CONTEXT.md). Measured impact: of 1,509,298
 characters in prod, 2,621 are played by more than one person — all preserved by per-show
 interning — and exactly **one** spans more than one show.
+
+**Show and episode crew roles stop being two vocabularies.** ADR-0003 gave episode crew
+its own interned lookup, `episode_crew_role`, because TV Maze's two vocabularies were
+disjoint — `Writer` / `Director` / `Story` / `Teleplay` at episode grain against 233
+production-function names at show grain. TMDB emits the same `(department, job)` pair at
+both grains, and measured (`scripts/probe_tmdb_credit_shapes.py`, 5 series, 2026-08-11)
+**all 78 episode-level pairs also appear at show level — 100% overlap**. So `catalog` has
+one `crew_role` covering both, and **ADR-0003's separate-lookup paragraph is superseded for
+`catalog`**; it continues to describe `tvmaze`, which keeps its two tables until cutover.
+
+This is a widening rather than a loss — nothing that was distinguishable stops being so —
+but it is recorded here because the distinction was a deliberate decision once, and the
+reason for it did not survive the source change. A crew role also stops being a single
+string: `department` is what a person page groups by, and it is a closed vocabulary where
+`job` is a long tail.
 
 **`schedule` (broadcast day and time) has no TMDB equivalent** and is lost.
 
