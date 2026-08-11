@@ -33,6 +33,7 @@ from tvbf.tmdb.human_queue import (
     build_queue,
     confirm,
     reject,
+    unmirrored_user_touched_shows,
 )
 from tvbf.tvmaze.models import Episode as MazeEpisode
 from tvbf.tvmaze.models import Show as MazeShow
@@ -210,6 +211,35 @@ async def test_queue_leads_with_the_rows_that_carry_history(session, make_user):
     ordered = [row.show_id for row in await build_queue(session) if row.show_id in (quiet, watched)]
 
     assert ordered == [watched, quiet]
+
+
+@pytest.mark.asyncio
+async def test_a_show_the_copy_never_mirrored_is_reported_separately(session, make_user):
+    """The one way the queue could read empty while a user's show has no mapping.
+
+    The TV Maze daily keeps adding shows until cutover, so anything added after
+    `copy:catalog` ran exists in `tvmaze` and not in `catalog` — invisible to a
+    query that reads *from* `catalog.show`.
+    """
+    user = await make_user(email="hq18@example.com")
+    show_id = _next_id()
+    session.add(MazeShow(id=show_id, name="Added After The Copy", tvmaze_updated=1))
+    await session.flush()
+    session.add(UserShowWatch(user_id=user.id, show_id=show_id))
+    await session.commit()
+
+    assert await _rows_for(session, show_id) == []
+    assert show_id in await unmirrored_user_touched_shows(session)
+
+
+@pytest.mark.asyncio
+async def test_a_mirrored_show_is_not_reported_as_unmirrored(session, make_user):
+    user = await make_user(email="hq19@example.com")
+    show_id = await _seed_show(session)
+    session.add(UserShowWatch(user_id=user.id, show_id=show_id))
+    await session.commit()
+
+    assert show_id not in await unmirrored_user_touched_shows(session)
 
 
 @pytest.mark.asyncio

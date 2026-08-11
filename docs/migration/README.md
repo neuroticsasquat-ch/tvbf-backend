@@ -85,6 +85,11 @@ No artifact here — the queue is a query, run live, because a snapshot of it go
 stale the moment somebody resolves a row. `python -m tvbf.jobs.human_queue`, and
 `src/tvbf/tmdb/human_queue.py` explains what it surfaces and why.
 
+**Its output names users by email and does not belong in this directory.** That
+is the deliberate opposite of `reconciliation-baseline.json` above, which holds
+ids because it is committed; the queue names people because "who would lose
+data" is what decides how hard to look at a row. Read it and discard it.
+
 **Run it before the full TMDB ingest.** Once the ingest has inserted a row per
 series, the series a queue row should map onto already holds that `tmdb_id`, and
 `confirm` can only report the collision.

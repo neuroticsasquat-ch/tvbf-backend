@@ -17,6 +17,7 @@ from sqlalchemy.exc import IntegrityError
 from tvbf.catalog import models as m
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.enrichment import (
+    MATCH_HUMAN,
     MATCH_IMDB_ID,
     MATCH_TITLE_YEAR,
     MATCH_TVDB_ID,
@@ -271,6 +272,26 @@ async def test_a_second_show_matching_the_same_series_is_left_unmatched(session)
     assert (duplicate.tmdb_id, duplicate.match_method) == (None, None)
     assert result.collisions == 1
     assert result.matched == 1
+
+
+@respx.mock
+async def test_a_rerun_never_reconsiders_a_human_rejection(session):
+    """A rejected row looks unmatched on `tmdb_id` alone — and must not be re-guessed.
+
+    NEU-1044's `reject` records "TMDB has no counterpart for this show" as
+    `tmdb_id IS NULL, match_method = 'human'`. Without the `IS DISTINCT FROM
+    'human'` guard, this pass would hand it straight back to the tiers and attach
+    the id a person had explicitly refused.
+    """
+    find = _find("tvdb_id", "1", [{"id": 99}])
+    await _show(session, id=1, name="Not On TMDB", tvdb_id=1, match_method=MATCH_HUMAN)
+
+    result = await _run(session)
+
+    show = await _reload(session, 1)
+    assert (show.tmdb_id, show.match_method) == (None, MATCH_HUMAN)
+    assert find.call_count == 0
+    assert result.considered == 0
 
 
 @respx.mock

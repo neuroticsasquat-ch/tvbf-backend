@@ -59,6 +59,13 @@ cannot change an existing match** — exact or otherwise. What a re-run *does* r
 is every show that failed, which is deliberate: the cheap way to pick up a show
 TMDB has since added is to run the pass again.
 
+**A human verdict is excluded too**, and not by the `tmdb_id` clause: NEU-1044's
+`reject` writes `tmdb_id IS NULL` with `match_method = 'human'`, which is exactly
+what an unmatched row looks like on that column. Both the candidate query and the
+UPDATE therefore carry `match_method IS DISTINCT FROM 'human'`, or a re-run would
+attach a title guess to the one row a person had explicitly said TMDB does not
+have.
+
 A show whose `tmdb_id` is already held by another catalog row is left unmatched
 and counted as a collision rather than raising. TV Maze carries genuine duplicate
 show entries, and two of them mapping to one TMDB series is data to look at in
@@ -161,33 +168,46 @@ class EnrichmentResult:
         return sum(self.by_method.values())
 
 
+# A row a person decided about is not a candidate, however it reads. NEU-1044's
+# `reject` records "TMDB has no counterpart for this show" as `tmdb_id IS NULL`
+# plus `match_method = 'human'`, which is indistinguishable from unmatched on the
+# `tmdb_id` column alone — so without this clause the next re-run would hand that
+# row to tier 3 and attach the id a person had explicitly rejected. Re-running is
+# documented as the cheap way to pick up shows TMDB has since added, so this is
+# the ordinary path rather than an edge case.
+_NOT_HUMAN = f"match_method IS DISTINCT FROM '{MATCH_HUMAN}'"
+
 # Keyset paging rather than OFFSET: a matched row leaves the candidate set the
 # moment it is written, so an offset would step over the row that slid into its
 # place. Ordering by id makes `id > :after_id` exactly "everything not yet seen".
-_CANDIDATES = text("""
+_CANDIDATES = text(f"""
     SELECT id, name, tvdb_id, imdb_id, first_air_date
     FROM catalog.show
-    WHERE tmdb_id IS NULL AND id > :after_id
+    WHERE tmdb_id IS NULL AND {_NOT_HUMAN} AND id > :after_id
     ORDER BY id
     LIMIT :limit
 """)
 
-_REMAINING = text("SELECT count(*) FROM catalog.show WHERE tmdb_id IS NULL")
+_REMAINING = text(f"SELECT count(*) FROM catalog.show WHERE tmdb_id IS NULL AND {_NOT_HUMAN}")
 
-# Two guards, both load-bearing.
+# Three guards, all load-bearing.
 #
 # `tmdb_id IS NULL` is what makes "re-running does not change existing exact
-# matches" a property of the statement rather than of the query that fed it.
+# matches" a property of the statement rather than of the query that fed it, and
+# `match_method IS DISTINCT FROM 'human'` extends that to a human verdict — see
+# `_NOT_HUMAN`. Both are re-asserted here rather than left to `_CANDIDATES`, for
+# the same reason: the guarantee belongs to the write.
 #
 # `NOT EXISTS` is the collision check. `uq_show_tmdb_id` would otherwise raise
 # and take the surrounding batch's transaction with it, losing work that had
 # nothing to do with the duplicate. Checking here turns it into a counted
 # outcome. It covers this row too, since this row's `tmdb_id` is null.
-_ATTACH = text("""
+_ATTACH = text(f"""
     UPDATE catalog.show
     SET tmdb_id = :tmdb_id, match_method = :match_method
     WHERE id = :id
       AND tmdb_id IS NULL
+      AND {_NOT_HUMAN}
       AND NOT EXISTS (SELECT 1 FROM catalog.show other WHERE other.tmdb_id = :tmdb_id)
 """)
 

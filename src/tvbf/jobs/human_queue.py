@@ -32,11 +32,20 @@ import json
 import logging
 import sys
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
 from tvbf.tmdb.client import TMDBClient
-from tvbf.tmdb.human_queue import QueueError, annotate, build_queue, confirm, reject
+from tvbf.tmdb.human_queue import (
+    QueueError,
+    annotate,
+    build_queue,
+    confirm,
+    reject,
+    unmirrored_user_touched_shows,
+)
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +61,7 @@ def _tmdb_client() -> TMDBClient:
     )
 
 
-async def _list(db, *, candidates: bool) -> int:
+async def _list(db: AsyncSession, *, candidates: bool) -> int:
     rows = await build_queue(db)
     if candidates and rows:
         async with _tmdb_client() as client:
@@ -62,6 +71,18 @@ async def _list(db, *, candidates: bool) -> int:
 
     # The artifact, and nothing else, on stdout.
     sys.stdout.write(json.dumps(report, indent=2) + "\n")
+
+    # Before the counts, because it is the one way this report can be wrong
+    # rather than merely long: these shows are invisible to the queue and would
+    # otherwise let it read empty.
+    unmirrored = await unmirrored_user_touched_shows(db)
+    if unmirrored:
+        log.error(
+            "%d user-touched show(s) have no catalog.show row and are NOT in the report "
+            "above — re-run `task copy:catalog`, then this: %s",
+            len(unmirrored),
+            ", ".join(str(show_id) for show_id in unmirrored),
+        )
 
     at_risk = sum(1 for row in rows if row.carries_user_data)
     if not rows:

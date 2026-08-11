@@ -38,6 +38,14 @@ Rejecting *writes* rather than leaving the row untouched. An untouched row is
 indistinguishable from an unreviewed one, so the queue would never empty and the
 cutover gate would have nothing to read.
 
+## The report names users by email, and is never committed
+
+"Which users track it" is the context that decides how hard to look at a row, and
+an opaque uuid does not supply it. That makes the report the opposite of
+`reconciliation-baseline.json`, which holds ids precisely because it lives in
+git: this one is produced live, read once, and thrown away. Do not add it to
+`docs/migration/`.
+
 ## Run this before the full TMDB ingest
 
 The ingest inserts a row per series, conflict-targeting `tmdb_id`. Once it has
@@ -52,7 +60,7 @@ from dataclasses import dataclass
 from datetime import date
 from typing import Any
 
-from sqlalchemy import text
+from sqlalchemy import Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.tmdb.client import TMDBClient
@@ -101,6 +109,23 @@ _TOUCHED = f"""
       LEFT JOIN {_EPISODE} e ON a.target_type = 'episode' AND e.id = a.target_id
 """
 
+# A user-touched show with no `catalog.show` row at all is invisible to the queue
+# below, which reads *from* `catalog.show` — and it reads as an empty queue,
+# which is the one wrong answer this thing must not give. It happens for real:
+# the TV Maze daily keeps adding shows right up to cutover, and every one added
+# after `task copy:catalog` ran is trackable by a user while having nothing to
+# map. The fix is operational (re-run the copy), so this is reported rather than
+# repaired here — but it is reported loudly, because the alternative is a queue
+# that says "empty" while a user's show has no mapping at all.
+_UNMIRRORED = text(f"""
+    WITH touched AS ({_TOUCHED})
+    SELECT DISTINCT t.show_id
+      FROM touched t
+     WHERE t.show_id IS NOT NULL
+       AND NOT EXISTS (SELECT 1 FROM catalog.show s WHERE s.id = t.show_id)
+     ORDER BY t.show_id
+""")
+
 _QUEUE = text(f"""
     WITH touched AS ({_TOUCHED})
     SELECT s.id,
@@ -141,8 +166,8 @@ _QUEUE = text(f"""
      -- fall out here. `human` is excluded last and separately, because it is the
      -- only value that can carry either shape and still be settled.
      WHERE s.id IN (SELECT show_id FROM touched WHERE show_id IS NOT NULL)
-       AND (s.tmdb_id IS NULL OR s.match_method = '{MATCH_TITLE_YEAR}')
-       AND s.match_method IS DISTINCT FROM '{MATCH_HUMAN}'
+       AND (s.tmdb_id IS NULL OR s.match_method = :title_year)
+       AND s.match_method IS DISTINCT FROM :human
      ORDER BY episode_watches DESC, s.id
 """)
 
@@ -222,7 +247,7 @@ async def build_queue(db: AsyncSession) -> list[QueueRow]:
     says how much a wrong answer costs. Needs no TMDB credential — the database
     half of the report always works.
     """
-    rows = (await db.execute(_QUEUE)).all()
+    rows = (await db.execute(_QUEUE, {"title_year": MATCH_TITLE_YEAR, "human": MATCH_HUMAN})).all()
     return [
         QueueRow(
             show_id=row.id,
@@ -241,6 +266,17 @@ async def build_queue(db: AsyncSession) -> list[QueueRow]:
         )
         for row in rows
     ]
+
+
+async def unmirrored_user_touched_shows(db: AsyncSession) -> list[int]:
+    """Shows a user has touched that the copy never put into `catalog` — see `_UNMIRRORED`.
+
+    Separate from `build_queue` because it is a different problem with a
+    different fix: these rows need `task copy:catalog` re-run, not a person's
+    judgement. Public so the cutover gate can assert it is empty alongside the
+    queue itself.
+    """
+    return [row.show_id for row in (await db.execute(_UNMIRRORED)).all()]
 
 
 def _candidate(result: dict[str, Any]) -> dict[str, Any]:
@@ -295,7 +331,9 @@ async def annotate(client: TMDBClient | None, rows: list[QueueRow]) -> list[dict
     return report
 
 
-async def _load_for_resolution(db: AsyncSession, show_id: int):
+async def _load_for_resolution(
+    db: AsyncSession, show_id: int
+) -> Row[tuple[int, str, int | None, str | None]]:
     """Lock the row and refuse the two cases a queue command must not touch."""
     row = (await db.execute(_LOCK_SHOW, {"id": show_id})).one_or_none()
     if row is None:
