@@ -287,6 +287,21 @@ tasks:
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.season_dedupe report
 
+  prune:shows:
+    desc: Delete the unmatched, untouched copied show rows (idempotent; NEU-1066)
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.show_prune prune {{.CLI_ARGS}}
+
+  prune:shows:report:
+    desc: 'Count the prunable shows and enumerate what the pass keeps, as JSON (NEU-1066)'
+    # `silent` + `-T` for the same reasons `dedupe:seasons:report` needs them: the
+    # report is the process stdout, so go-task's banner and docker's TTY carriage
+    # returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.show_prune report
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
