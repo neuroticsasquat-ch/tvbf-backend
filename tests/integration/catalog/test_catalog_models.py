@@ -322,8 +322,9 @@ class TestThreeLanguageConcepts:
 
 class TestShowCreators:
     """`created_by` is a show-creator credit, which TMDB models separately from
-    crew — and so, per the audit, do we. It carries no FK to `catalog.person`,
-    which does not exist yet (NEU-1038)."""
+    crew — and so, per the audit, do we. It carries no FK to `catalog.person`
+    even though that table now exists: TMDB returns `created_by` denormalised,
+    and a creator need not appear in `aggregate_credits` at all."""
 
     async def test_a_show_may_have_several_creators(self, session):
         show = await _show(session, tmdb_id=1396, name="Breaking Bad")

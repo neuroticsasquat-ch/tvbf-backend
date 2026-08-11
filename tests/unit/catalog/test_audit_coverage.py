@@ -14,9 +14,6 @@ document that made it.
 An object reference would resolve through whatever the class is currently called,
 so renaming `catalog.show_aka` to something else while keeping the class would
 pass silently — and the name is the thing the audit's contract is written in.
-
-Credit tables are NEU-1038's, so the audit's person inventory is listed here as
-pending rather than asserted — see `_NEU_1038`.
 """
 
 import pytest
@@ -94,11 +91,41 @@ EPISODE: dict[str, Target] = {
     "still_path": ("episode", "still_path"),
     "vote_average": ("episode", "vote_average"),
     "vote_count": ("episode", "vote_count"),
+    "crew": "episode_crew",
+    "guest_stars": "episode_guest_cast",
+}
+
+# --- person, inside credits (audit §5) --------------------------------------
+# The person fields are `catalog.person`; the per-credit ones land on whichever
+# credit table carries them, which is what makes the targets here uneven.
+PERSON: dict[str, Target] = {
+    "id": ("person", "tmdb_id"),
+    "name": ("person", "name"),
+    "original_name": ("person", "original_name"),
+    "gender": ("person", "gender"),
+    "known_for_department": ("person", "known_for_department"),
+    "popularity": ("person", "popularity"),
+    "profile_path": ("person", "profile_path"),
+    "adult": ("person", "adult"),
+    "credit_id": ("show_cast", "credit_id"),
+    # Free text on a credit upstream, interned per show here — the one real
+    # model change of NEU-1038.
+    "character": "character",
+    "order": ("show_cast", "billing_order"),
+    # One shared lookup rather than tvmaze's two: measured, the show-level and
+    # episode-level `(department, job)` vocabularies overlap 100%.
+    "department": ("crew_role", "department"),
+    "job": ("crew_role", "job"),
+    # `aggregate_credits` nests these, which is the audit's §8 correction to the
+    # ticket's flat inventory.
+    "roles": ("show_cast", "episode_count"),
+    "jobs": ("show_crew", "episode_count"),
+    "total_episode_count": ("show_cast", "total_episode_count"),
 }
 
 # --- the taken namespaces (audit §5) ----------------------------------------
-# Ten of the eleven; `aggregate_credits` is NEU-1038's.
 NAMESPACES: dict[str, Target] = {
+    "aggregate_credits": "show_cast",
     "alternative_titles": "show_aka",
     "content_ratings": "content_rating",
     "episode_groups": "episode_group",
@@ -130,12 +157,6 @@ EXTERNAL_IDS = (
 # for one of these is a decision being reversed silently.
 SKIPPED = ("softcore", "recommendations", "similar", "reviews", "credits")
 
-# Modeled by the audit, owned by NEU-1038. Named so the gap is a deliberate
-# hand-off rather than an omission this test failed to notice. `created_by` is
-# deliberately *not* here: it is a show-creator credit, outside NEU-1038's scope,
-# and lands in this ticket as `catalog.show_creator`.
-_NEU_1038 = ("aggregate_credits", "crew", "guest_stars")
-
 
 def _catalog_tables() -> dict[str, object]:
     return {
@@ -160,9 +181,10 @@ def _missing(target: Target) -> str | None:
         ("series", SERIES),
         ("season", SEASON),
         ("episode", EPISODE),
+        ("person", PERSON),
         ("namespaces", NAMESPACES),
     ],
-    ids=["series", "season", "episode", "namespaces"],
+    ids=["series", "season", "episode", "person", "namespaces"],
 )
 def test_every_modeled_field_has_a_home(inventory, fields):
     gaps = {field: _missing(target) for field, target in fields.items()}
@@ -187,13 +209,3 @@ def test_a_skipped_field_has_no_column(field):
     surface = {c.name for t in tables.values() for c in t.c} | set(tables)  # type: ignore[attr-defined]
 
     assert field not in surface
-
-
-def test_credit_tables_are_still_pending():
-    """A canary, not a constraint. When NEU-1038 lands its tables this fails, and
-    whoever lands them moves the audit's person inventory into the assertions
-    above."""
-    assert "person" not in _catalog_tables(), (
-        "credit tables have arrived — fold the audit's person inventory "
-        f"({', '.join(_NEU_1038)}) into this file's assertions"
-    )

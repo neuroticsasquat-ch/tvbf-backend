@@ -27,9 +27,9 @@ reads through `select()` and FK columns. A test fixture inserting a parent and a
 child in one `commit()` therefore needs an explicit `await session.flush()`
 between them, because the unit of work cannot infer insert order without one.
 
-Credits — person, per-show character, crew roles, cast, crew, guest cast, and the
-`created_by` show-creator credit — are NEU-1038's, and land in this module
-alongside these tables. They are the audit's *modeled* rows that are absent here.
+Credits — person, per-show character, crew role, cast, crew, guest cast — land at
+the bottom of this module (NEU-1038). The `created_by` show-creator credit is
+*not* among them: TMDB models it separately from crew and so does `ShowCreator`.
 """
 
 from datetime import date, datetime
@@ -711,13 +711,14 @@ class ShowCreator(Base):
     """`created_by[]` — a show-creator credit, which TMDB models separately from
     crew and so do we. A credit type TV Maze never had.
 
-    Self-contained rather than pointing at `catalog.person`: that table is
-    NEU-1038's, and this field is not — NEU-1038's scope is person, per-show
-    character, crew roles, cast, crew and guest cast. Storing the payload as it
-    arrives is also the faithful shape, because TMDB returns `created_by`
-    denormalised, with the person's name, gender and profile path inline rather
-    than as a reference. `tmdb_person_id` is what resolves to a `person_id` once
-    the credit tables land; adding that column is an additive migration.
+    Self-contained rather than pointing at `catalog.person`, which now exists
+    below. Storing the payload as it arrives is the faithful shape: TMDB returns
+    `created_by` denormalised, with the person's name, gender and profile path
+    inline rather than as a reference, and a creator need not appear in
+    `aggregate_credits` at all — so an FK would be a nullable one whose target
+    row the credits ingest may never create. `tmdb_person_id` is what resolves to
+    a `person_id` for a UI that wants to link the two; adding that column is an
+    additive migration whenever something needs it.
     """
 
     __tablename__ = "show_creator"
@@ -865,6 +866,285 @@ class EpisodeGroup(Base):
     # through rather than interpreted.
     type: Mapped[int | None] = mapped_column(Integer)
     network_id: Mapped[int | None] = mapped_column(ForeignKey(f"{SCHEMA}.network.id"))
+
+
+class Person(Base):
+    """Someone credited on a show or an episode.
+
+    Reached only through credits — TMDB returns a person inline on every cast,
+    crew and guest-star entry, so there is no separate person pass to run and no
+    `/person/{id}` request in the ingest. That is the whole of ADR-0003 arriving
+    for free.
+
+    **Ids are not preserved from TV Maze**, unlike show / season / episode. The
+    migration copies the catalog spine because `app` references it (NEU-1042);
+    credits are re-ingested from TMDB wholesale, so there is nothing to line up
+    and the identity starts at 1. The visible cost is that `/people/{id}` URLs
+    change at cutover — no user data points at a person, and nothing links to one
+    from outside the show page that produced it.
+    """
+
+    __tablename__ = "person"
+    __table_args__ = (
+        UniqueConstraint("tmdb_id", name="uq_person_tmdb_id"),
+        {"schema": SCHEMA},
+    )
+    # `/people?search=` folds both the column and the query token, so the
+    # leading-wildcard LIKE needs a GIN trigram index over the folded
+    # expression. It is an expression index and cannot be declared here; the
+    # migration creates it, mirroring `ix_person_name_folded_trgm` on `tvmaze`.
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    tmdb_id: Mapped[int | None] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+    original_name: Mapped[str | None] = mapped_column(Text)
+    # TMDB's integer enum (0 unknown, 1 female, 2 male, 3 non-binary), passed
+    # through rather than interpreted — the same shape `ShowCreator.gender` has.
+    # `tvmaze.person.gender` was free text; this is not a port of it.
+    gender: Mapped[int | None] = mapped_column(Integer)
+    known_for_department: Mapped[str | None] = mapped_column(Text)
+    popularity: Mapped[float | None] = mapped_column(Double)
+    profile_path: Mapped[str | None] = mapped_column(Text)
+    adult: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("false"), default=False
+    )
+    # Deliberately absent, and each absence is a decision rather than an
+    # oversight: `country_*`, `timezone`, `birthday` and `deathday` are on
+    # `tvmaze.person` because TV Maze's `/people/{id}` returned them. TMDB
+    # returns none of them on a credit — they live behind a per-person request
+    # the credits ingest does not make — and the audit's person inventory (§5)
+    # lists only what a credit carries. Adding them later is a new pass over
+    # every credited person, which is exactly the cost the audit priced.
+
+
+class Character(Base):
+    """A role, **interned per show** by `(show_id, name)`.
+
+    TMDB has no character entity: `character` is free text on a credit, so there
+    is no `tmdb_id` to conflict on and no upstream identity to preserve. Interning
+    is what keeps `CharacterRef` in the API — and therefore the SPA — unchanged
+    across the source switch, since the surrogate id survives even though the
+    thing behind it narrowed.
+
+    **Narrowing to per-show is the one real model change of NEU-1038** and it was
+    measured before it was made: of 1,509,298 characters in prod, 2,621 are played
+    by more than one person — every one of them preserved, because recasting and
+    voice ensembles happen *within* a show — and exactly **one** spans more than
+    one show. Recorded in ADR-0007 and `CONTEXT.md`.
+
+    Same interning pattern as `CrewRole`, one grain finer: a crew role's
+    vocabulary is TMDB-wide, a character's is a show's.
+    """
+
+    __tablename__ = "character"
+    __table_args__ = (
+        UniqueConstraint("show_id", "name", name="uq_character_show_name"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    name: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class CrewRole(Base):
+    """An interned `(department, job)` pair — `('Directing', 'Director')`.
+
+    **One lookup, shared by show crew and episode crew**, where `tvmaze` has two.
+    That separation is not carried forward, and the reason it existed is the
+    reason it cannot be: TV Maze's two vocabularies were genuinely disjoint — 233
+    production-function names on the show side against `Writer` / `Director` /
+    `Story` / `Teleplay` on the episode side (ADR-0003). TMDB emits the same
+    `department` + `job` pair on both sides, and measured
+    (`scripts/probe_tmdb_credit_shapes.py`, 5 series, 2026-08-11)
+    **all 78 episode-level pairs also appear at show level — 100% overlap**. A
+    second lookup would hold a copy of the same vocabulary and turn "every
+    Directing credit for this person" into a two-table union.
+
+    Two columns rather than one interned string: `department` is what a person
+    page groups by, and it is a closed vocabulary of about a dozen values where
+    `job` is a long tail of several hundred.
+    """
+
+    __tablename__ = "crew_role"
+    __table_args__ = (
+        UniqueConstraint("department", "job", name="uq_crew_role_department_job"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    department: Mapped[str] = mapped_column(Text, nullable=False)
+    job: Mapped[str] = mapped_column(Text, nullable=False)
+
+
+class ShowCast(Base):
+    """A person playing a character across a show, from `aggregate_credits.cast`.
+
+    One row per *role*, not per person: `aggregate_credits` nests
+    `roles: [{credit_id, character, episode_count}]` under one cast entry, so an
+    actor who played two characters on one show is two rows here sharing a
+    `person_id`.
+
+    **No `UNIQUE (show_id, person_id, character_id)`**, carried forward from
+    `tvmaze.show_cast` deliberately. Refresh is delete-then-insert, so there is
+    nothing to conflict on, and a uniqueness assumption over upstream data is what
+    broke ingestion on `tvmaze.season`. `credit_id` gets no unique key for the
+    same reason.
+    """
+
+    __tablename__ = "show_cast"
+    __table_args__ = (
+        # `episode_count` is the sort key (NEU-1039), not `billing_order`: it is
+        # the measure `order` only ever proxied for, and it is the one ordering
+        # the crew table can share. Postgres scans an index backwards, so
+        # ascending serves the descending sort.
+        Index("ix_show_cast_show_id_episode_count", "show_id", "episode_count"),
+        Index("ix_show_cast_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    # Nullable, unlike `tvmaze.show_cast.character_id`. TV Maze always sent a
+    # character object; TMDB sends free text that can be empty, and measured it
+    # is — rarely, but not never: 1 blank of 7,629 sampled roles
+    # (`scripts/probe_tmdb_credit_shapes.py`). NOT NULL would abort a
+    # multi-hour pass on that one row, and interning `''` as a character name
+    # would invent a role nobody played.
+    character_id: Mapped[int | None] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"))
+    # TMDB's stable id for this specific credit — the identity free-text
+    # character otherwise denies a role. From `roles[].credit_id`.
+    credit_id: Mapped[str | None] = mapped_column(Text)
+    # Episodes in this role, from `roles[].episode_count`. Strictly better than
+    # the billing-order proxy `tvmaze.show_cast.sort_order` stood in for.
+    episode_count: Mapped[int | None] = mapped_column(Integer)
+    # Episodes for this *person* across the show, summed over their roles by
+    # TMDB. Denormalised across a person's rows, which is the grain TMDB gives it.
+    total_episode_count: Mapped[int | None] = mapped_column(Integer)
+    # Upstream's `order`. Named for the glossary term rather than `tvmaze`'s
+    # `sort_order`, which `CONTEXT.md` lists under *Avoid* — the two grains have
+    # different orderings and one name for both hid that. Kept because the audit
+    # models it and it is the only signal for the top-billed lead of a show whose
+    # star appears in fewer episodes than a recurring supporting actor. Nullable,
+    # unlike `tvmaze.show_cast.sort_order`: nothing guarantees TMDB sends it.
+    billing_order: Mapped[int | None] = mapped_column(Integer)
+
+
+class ShowCrew(Base):
+    """A person's crew role across a show, from `aggregate_credits.crew`.
+
+    One row per job, for the same reason `ShowCast` is one row per role:
+    `jobs: [{credit_id, job, episode_count}]` nests under one crew entry.
+
+    **No ordering column at all, and that is measured rather than assumed.** Both
+    `tvmaze.show_crew` and `tvmaze.episode_crew` carry a NOT NULL `sort_order`;
+    TMDB sends no `order` on a crew entry at all — 0 of 2,066 show-crew and 0 of
+    7,456 episode-crew entries sampled
+    (`scripts/probe_tmdb_credit_shapes.py`). `episode_count` is the ordering,
+    which is what NEU-1039 sorts on.
+    """
+
+    __tablename__ = "show_crew"
+    __table_args__ = (
+        Index("ix_show_crew_show_id_episode_count", "show_id", "episode_count"),
+        Index("ix_show_crew_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    role_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.crew_role.id"), nullable=False)
+    credit_id: Mapped[str | None] = mapped_column(Text)
+    episode_count: Mapped[int | None] = mapped_column(Integer)
+    total_episode_count: Mapped[int | None] = mapped_column(Integer)
+
+
+class EpisodeGuestCast(Base):
+    """A person playing a character in one episode, from `episodes[].guest_stars`.
+
+    The 29-hour `credits_backfill` retires with this table: guest stars ride the
+    season request the episodes themselves arrive on, so there is no second pass
+    to run (audit §4).
+
+    The uniqueness stays **three-part**, carried forward from
+    `uq_egc_episode_person_character`. One character is played by more than one
+    person on 17 of 1,043 sampled episodes, so `(episode_id, character_id)` would
+    silently drop legitimate rows.
+    """
+
+    __tablename__ = "episode_guest_cast"
+    __table_args__ = (
+        # `NULLS NOT DISTINCT` because `character_id` is nullable here, and under
+        # Postgres's default two NULL-character credits for one person on one
+        # episode would never conflict — so every re-ingest would add another
+        # copy. The same reasoning as `uq_watch_archive_source_row`.
+        UniqueConstraint(
+            "episode_id",
+            "person_id",
+            "character_id",
+            name="uq_egc_episode_person_character",
+            postgresql_nulls_not_distinct=True,
+        ),
+        # No index on `episode_id` alone: it leads the unique constraint's index,
+        # which carries the per-episode lookup. A guest list is a dozen rows, so
+        # ordering within one needs no index of its own.
+        Index("ix_egc_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    episode_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    # Nullable for the same reason as `ShowCast.character_id`. A guest star's
+    # character is a character *of the episode's show* — the interning grain is
+    # the show, not the episode.
+    character_id: Mapped[int | None] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"))
+    credit_id: Mapped[str | None] = mapped_column(Text)
+    # Upstream's `order`; a guest star entry does carry one, unlike crew. Credit
+    # order, not billing order — it is this episode's own credit sequence and
+    # means nothing compared across episodes, which is why `CONTEXT.md` keeps the
+    # two terms apart and puts `sort order` under *Avoid* for both.
+    credit_order: Mapped[int | None] = mapped_column(Integer)
+
+
+class EpisodeCrew(Base):
+    """A person's crew role on one episode, from `episodes[].crew`.
+
+    Points at the same `CrewRole` as `ShowCrew` — see that table for why the
+    `tvmaze` split into two lookups does not survive the source change.
+
+    Three-part uniqueness for the same reason as `EpisodeGuestCast`: one person
+    holds more than one crew role on 36 of 1,043 sampled episodes. No
+    `NULLS NOT DISTINCT` needed here — `role_id` is NOT NULL, because TMDB's
+    `department` and `job` are both always present on an episode crew entry.
+    """
+
+    __tablename__ = "episode_crew"
+    __table_args__ = (
+        UniqueConstraint(
+            "episode_id", "person_id", "role_id", name="uq_episode_crew_episode_person_role"
+        ),
+        Index("ix_episode_crew_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    episode_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.episode.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    role_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.crew_role.id"), nullable=False)
+    credit_id: Mapped[str | None] = mapped_column(Text)
 
 
 class RateBudget(Base):
