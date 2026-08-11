@@ -78,3 +78,69 @@ log and the only way back is another enrichment run, capturing the warnings.
 It repairs only collisions that were *logged*. A tier-3 false positive that
 contested nothing is invisible to both the log and the database, and is caught
 only by reading `match_method = 'title_year'` rows by hand.
+
+## The human matching queue (NEU-1044)
+
+No artifact here — the queue is a query, run live, because a snapshot of it goes
+stale the moment somebody resolves a row. `python -m tvbf.jobs.human_queue`, and
+`src/tvbf/tmdb/human_queue.py` explains what it surfaces and why.
+
+**Its output names users by email and does not belong in this directory.** That
+is the deliberate opposite of `reconciliation-baseline.json` above, which holds
+ids because it is committed; the queue names people because "who would lose
+data" is what decides how hard to look at a row. Read it and discard it.
+
+**Run it before the full TMDB ingest.** Once the ingest has inserted a row per
+series, the series a queue row should map onto already holds that `tmdb_id`, and
+`confirm` can only report the collision.
+
+```bash
+# every user-touched show without a verified mapping, plus TMDB candidates
+task queue:list
+
+# the same, no upstream calls and no credential — the fast "is it empty?" check
+task queue:list -- --no-candidates
+
+# production
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.human_queue list'
+```
+
+Then one command per row, each of which is a recorded verdict:
+
+```bash
+task queue:confirm -- <show_id> <tmdb_id>   # this show IS that TMDB series
+task queue:reject  -- <show_id>             # TMDB has no counterpart; stays locally-authored
+```
+
+**Exit 0 means the verdict was written; exit 1 means it was refused** — an id
+another row already holds, a row matched exactly (which the queue never
+surfaced), or a second verdict over an existing one. `list` exits 0 either way:
+it is a report, and *empty* is what the cutover gate reads out of it.
+
+### The four production guesses confirmed on 2026-08-10
+
+NEU-1044's ticket records four `title_year` matches checked by hand and found
+correct — but the check lived only in the ticket, where the rows still read
+`match_method = 'title_year'`, indistinguishable from an unreviewed guess.
+Re-stamping them is what moves that verdict into the database:
+
+```bash
+task queue:confirm -- <show_id> 119955   # Dr. Brain
+task queue:confirm -- <show_id> 225634   # Monsters: The Lyle and Erik Menendez Story
+task queue:confirm -- <show_id> 241849   # You Are What You Eat: A Twin Experiment
+task queue:confirm -- <show_id> 299737   # The Traitors Ireland Uncloaked
+```
+
+`confirm` with the id a row already holds re-stamps it rather than refusing, so
+these are exactly the four commands and nothing else. Take each `<show_id>` from
+`task queue:list` rather than from here — the catalog id is a local surrogate and
+was never in the ticket.
+
+*The Traitors Ireland Uncloaked* is the only one carrying watch history (12
+episode watches), and confirming its show id is necessary but not sufficient:
+those watches must also map at episode grain, which is NEU-1045's.
+
+Two rows are genuinely unmapped and need a decision either way: *Cunk on Earth*
+(several *Cunk* entries, so the rule refused to guess) and *Discretion* (no
+premiere date, excluded from tier 3 by design). Neither carries watch history.

@@ -237,6 +237,26 @@ tasks:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full ~90m pass.
       - docker compose exec tvbf-backend python -m tvbf.jobs.tmdb_enrichment {{.CLI_ARGS}}
 
+  queue:list:
+    desc: 'Report every user-touched show awaiting a human verdict, as JSON (NEU-1044)'
+    # `silent` + `-T` for the same reasons `reconcile:capture` needs them: the
+    # report is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it. Pass `-- --no-candidates` to skip
+    # the TMDB lookups (and the credential) when only the count is wanted.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.human_queue list {{.CLI_ARGS}}
+
+  queue:confirm:
+    desc: 'Record a human verdict: this show IS a TMDB series (task queue:confirm -- <show_id> <tmdb_id>)'
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue confirm {{.CLI_ARGS}}
+
+  queue:reject:
+    desc: 'Record a human verdict: TMDB has no counterpart (task queue:reject -- <show_id>)'
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue reject {{.CLI_ARGS}}
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
