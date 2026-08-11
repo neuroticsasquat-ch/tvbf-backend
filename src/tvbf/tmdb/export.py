@@ -26,16 +26,33 @@ guarantee, and a run triggered at 07:00 would otherwise fail on a 403 from a key
 that simply has not been written. `fetch_series_ids` walks backwards a day at a
 time; a day-old catalog list costs at most a day's new series, which the delta
 picks up anyway.
+
+**A download can end early.** An endpoint either answers or it doesn't; a 4.7 MB
+file can arrive as the first 3 MB of itself. That failure mode is what
+`TruncatedExportError` and the two checks raising it exist for, and it matters
+well beyond a short work list: the tombstone reconciler (NEU-1036) diffs
+`mirrored - export`, so a partial export that passed for a whole one would be
+read as proof that the missing series are gone.
 """
 
 import gzip
 import json
 import logging
+import zlib
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
 
 log = logging.getLogger(__name__)
+
+
+class TruncatedExportError(ValueError):
+    """The export arrived incomplete — the bytes, or the gzip stream inside them.
+
+    A `ValueError`, so the callers that already treat a malformed export as one
+    keep working unchanged.
+    """
+
 
 EXPORT_BASE_URL = "https://files.tmdb.org/p/exports"
 
@@ -59,6 +76,26 @@ def export_url(day: date, *, base_url: str = EXPORT_BASE_URL) -> str:
     return f"{base_url.rstrip('/')}/tv_series_ids_{day:%m_%d_%Y}.json.gz"
 
 
+def _assert_download_complete(resp: httpx.Response) -> None:
+    """Fail a body shorter than the `Content-Length` the host promised.
+
+    httpx enforces this itself on HTTP/1.1, so this is belt to its braces — the
+    check costs nothing and the thing it guards is a silent misread of the whole
+    catalog. Skipped when the host applied a transfer encoding, because then the
+    declared length describes the wire bytes and `content` holds the decoded
+    ones; the gzip trailer check below still covers that case.
+    """
+    declared = resp.headers.get("content-length")
+    encoding = resp.headers.get("content-encoding", "identity").lower()
+    if declared is None or encoding not in ("", "identity"):
+        return
+    received = len(resp.content)
+    if received < int(declared):
+        raise TruncatedExportError(
+            f"{resp.request.url} returned {received} of {declared} declared bytes"
+        )
+
+
 def parse_series_ids(raw: bytes) -> list[int]:
     """Every `id` in one gzipped JSONL export, in file order.
 
@@ -67,14 +104,26 @@ def parse_series_ids(raw: bytes) -> list[int]:
     outcome than losing a three-hour pass. The count is logged so a file that is
     broadly malformed does not pass for a healthy one.
 
-    An export that yields **no** ids raises. Nothing downstream distinguishes an
-    empty work list from a complete catalog, so a truncated or wrong-shaped file
-    would otherwise read as "everything is already ingested" and finalise the run
-    as a success.
+    A **truncated** file is a different thing entirely and raises. Every gzip
+    member ends in a CRC32 and a length, so a body that stops early cannot be
+    decompressed past the cut — but only if the whole member is decompressed at
+    once, as here. Streaming the bytes and swallowing the EOF would yield a
+    perfectly valid, silently short JSONL stream, which is the shape this whole
+    module's callers cannot tell from a real one.
+
+    An export that yields **no** ids raises for the same reason. Nothing
+    downstream distinguishes an empty work list from a complete catalog, so a
+    wrong-shaped file would otherwise read as "everything is already ingested"
+    and finalise the run as a success.
     """
+    try:
+        body = gzip.decompress(raw)
+    except (EOFError, gzip.BadGzipFile, zlib.error) as exc:
+        raise TruncatedExportError(f"the TMDB id export did not decompress cleanly: {exc}") from exc
+
     ids: list[int] = []
     skipped = 0
-    for line in gzip.decompress(raw).splitlines():
+    for line in body.splitlines():
         if not line.strip():
             continue
         try:
@@ -113,6 +162,7 @@ async def fetch_series_ids(
                 log.info("id export for %s is not published yet (%d)", day, resp.status_code)
                 continue
             resp.raise_for_status()
+            _assert_download_complete(resp)
             ids = parse_series_ids(resp.content)
             log.info("id export for %s: %d series ids", day, len(ids))
             return ids

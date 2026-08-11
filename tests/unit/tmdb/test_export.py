@@ -14,7 +14,13 @@ import httpx
 import pytest
 import respx
 
-from tvbf.tmdb.export import export_url, fetch_series_ids, parse_series_ids
+from tvbf.tmdb.export import (
+    TruncatedExportError,
+    _assert_download_complete,
+    export_url,
+    fetch_series_ids,
+    parse_series_ids,
+)
 
 BASE = "https://files.tmdb.org/p/exports"
 
@@ -54,6 +60,26 @@ def test_an_unparseable_line_is_skipped_rather_than_fatal():
     raw = gzip.compress(b'{"id": 1}\nnot json at all\n{"no_id": true}\n{"id": 2}\n')
 
     assert parse_series_ids(raw) == [1, 2]
+
+
+def test_a_truncated_gzip_stream_raises_rather_than_yielding_a_short_list():
+    """The failure mode a file has and an endpoint does not (NEU-1036).
+
+    Every gzip member ends in a CRC32 and a length, so decompressing the whole
+    member at once cannot get past a cut. Streaming and swallowing the EOF would
+    yield a valid but silently short JSONL stream — and the tombstone reconciler
+    reads a short export as proof the missing series are gone.
+    """
+    whole = _gz(*({"id": i} for i in range(1, 500)))
+
+    with pytest.raises(TruncatedExportError, match="did not decompress cleanly"):
+        parse_series_ids(whole[: len(whole) // 2])
+
+
+def test_a_body_that_is_not_gzip_at_all_raises():
+    """An error page served with a 200 is not a catalog list."""
+    with pytest.raises(TruncatedExportError):
+        parse_series_ids(b"<html>nope</html>")
 
 
 def test_an_export_with_no_ids_raises():
@@ -108,6 +134,32 @@ async def test_a_server_error_is_not_mistaken_for_an_unpublished_file():
 
     with pytest.raises(httpx.HTTPStatusError):
         await fetch_series_ids(today=date(2026, 8, 10))
+
+
+@respx.mock
+async def test_a_body_shorter_than_content_length_is_refused():
+    """A download that ended early, caught before anything reads it as a catalog."""
+    body = _gz({"id": 7})
+    respx.get(f"{BASE}/tv_series_ids_08_10_2026.json.gz").mock(
+        return_value=httpx.Response(200, content=body, headers={"content-length": "9999"})
+    )
+
+    with pytest.raises(TruncatedExportError, match="declared bytes"):
+        await fetch_series_ids(today=date(2026, 8, 10))
+
+
+def test_a_content_encoded_body_is_not_mistaken_for_a_short_one():
+    """`Content-Length` then describes the wire bytes and `content` the decoded
+    ones, so comparing them would refuse every healthy download. Truncation in
+    that case is still caught by the gzip trailer."""
+    resp = httpx.Response(
+        200,
+        content=_gz({"id": 7}),
+        headers={"content-length": "9999", "content-encoding": "gzip"},
+        request=httpx.Request("GET", f"{BASE}/tv_series_ids_08_10_2026.json.gz"),
+    )
+
+    _assert_download_complete(resp)  # must not raise
 
 
 @respx.mock

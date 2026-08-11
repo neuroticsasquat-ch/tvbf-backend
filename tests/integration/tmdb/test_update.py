@@ -55,7 +55,15 @@ def mock_changes(windows: dict[tuple[str, str], list[list[int]]]) -> respx.Route
     return respx.get(f"{BASE}/tv/changes").mock(side_effect=_respond)
 
 
-async def _run(session, *, today: date = TODAY, **kwargs):
+async def _run(session, *, today: date = TODAY, export_ids=(), **kwargs):
+    """One delta cycle.
+
+    `export_ids` defaults to empty rather than to the real download: the
+    tombstone pass that rides along is exercised in `test_tombstone.py`, and an
+    empty export trips its absolute floor so nothing is written. That is what
+    keeps every test in this file off the export host without pretending the
+    step is not there.
+    """
     run_id = await create_run(session, kind="catalog_update")
     await session.commit()
     async with TMDBClient(
@@ -70,6 +78,7 @@ async def _run(session, *, today: date = TODAY, **kwargs):
             client=client,
             run_id=run_id,
             today=today,
+            export_ids=export_ids,
             **kwargs,
         )
     return run_id, result

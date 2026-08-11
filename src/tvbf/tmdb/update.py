@@ -41,12 +41,24 @@ A changed id carries no indication of *what* changed — the response is `id` an
 show exactly as the full pass does, which is also what keeps `tmdb_synced_at`
 meaningful afterwards.
 
-## What this delta deliberately does not do
+## Tombstoning rides along, because it has nowhere better to be
 
-**It does not tombstone.** `/tv/changes` reports changes, not deletions: a
-series removed from TMDB simply stops appearing, which is indistinguishable from
-one that did not change. Tombstoning is a reverse diff against the *full* daily
-export and is NEU-1036's, floor guards and all (ADR-0005).
+`/tv/changes` reports changes, not deletions: a series removed from TMDB simply
+stops appearing, which is indistinguishable from one that did not change. So
+tombstoning is a reverse diff against the *full* daily export (NEU-1036), and
+this run is where it happens — the export is a static file costing no rate
+budget and no credential, so downloading it here is the whole price, and daily
+is the cadence ADR-0005 already established for it under TV Maze.
+
+It is **best-effort**, which the TV Maze version had no need to be: there the
+feed was already in hand, and here it is a second download that can fail on its
+own. Letting that failure fail the run would hold the cursor back and re-cover
+the entire window the next night, and the night after — the ever-widening gap
+NEU-1006 exists to avoid, traded for a reconciliation that can simply happen
+tomorrow instead. So it is caught and logged loudly, and the delta finalises on
+the work it actually did.
+
+## What this delta deliberately does not do
 
 **It does not filter `adult`.** The full pass mirrors whatever the export lists
 and this must not disagree with it — a delta that skipped adult series would
@@ -54,7 +66,7 @@ leave the rows the export already created drifting untouched forever.
 """
 
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
@@ -67,12 +79,14 @@ from tvbf.tmdb.client import (
     CHANGES_MAX_WINDOW_DAYS,
     TMDBClient,
 )
+from tvbf.tmdb.export import fetch_series_ids
 from tvbf.tmdb.ingest import (
     CatalogIngestResult,
     SessionFactory,
     _owned_session,
     mirror_series,
 )
+from tvbf.tmdb.tombstone import reconcile_tombstones
 from tvbf.tvmaze.runs import (
     CATALOG_CURSOR_KINDS,
     finalize_run,
@@ -234,6 +248,33 @@ async def resolve_start_date(session: AsyncSession, *, today: date) -> date:
     return today - timedelta(days=_COLD_START_DAYS)
 
 
+async def reconcile_against_export(
+    session_factory: SessionFactory, *, export_ids: Sequence[int] | None = None
+) -> None:
+    """Diff the mirror against the full id export and tombstone what is gone.
+
+    Swallows its own failures by design — see the module docstring. A download
+    that never completed raises out of `fetch_series_ids` rather than reaching
+    the diff, and a complete one that is implausibly short is refused by the
+    reconciler's floor guards; both end here, logged, with nothing written.
+
+    `export_ids` overrides the download, the way `run_catalog_ingest`'s
+    `series_ids` does.
+    """
+    try:
+        ids = list(export_ids) if export_ids is not None else await fetch_series_ids()
+        async with _owned_session(session_factory) as s:
+            result = await reconcile_tombstones(s, feed_ids=set(ids))
+            await s.commit()
+        log.info(
+            "catalog tombstone pass: %d tombstoned, %d resurrected",
+            result.tombstoned,
+            result.resurrected,
+        )
+    except Exception:
+        log.exception("catalog tombstone pass failed — the delta itself is unaffected")
+
+
 async def run_catalog_update(
     *,
     session_factory: SessionFactory,
@@ -241,6 +282,7 @@ async def run_catalog_update(
     run_id: UUID,
     failure_threshold: int = 10,
     today: date | None = None,
+    export_ids: Sequence[int] | None = None,
 ) -> CatalogIngestResult:
     """One delta cycle: resolve the gap, walk it, re-fetch everything it names.
 
@@ -278,6 +320,11 @@ async def run_catalog_update(
     )
     if result.aborted:
         return result
+
+    # Only after the loop completed normally — every abort path above returns
+    # early, so a run that gave up partway never reconciles against a catalog it
+    # only half saw (ADR-0005).
+    await reconcile_against_export(session_factory, export_ids=export_ids)
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=date_to_cursor(today))
