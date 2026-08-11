@@ -281,11 +281,18 @@ class TMDBEpisode(_Payload):
     `episodes[]`, and as `last_episode_to_air` / `next_episode_to_air`.
 
     The two credit lists default to `None` rather than `[]`, the same
-    "absent is not empty" distinction every appended namespace draws. It is not
-    hypothetical here: `last_episode_to_air` and `next_episode_to_air` parse
-    through this class and carry neither key, so a default of `[]` would let the
-    air pointers assert an authoritative *zero* credits for an episode whose
-    credits arrived on the season payload.
+    "absent is not empty" distinction every appended namespace draws — an
+    episode that arrived without the key has said nothing about its credits,
+    where `[]` is upstream stating it has none.
+
+    Which episodes can arrive without it is worth being precise about, because
+    the obvious answer is the wrong one. `last_episode_to_air` and
+    `next_episode_to_air` parse through this class and carry neither key, but
+    they never reach the credit writer: `upsert_series_payload` builds its
+    episode list from the season details alone, and `_set_air_pointers` only
+    resolves ids. The default earns its keep on the season payloads themselves —
+    a narrowed or hand-built one, and any future caller that passes an episode
+    from somewhere other than a full season fetch.
     """
 
     tmdb_id: int = Field(alias="id")

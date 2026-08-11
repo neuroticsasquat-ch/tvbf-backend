@@ -910,7 +910,7 @@ class TestEpisodeCredits:
     than a per-episode copy, and that a re-ingest neither duplicates nor drops.
     """
 
-    async def test_a_director_is_crew_and_a_guest_star_is_cast(self, session):
+    async def test_a_director_is_crew_and_a_guest_credit_is_cast(self, session):
         """The ticket's acceptance criterion, and the one confusion the two flat
         lists invite: they are shaped almost identically."""
         show_id = await _write(session, _series_with_episode_credits())
@@ -1207,6 +1207,57 @@ class TestEpisodeCredits:
         crew = await _episode_crew(session, show_id)
 
         assert [(c.Person.name, c.CrewRole.job) for c in crew] == [("Michelle", "Writer")]
+
+    async def test_an_episode_whose_crew_is_entirely_unparseable_keeps_what_it_had(self, session):
+        """The skip-and-log promise is that one malformed entry costs that row
+        and not the payload. It only holds if an episode that lost *every* entry
+        is held out of the refresh — otherwise it stays in scope for the delete,
+        contributes nothing to the insert, and a payload we could not read
+        silently empties crew a payload we could read had stored."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        crew=[make_episode_crew_member(5, "Vince", "Directing", "Director")],
+                    )
+                ]
+            ),
+        )
+
+        await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, crew=[make_episode_crew_member(5, "Vince", "", "")])]
+            ),
+        )
+
+        crew = await _episode_crew(session, show_id)
+        assert [(c.Person.name, c.CrewRole.job) for c in crew] == [("Vince", "Director")]
+
+    async def test_an_explicitly_empty_crew_list_still_clears(self, session):
+        """The other side of that guard: `[]` is upstream stating a zero, which
+        is a fact worth storing, not a payload we failed to read."""
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        crew=[make_episode_crew_member(5, "Vince", "Directing", "Director")],
+                    )
+                ]
+            ),
+        )
+
+        await _write(session, _series_with_episodes([make_episode(1, 1, 1)]))
+
+        assert await _episode_crew(session, show_id) == []
 
     async def test_an_episode_arriving_twice_credits_it_once(self, session):
         """An appended `season/N` and a `get_tv_season` overflow can both carry

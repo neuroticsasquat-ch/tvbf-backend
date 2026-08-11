@@ -35,7 +35,7 @@ row *per job*. Episode `guest_stars` / `crew` ride the season payload and do not
 nest — an appearance is a row (NEU-1040). Character and crew role are interned
 rather than upserted on an upstream id in both cases, because neither is an
 entity upstream; character interns against the **show** at either grain, so a
-guest star resolves to the character the show cast already named. See
+guest credit resolves to the character the show cast already named. See
 `_intern_characters` and `_write_episode_credits`.
 """
 
@@ -963,14 +963,14 @@ def _character_name(character: str | None) -> str | None:
     """A credit's character name, or `None` when upstream sent nothing usable.
 
     Blank is rare and real — 1 of 7,629 sampled show-level roles, and 0 of 1,460
-    sampled episode guest stars. `catalog.show_cast` and
+    sampled episode guest credits. `catalog.show_cast` and
     `catalog.episode_guest_cast` both allow a null `character_id` for exactly
     this, because interning `''` would invent a character nobody played and NOT
     NULL would abort a multi-hour pass on one row.
 
     Takes the raw string rather than a credit, because the two grains carry it on
     differently-shaped entries — nested in `roles[]` at show level, on the entry
-    itself for a guest star — and the answer must not differ between them.
+    itself for a guest credit — and the answer must not differ between them.
     """
     name = (character or "").strip()
     return name or None
@@ -1094,9 +1094,14 @@ async def _write_credits(
 
 
 async def _replace_episode_rows(
-    session: AsyncSession, model: Any, episode_ids: Sequence[int], rows: list[dict[str, Any]]
+    session: AsyncSession, model: Any, episode_scope: Sequence[int], rows: list[dict[str, Any]]
 ) -> None:
     """Make `rows` the whole of these episodes' rows in `model`.
+
+    `episode_scope` is a list of **surrogate** episode ids — deliberately not
+    named `episode_ids`, which the callers here use for the
+    `{tmdb_id: surrogate id}` map. One name for both is how a caller ends up
+    passing the map and deleting by TMDB ids.
 
     The episode-grain twin of `_replace_show_rows`, scoped to the episodes whose
     payload actually carried the credit list rather than to the show. That scope
@@ -1108,13 +1113,17 @@ async def _replace_episode_rows(
     none: a null `credit_id` on these tables means upstream omitted it, not that
     somebody authored the credit by hand.
 
-    Both halves are batched against the 32,767-parameter cap — the delete
-    because a soap binds one parameter per episode and can pass 12,000 of them
-    in a single pass.
+    The insert is batched against the 32,767-parameter cap for the reason every
+    other write here is. The delete is batched for a different one, and not
+    because it is near that cap — a soap binds one parameter per episode and
+    stays an order of magnitude clear. It is that a single `IN` list spanning
+    every episode of a 12,000-episode show takes row locks across the whole
+    table in one statement, where the chunked form releases nothing but holds
+    far less at a time on a pass that runs for hours.
     """
-    for start in range(0, len(episode_ids), _BATCH_SIZE):
+    for start in range(0, len(episode_scope), _BATCH_SIZE):
         await session.execute(
-            delete(model).where(model.episode_id.in_(episode_ids[start : start + _BATCH_SIZE]))
+            delete(model).where(model.episode_id.in_(episode_scope[start : start + _BATCH_SIZE]))
         )
     for start in range(0, len(rows), _BATCH_SIZE):
         await session.execute(insert(model).values(rows[start : start + _BATCH_SIZE]))
@@ -1135,16 +1144,25 @@ def _episode_crew_credits(
     (`scripts/probe_tmdb_episode_credits_append.py`) — which is exactly why it is
     logged rather than raised: one malformed entry must not cost the show its
     whole payload, and the warning is how we would learn the measurement had gone
-    stale.
+    stale. `_write_episode_credits` is what keeps that promise true at the
+    episode grain, by holding an episode that lost *every* entry out of the
+    refresh instead of clearing it.
+
+    The warning names upstream's ids, not ours. A surrogate `episode_id` cannot
+    be looked up in the TMDB payload the warning is about without a round trip
+    to the database, which is the one thing whoever is reading it does not have.
     """
     triples: list[tuple[int, TMDBEpisodeCrewMember, tuple[str, str]]] = []
     for episode_id, episode in episodes:
         for member in episode.crew or ():
             if not member.department or not member.job:
                 log.warning(
-                    "show %d episode %d: skipped crew credit for person %d — department=%r job=%r",
+                    "show %d, TMDB episode %d (S%02dE%02d): skipped crew credit for "
+                    "person %d — department=%r job=%r",
                     show_id,
-                    episode_id,
+                    episode.tmdb_id,
+                    episode.season_number,
+                    episode.episode_number,
                     member.tmdb_person_id,
                     member.department,
                     member.job,
@@ -1174,7 +1192,7 @@ async def _write_episode_credits(
     second pass, no per-season watermark, and nothing to resume beyond the show
     grain `tmdb_synced_at` already covers.
 
-    **Flat, where show credits nest.** A guest star appears in one episode as one
+    **Flat, where show credits nest.** A guest credit is one episode and one
     character and a crew member holds one job, so an entry is a row — there is no
     `roles[]` / `jobs[]` to unpack and no `episode_count`, because the appearance
     *is* the count.
@@ -1185,7 +1203,7 @@ async def _write_episode_credits(
     exactly this, and the two lists are scoped independently because an episode
     can carry one without the other.
 
-    Characters intern against **the show**, not the episode: a guest star's role
+    Characters intern against **the show**, not the episode: a guest credit's role
     is a role of the show, so a returning guest resolves to the character the
     show cast already interned (see `catalog.models.EpisodeGuestCast`). Crew
     roles intern across TMDB, into the one vocabulary show crew shares.
@@ -1206,13 +1224,24 @@ async def _write_episode_credits(
         for ep in _dedupe_episodes(episodes).values()
         if ep.tmdb_id in episode_ids
     ]
-    guest_scope = [eid for eid, ep in scoped if ep.guest_stars is not None]
-    crew_scope = [eid for eid, ep in scoped if ep.crew is not None]
-    if not guest_scope and not crew_scope:
-        return
-
     guests = [(eid, guest) for eid, ep in scoped for guest in ep.guest_stars or ()]
     crew_credits = _episode_crew_credits(scoped, show_id=show_id)
+
+    guest_scope = [eid for eid, ep in scoped if ep.guest_stars is not None]
+    # An episode every one of whose crew entries was skipped is held out of the
+    # refresh rather than emptied. Otherwise `_episode_crew_credits`'s promise —
+    # that one malformed entry costs that row and not the payload — would be
+    # false at this grain: the episode would still be in scope for the delete
+    # and would contribute nothing to the insert, so a payload we could not
+    # parse would silently clear crew a payload we could parse had stored. An
+    # explicitly empty `crew: []` stays in scope, because that is upstream
+    # stating a zero rather than us failing to read one.
+    usable = {episode_id for episode_id, _, _ in crew_credits}
+    crew_scope = [
+        eid for eid, ep in scoped if ep.crew is not None and (not ep.crew or eid in usable)
+    ]
+    if not guest_scope and not crew_scope:
+        return
 
     person_ids = await _upsert_by_tmdb_id(
         session,
