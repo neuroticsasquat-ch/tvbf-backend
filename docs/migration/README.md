@@ -141,6 +141,50 @@ was never in the ticket.
 episode watches), and confirming its show id is necessary but not sufficient:
 those watches must also map at episode grain, which is NEU-1045's.
 
+## Episode-grain mapping (NEU-1045)
+
+No artifact here either — the pass writes to the database and the report is a
+query, run live and read once, for the same reasons the queue above is.
+
+**Run it after `task enrich:tmdb-ids` and before the full TMDB ingest.** The
+episode upsert conflict-targets `tmdb_id`, and a copied episode row carries
+none: run the ingest first and every matched show ends up holding each episode
+twice — a TMDB row with a fresh id, and the copied row that
+`app.user_episode_watch` actually points at. Stamping the copied rows first is
+what makes the ingest update them in place instead.
+
+```bash
+# the pass: one request per matched show, resumable, safe to kill
+task map:episodes
+task map:episodes -- --limit 100     # smoke run first
+
+# production
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.episode_map map'
+```
+
+Then read the residue. Unmatched episodes are the expected output rather than a
+failure — a two-parter counted once upstream and twice here has no key to match
+on — so the report surfaces only the ones somebody would lose something over:
+
+```bash
+task map:episodes:report
+```
+
+Three things in it are worth reading in order:
+
+1. `systematic_shows` — a matched show where **nothing** mapped. That is a claim
+   about the show, not its episodes: it usually means the `tmdb_id` NEU-1043
+   attached belongs to a different series, and `task queue:confirm` is the fix.
+2. `unmatched_user_data` — every unmapped episode carrying a watch or a rating,
+   worst first. Each row keeps its TV Maze data and its watch record whatever
+   happens; the entry is there so a systematic pattern on a popular show is
+   visible rather than inferred.
+3. `totals.watched_episodes_unmapped` — the number the cutover gate reads.
+
+The report only means anything **after** the pass: before one, every matched
+show has zero mapped episodes and reads as systematic.
+
 Two rows are genuinely unmapped and need a decision either way: *Cunk on Earth*
 (several *Cunk* entries, so the rule refused to guess) and *Discretion* (no
 premiere date, excluded from tier 3 by design). Neither carries watch history.

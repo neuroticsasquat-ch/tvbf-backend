@@ -257,6 +257,21 @@ tasks:
     cmds:
       - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue reject {{.CLI_ARGS}}
 
+  map:episodes:
+    desc: Attach tmdb_id to the copied episode rows of every matched show (idempotent; NEU-1045)
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.episode_map map {{.CLI_ARGS}}
+
+  map:episodes:report:
+    desc: 'Report every unmapped episode carrying watch or rating history, as JSON (NEU-1045)'
+    # `silent` + `-T` for the same reasons `queue:list` needs them: the report is
+    # the process stdout, so go-task's banner and docker's TTY carriage returns
+    # would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_map report
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
