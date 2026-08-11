@@ -65,7 +65,8 @@ across that window rather than holding one process open for it.
 initial ingest handed to the first daily delta. TMDB's delta is `/tv/changes`
 over a date *range* (NEU-1035), so there is no epoch to hand over, and writing
 one into a column typed for TV Maze's would be a value the next reader
-misreads.
+misreads. The delta bootstraps off this run's `started_at` instead — see
+`tmdb/update.py`, which owns the cursor for the `catalog_update` lineage.
 
 **It does not touch the copied TV Maze seasons and episodes.** A show that was
 copied and then enriched carries both its TV Maze rows (`tmdb_id IS NULL`) and
@@ -123,9 +124,13 @@ class CatalogIngestResult:
     shows_processed: int
     shows_failed: int
     shows_gone: int
+    # True when the consecutive-failure threshold tripped. `mirror_series`
+    # finalizes the run itself in that case — it is the only place that knows
+    # the error text — so callers must not go on to finalize it as succeeded.
+    aborted: bool = False
 
 
-def _log_progress(processed: int, failed: int, gone: int, total: int) -> None:
+def _log_progress(label: str, processed: int, failed: int, gone: int, total: int) -> None:
     """A running total, with the two kinds of failure kept apart.
 
     `ingest_run.shows_failed` is one column and counts both, so an operator
@@ -136,7 +141,8 @@ def _log_progress(processed: int, failed: int, gone: int, total: int) -> None:
     `shows_processed` mean something.
     """
     log.info(
-        "catalog ingest: %d/%d processed, %d failed (%d gone upstream, %d real)",
+        "%s: %d/%d processed, %d failed (%d gone upstream, %d real)",
+        label,
         processed,
         total,
         failed,
@@ -199,6 +205,91 @@ async def fetch_series_with_seasons(
     return series, overflow
 
 
+async def mirror_series(
+    *,
+    session_factory: SessionFactory,
+    client: TMDBClient,
+    run_id: UUID,
+    series_ids: Sequence[int],
+    failure_threshold: int = 10,
+    label: str = "catalog ingest",
+    progress_every: int = _PROGRESS_EVERY,
+) -> CatalogIngestResult:
+    """Fetch and mirror a work list of series, one show per transaction.
+
+    The body both the full pass and the daily delta (NEU-1035) run — they differ
+    only in where the work list comes from and what they finalize the run with,
+    which is why this takes the list rather than building one. Sharing it is
+    what stops the two drifting on the parts that are easy to get subtly wrong:
+    that a `gone` series must not count toward the abort, that a failure is
+    recorded on the run row before the abort check, and that a show is stamped
+    synced only after a *complete* payload landed.
+
+    Finalizes the run itself **only** on the abort path, and reports that with
+    `aborted`. The success finalization belongs to the caller, because only the
+    caller knows whether a cursor goes with it.
+    """
+    processed = 0
+    failed = 0
+    gone = 0
+    consecutive_failures = 0
+
+    total = len(series_ids)
+    for series_id in series_ids:
+        try:
+            series, overflow = await fetch_series_with_seasons(client, series_id)
+            async with _owned_session(session_factory) as s:
+                show_id = await upsert_series_payload(
+                    s,
+                    series,
+                    seasons=overflow,
+                    # The series body carries the authoritative `seasons[]`
+                    # whatever else was appended, so the payload can be trusted
+                    # to name the show's whole season set (ADR-0004).
+                    prune_seasons=True,
+                )
+                await mark_series_synced(s, show_id=show_id)
+                await record_progress(s, run_id, processed_delta=1)
+                await s.commit()
+        except Exception as exc:
+            failed += 1
+            if is_gone_upstream(exc):
+                # An id the work list carries and `/tv/{id}` no longer serves. A
+                # data condition, not a broken upstream, so it must not count
+                # toward the abort (NEU-1006).
+                gone += 1
+                log.info("series %d is gone upstream — skipping", series_id)
+            else:
+                consecutive_failures += 1
+                if isinstance(exc, httpx.HTTPStatusError):
+                    log.warning("skipping series %d after http error: %s", series_id, exc)
+                else:
+                    log.exception("unexpected error for series %d", series_id)
+            async with _owned_session(session_factory) as s:
+                await record_progress(s, run_id, failed_delta=1)
+                await s.commit()
+            if consecutive_failures >= failure_threshold:
+                async with _owned_session(session_factory) as s:
+                    await finalize_run(
+                        s,
+                        run_id,
+                        status="failed",
+                        error=(f"aborted after {consecutive_failures} consecutive failures: {exc}"),
+                    )
+                    await s.commit()
+                return CatalogIngestResult(processed, failed, gone, aborted=True)
+            continue
+
+        processed += 1
+        consecutive_failures = 0
+        if processed % progress_every == 0:
+            _log_progress(label, processed, failed, gone, total)
+
+    _log_progress(label, processed, failed, gone, total)
+    warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="series")
+    return CatalogIngestResult(processed, failed, gone)
+
+
 async def run_catalog_ingest(
     *,
     session_factory: SessionFactory,
@@ -221,63 +312,16 @@ async def run_catalog_ingest(
     todo = [series_id for series_id in dict.fromkeys(export_ids) if series_id not in synced]
     log.info("catalog ingest: %d series in the export, %d to fetch", len(export_ids), len(todo))
 
-    processed = 0
-    failed = 0
-    gone = 0
-    consecutive_failures = 0
+    result = await mirror_series(
+        session_factory=session_factory,
+        client=client,
+        run_id=run_id,
+        series_ids=todo,
+        failure_threshold=failure_threshold,
+    )
+    if result.aborted:
+        return result
 
-    for series_id in todo:
-        try:
-            series, overflow = await fetch_series_with_seasons(client, series_id)
-            async with _owned_session(session_factory) as s:
-                show_id = await upsert_series_payload(
-                    s,
-                    series,
-                    seasons=overflow,
-                    # The series body carries the authoritative `seasons[]`
-                    # whatever else was appended, so the payload can be trusted
-                    # to name the show's whole season set (ADR-0004).
-                    prune_seasons=True,
-                )
-                await mark_series_synced(s, show_id=show_id)
-                await record_progress(s, run_id, processed_delta=1)
-                await s.commit()
-        except Exception as exc:
-            failed += 1
-            if is_gone_upstream(exc):
-                # An id the export lists and `/tv/{id}` no longer serves. A data
-                # condition, not a broken upstream, so it must not count toward
-                # the abort (NEU-1006).
-                gone += 1
-                log.info("series %d is gone upstream — skipping", series_id)
-            else:
-                consecutive_failures += 1
-                if isinstance(exc, httpx.HTTPStatusError):
-                    log.warning("skipping series %d after http error: %s", series_id, exc)
-                else:
-                    log.exception("unexpected error for series %d", series_id)
-            async with _owned_session(session_factory) as s:
-                await record_progress(s, run_id, failed_delta=1)
-                await s.commit()
-            if consecutive_failures >= failure_threshold:
-                async with _owned_session(session_factory) as s:
-                    await finalize_run(
-                        s,
-                        run_id,
-                        status="failed",
-                        error=(f"aborted after {consecutive_failures} consecutive failures: {exc}"),
-                    )
-                    await s.commit()
-                return CatalogIngestResult(processed, failed, gone)
-            continue
-
-        processed += 1
-        consecutive_failures = 0
-        if processed % _PROGRESS_EVERY == 0:
-            _log_progress(processed, failed, gone, len(todo))
-
-    _log_progress(processed, failed, gone, len(todo))
-    warn_if_all_gone(log, processed=processed, failed=failed, gone=gone, noun="series")
     async with _owned_session(session_factory) as s:
         # No `last_update_cursor`: TMDB's delta is a date range rather than a
         # per-show epoch, so there is nothing to hand forward. See the module
@@ -285,4 +329,4 @@ async def run_catalog_ingest(
         await finalize_run(s, run_id, status="succeeded")
         await s.commit()
 
-    return CatalogIngestResult(processed, failed, gone)
+    return result

@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     # broken. That gap is the whole reason for this. Unset makes every ping a
     # no-op, so local runs and tests never call out.
     healthcheck_daily_url: str | None = Field(default=None, alias="HEALTHCHECK_DAILY_URL")
+    # The same deadman for the TMDB catalog delta (NEU-1035). Its own check
+    # rather than a shared one: two tasks feeding one deadman means either can
+    # keep it alive on its own, so the day the catalog delta stops running the
+    # TV Maze daily would go on covering for it silently.
+    healthcheck_catalog_url: str | None = Field(default=None, alias="HEALTHCHECK_CATALOG_URL")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 

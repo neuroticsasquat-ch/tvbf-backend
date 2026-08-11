@@ -24,6 +24,7 @@ measuring rather than assuming — see `APPEND_TO_RESPONSE_LIMIT`.
 import asyncio
 import logging
 from collections.abc import Iterable, Sequence
+from datetime import date
 
 import httpx
 
@@ -115,6 +116,18 @@ DEFAULT_APPEND: tuple[str, ...] = (
     "videos",
     "watch/providers",
 )
+
+
+# The widest date range `/tv/changes` accepts on one request, and the number the
+# delta's window walking exists to respect (NEU-1035). TMDB rejects a wider span
+# outright rather than clamping it, so a container that was down for three weeks
+# cannot be caught up with a single oversized request.
+CHANGES_MAX_WINDOW_DAYS = 14
+
+# TMDB stops paging at 500 and answers a higher `page` with a 422. Reaching it
+# would need 50,000 changed series in one window, which is not a day TMDB has —
+# so this is a runaway guard rather than a paging strategy.
+CHANGES_MAX_PAGE = 500
 
 
 def is_gone_upstream(exc: BaseException) -> bool:
@@ -348,6 +361,37 @@ class TMDBClient:
         a second page is by construction a result it would reject.
         """
         resp = await self._request("GET", f"{self._base_url}/search/tv", params={"query": query})
+        return resp.json()
+
+    async def get_tv_changes(self, *, start: date, end: date, page: int = 1) -> dict:
+        """One page of `/tv/changes` — the series ids that changed in a date range.
+
+        The delta's equivalent of TV Maze's `/updates/shows`, and shaped nothing
+        like it: a **date range** rather than a per-show epoch, paged 100 at a
+        time, and carrying only `id` and `adult`. A changed id therefore says
+        nothing about *what* changed, so every hit costs a full re-fetch.
+
+        Both bounds are inclusive upstream. The span guard is here for the same
+        reason `get_tv_series` guards an oversized append: TMDB answers a wider
+        range with an error either way, so this changes nothing about
+        correctness — it spends no token from a paced budget on a request that
+        cannot succeed, and names the way out.
+        """
+        span = (end - start).days
+        if span > CHANGES_MAX_WINDOW_DAYS:
+            raise ValueError(
+                f"/tv/changes takes at most {CHANGES_MAX_WINDOW_DAYS} days per request, "
+                f"got {span} ({start}..{end}). Use plan_windows() to walk the gap."
+            )
+        resp = await self._request(
+            "GET",
+            f"{self._base_url}/tv/changes",
+            params={
+                "start_date": start.isoformat(),
+                "end_date": end.isoformat(),
+                "page": page,
+            },
+        )
         return resp.json()
 
     async def get_tv_season(self, series_id: int, season_number: int) -> dict:

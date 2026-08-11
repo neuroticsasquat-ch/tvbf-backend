@@ -13,6 +13,7 @@ from tvbf.db import SessionLocal
 from tvbf.deps import get_session, require_admin
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import run_catalog_ingest
+from tvbf.tmdb.update import run_catalog_update_job
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.akas_backfill import run_akas_backfill
 from tvbf.tvmaze.client import TVMazeClient
@@ -40,8 +41,8 @@ async def _start_run(
 ) -> dict[str, str]:
     """Guard, create the run row, spawn its worker, and return the run id.
 
-    One helper for all seven trigger routes so `kind` is named exactly once
-    per route. Guarding and creating as two separate calls reads fine and
+    One helper for every trigger route so `kind` is named exactly once per
+    route. Guarding and creating as two separate calls reads fine and
     type-checks, but a copy-paste that guards one kind while creating another
     silently disables the guard — the failure this exists to prevent.
 
@@ -289,6 +290,21 @@ async def get_catalog_ingest_status(
     if row is None or row.kind != "catalog_initial":
         raise HTTPException(status_code=404, detail="run not found")
     return _serialize_run(row)
+
+
+@router.post("/catalog-update", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_catalog_update(
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Trigger one TMDB catalog delta by hand (NEU-1035).
+
+    The manual counterpart to the `tvbf.jobs.catalog_update` scheduled task, and
+    the same shape `/admin/update` has: no status route of its own, because a
+    delta is minutes rather than hours — poll the unfiltered
+    `GET /admin/ingest/{run_id}` if you want its progress.
+    """
+    return await _start_run(session, settings, "catalog_update", run_catalog_update_job)
 
 
 @router.post("/backfill-akas", status_code=status.HTTP_202_ACCEPTED)

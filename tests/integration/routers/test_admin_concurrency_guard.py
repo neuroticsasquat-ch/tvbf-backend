@@ -25,6 +25,7 @@ ROUTE_KINDS = [
     ("/admin/backfill-ratings", "ratings_backfill"),
     ("/admin/refresh-shows", "show_refresh"),
     ("/admin/update-people", "person_update"),
+    ("/admin/catalog-update", "catalog_update"),
 ]
 
 AUTH = {"Authorization": "Bearer shh"}
@@ -40,6 +41,9 @@ BACKGROUND_FNS = [
     "_background_backfill_ratings",
     "_background_show_refresh",
     "_background_person_update",
+    # Shared with the `tvbf.jobs.catalog_update` CLI for the same reason
+    # `run_update_job` is (NEU-1035).
+    "run_catalog_update_job",
 ]
 
 
