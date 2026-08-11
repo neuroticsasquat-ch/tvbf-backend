@@ -23,7 +23,7 @@ pointing at unmapped rows.
 | Pass | Task | Ordering | Run in prod |
 | -- | -- | -- | -- |
 | Watch archive (NEU-1029) | `task archive:watches` | before anything else | ✅ 2026-08-09 — 9,359 rows |
-| Reconciliation baseline (NEU-1030) | `task reconcile:capture` | before cutover | ✅ 2026-08-09 — committed here |
+| Reconciliation baseline (NEU-1030) | `task reconcile:capture` | before cutover | ✅ 2026-08-09, **re-captured 2026-08-11** after the prune — 5 users, 621 tracked shows, 8,569 episode watches, 97 show ratings, 78 episode ratings, 802 activity events |
 | Catalog copy (NEU-1042) | `task copy:catalog` | before enrichment | ✅ 2026-08-09 — 89,025 shows |
 | TMDB id enrichment (NEU-1043) | `task enrich:tmdb-ids` | after copy, **before ingest** | ✅ 2026-08-10 — 62,882 matched, 26,143 unmatched, 107 collisions |
 | Collision remediation (NEU-1065) | `neu-1043-collision-remediation.sql` | after enrichment | ✅ 2026-08-10 — 18 rows |
@@ -31,9 +31,24 @@ pointing at unmapped rows.
 | Episode-grain mapping (NEU-1045) | `task map:episodes` | after enrichment, **before ingest** | ❌ **never run — window closed.** The ingest started 2026-08-10, this merged 2026-08-11. Running it now maps nothing: 1,909,367 rows collide and 760,254 have no TMDB counterpart. Needs a re-point pass instead. |
 | Full catalog ingest (NEU-1034) | `task ingest:catalog` | after copy + enrichment | ✅ 2026-08-10 → 2026-08-11 — 228,723 shows |
 | Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
-| Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ⬜ not yet |
+| Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ✅ 2026-08-11 — 26,141 shows deleted over 262 batches, taking 47,443 seasons and 840,169 episodes. `catalog.show` 255,010 → 228,869; 2 unmatched rows kept. Needed the `ix_show_*_episode_to_air_id` indexes first (see below) |
 | User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ blocked — the FK still points at `tvmaze.show` |
 | Episode-grain re-point | — | after ingest | ⬜ ticket not written — see NEU-1066's findings |
+
+## Deleting episodes needs two indexes that did not exist
+
+`catalog.show.last_episode_to_air_id` and `next_episode_to_air_id` are
+`ON DELETE SET NULL` foreign keys into `catalog.episode`, and until 2026-08-11
+neither had an index — so Postgres sequentially scanned all 255,010 shows for
+**every episode deleted by a cascade**. The first `task prune:shows` attempt could
+not finish one batch of 100; a single show with 10-40 episodes ran past 60
+seconds. Migration `f85a608ef19e` adds them, and the same delete then took 4.6ms.
+
+Worth remembering because the shape recurs: every *other* foreign key into the
+catalog spine has a leading index by accident of sitting on a lookup path. A
+column nothing reads by gets no index, and the cost only appears when something
+deletes in bulk. If a future pass deletes catalog rows and stalls, audit the
+inbound foreign keys for a missing leading index before anything else.
 
 ## `reconciliation-baseline.json`
 

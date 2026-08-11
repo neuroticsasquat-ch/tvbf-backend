@@ -2,11 +2,11 @@
   "artifact_version": 1,
   "spine": "tvmaze",
   "totals": {
-    "activity_events": 796,
-    "episode_ratings": 76,
-    "episode_watches": 8566,
+    "activity_events": 802,
+    "episode_ratings": 78,
+    "episode_watches": 8569,
     "show_ratings": 97,
-    "tracked_shows": 620,
+    "tracked_shows": 621,
     "users": 5
   },
   "users": [
@@ -252,9 +252,9 @@
           "tracked_shows": 1
         },
         {
-          "activity_events": 11,
-          "episode_ratings": 5,
-          "episode_watches": 25,
+          "activity_events": 13,
+          "episode_ratings": 6,
+          "episode_watches": 26,
           "show_id": 38052,
           "show_ratings": 1,
           "tracked_shows": 1
@@ -684,9 +684,9 @@
           "tracked_shows": 1
         },
         {
-          "activity_events": 9,
-          "episode_ratings": 4,
-          "episode_watches": 4,
+          "activity_events": 11,
+          "episode_ratings": 5,
+          "episode_watches": 5,
           "show_id": 87753,
           "show_ratings": 0,
           "tracked_shows": 1
@@ -701,9 +701,9 @@
         }
       ],
       "totals": {
-        "activity_events": 339,
-        "episode_ratings": 76,
-        "episode_watches": 2762,
+        "activity_events": 343,
+        "episode_ratings": 78,
+        "episode_watches": 2764,
         "show_ratings": 38,
         "tracked_shows": 67
       },
@@ -4784,6 +4784,14 @@
           "tracked_shows": 1
         },
         {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 80978,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
           "activity_events": 4,
           "episode_ratings": 0,
           "episode_watches": 4,
@@ -4912,9 +4920,9 @@
           "tracked_shows": 1
         },
         {
-          "activity_events": 5,
+          "activity_events": 6,
           "episode_ratings": 0,
-          "episode_watches": 4,
+          "episode_watches": 5,
           "show_id": 87753,
           "show_ratings": 0,
           "tracked_shows": 1
@@ -4961,11 +4969,11 @@
         }
       ],
       "totals": {
-        "activity_events": 382,
+        "activity_events": 384,
         "episode_ratings": 0,
-        "episode_watches": 4458,
+        "episode_watches": 4459,
         "show_ratings": 38,
-        "tracked_shows": 531
+        "tracked_shows": 532
       },
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263"
     },
