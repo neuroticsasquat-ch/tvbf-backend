@@ -28,9 +28,12 @@ here no-ops on `None` rather than treating it as an empty list. Replacing a
 show's AKAs because the caller did not ask for them is the same failure
 `prune_seasons` exists to prevent.
 
-Credits are NEU-1038's: `catalog` has no person, character or cast tables yet,
-so `aggregate_credits` and episode `guest_stars` / `crew` are parsed by nobody
-and written by nobody.
+**Show credits are one entry to many rows.** `aggregate_credits` nests
+`roles[]` / `jobs[]` under a person, so one cast entry becomes one `show_cast`
+row *per character* and one crew entry one `show_crew` row *per job*. Character
+and crew role are interned rather than upserted on an upstream id, because
+neither is an entity upstream — see `_intern_characters` (NEU-1039). Episode
+`guest_stars` / `crew` ride the season payload instead and are NEU-1040's.
 """
 
 import logging
@@ -44,9 +47,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
 from tvbf.tmdb.api_payloads import (
+    TMDBAggregateCredits,
+    TMDBAggregateCrew,
     TMDBCompany,
     TMDBCreatedBy,
+    TMDBCreditPerson,
     TMDBEpisode,
+    TMDBJob,
+    TMDBRole,
     TMDBSeasonDetail,
     TMDBSeries,
     TMDBWatchProviders,
@@ -139,20 +147,32 @@ async def _upsert_by_tmdb_id(
     requests a second that is the difference between a handful of round trips
     per show and several hundred.
 
+    Batched for the same reason `upsert_episodes` is, and it stopped being
+    theoretical with `person` (NEU-1039): the lookup tables here hold a few dozen
+    rows per show, but a show's credited people run into the thousands — The
+    Simpsons alone has 1,420 cast and 533 crew. A person binds 8 columns, so the
+    32,767-parameter cap falls at **4,095 credited people** on one show, which
+    the long-running sketch and variety formats reach and nothing else in this
+    module comes close to.
+
     Rows must share a key set — the update clause is built from the first.
     """
     if not rows:
         return {}
-    # The same network can appear on the series and on several of its seasons.
+    # The same network can appear on the series and on several of its seasons;
+    # the same person on several credits of one show.
     deduped = {r["tmdb_id"]: r for r in rows}
     values = list(deduped.values())
-    stmt = insert(model).values(values)
-    stmt = stmt.on_conflict_do_update(
-        index_elements=[model.tmdb_id],
-        set_={c: getattr(stmt.excluded, c) for c in values[0] if c != "tmdb_id"},
-    ).returning(model.tmdb_id, model.id)
-    result = await session.execute(stmt)
-    return {row.tmdb_id: row.id for row in result.all()}
+    ids: dict[Any, int] = {}
+    for start in range(0, len(values), _BATCH_SIZE):
+        chunk = values[start : start + _BATCH_SIZE]
+        stmt = insert(model).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[model.tmdb_id],
+            set_={c: getattr(stmt.excluded, c) for c in chunk[0] if c != "tmdb_id"},
+        ).returning(model.tmdb_id, model.id)
+        ids |= {row.tmdb_id: row.id for row in (await session.execute(stmt)).all()}
+    return ids
 
 
 async def _ensure_countries(session: AsyncSession, entries: dict[str, str | None]) -> None:
@@ -789,6 +809,9 @@ async def _write_namespaces(
     if series.watch_providers is not None:
         await _write_watch_providers(session, show_id=show_id, providers=series.watch_providers)
 
+    if series.aggregate_credits is not None:
+        await _write_credits(session, show_id=show_id, credits=series.aggregate_credits)
+
 
 async def _write_watch_providers(
     session: AsyncSession, *, show_id: int, providers: TMDBWatchProviders
@@ -834,6 +857,212 @@ async def _write_watch_providers(
                 "link": country.link,
             }
     await _replace_show_rows(session, m.ShowWatchProvider, show_id, list(rows.values()))
+
+
+async def _intern_characters(
+    session: AsyncSession, *, show_id: int, names: Sequence[str]
+) -> dict[str, int]:
+    """Intern this show's character names, returning `{name: surrogate id}`.
+
+    Interning rather than upserting, because a character is not an entity
+    upstream: TMDB sends free text on a credit, so there is no `tmdb_id` to
+    conflict on and the natural key `(show_id, name)` is all there is. Narrowing
+    the scope to one show is NEU-1038's one real model change — see
+    `catalog.models.Character`.
+
+    `DO UPDATE` rather than `DO NOTHING` even though the update is a no-op:
+    `RETURNING` reports only the rows a statement touched, and a `DO NOTHING`
+    would silently omit every character this show already had — which, on the
+    second pass over any show, is all of them.
+    """
+    if not names:
+        return {}
+    ids: dict[str, int] = {}
+    unique = list(dict.fromkeys(names))
+    for start in range(0, len(unique), _BATCH_SIZE):
+        chunk = [{"show_id": show_id, "name": name} for name in unique[start : start + _BATCH_SIZE]]
+        stmt = insert(m.Character).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[m.Character.show_id, m.Character.name],
+            set_={"name": stmt.excluded.name},
+        ).returning(m.Character.name, m.Character.id)
+        ids |= {row.name: row.id for row in (await session.execute(stmt)).all()}
+    return ids
+
+
+async def _intern_crew_roles(
+    session: AsyncSession, pairs: Sequence[tuple[str, str]]
+) -> dict[tuple[str, str], int]:
+    """Intern `(department, job)` pairs, returning `{pair: surrogate id}`.
+
+    One vocabulary shared by show crew and episode crew, unlike `tvmaze`'s two —
+    measured 100% overlap, see `catalog.models.CrewRole`. So this is deliberately
+    not scoped to a show, unlike `_intern_characters`: a re-run for one show
+    reuses the pairs every other show has already interned.
+
+    `DO UPDATE` over a no-op rather than `DO NOTHING`, for the reason
+    `_intern_characters` spells out — `RETURNING` reports only the rows a
+    statement touched, and here that would be almost none, since a mature
+    vocabulary is already interned by the time any given show is written.
+    """
+    if not pairs:
+        return {}
+    ids: dict[tuple[str, str], int] = {}
+    unique = list(dict.fromkeys(pairs))
+    for start in range(0, len(unique), _BATCH_SIZE):
+        chunk = [
+            {"department": department, "job": job}
+            for department, job in unique[start : start + _BATCH_SIZE]
+        ]
+        stmt = insert(m.CrewRole).values(chunk)
+        stmt = stmt.on_conflict_do_update(
+            index_elements=[m.CrewRole.department, m.CrewRole.job],
+            set_={"job": stmt.excluded.job},
+        ).returning(m.CrewRole.department, m.CrewRole.job, m.CrewRole.id)
+        ids |= {(row.department, row.job): row.id for row in (await session.execute(stmt)).all()}
+    return ids
+
+
+def _person_row(credit: TMDBCreditPerson) -> dict[str, Any]:
+    """The `catalog.person` columns a credit carries. Cast and crew entries are
+    identical here — the difference between them is what nests underneath."""
+    return {
+        "tmdb_id": credit.tmdb_person_id,
+        "name": credit.name,
+        "original_name": credit.original_name,
+        "gender": credit.gender,
+        "known_for_department": credit.known_for_department,
+        "popularity": credit.popularity,
+        "profile_path": credit.profile_path,
+        "adult": credit.adult,
+    }
+
+
+def _character_name(portrayal: TMDBRole) -> str | None:
+    """A portrayal's character name, or `None` when upstream sent nothing usable.
+
+    Blank is rare and real — 1 of 7,629 sampled roles. `catalog.show_cast`
+    allows a null `character_id` for exactly this, because interning `''` would
+    invent a character nobody played and NOT NULL would abort a multi-hour pass
+    on one row.
+    """
+    name = (portrayal.character or "").strip()
+    return name or None
+
+
+def _crew_credits(
+    crew: Sequence[TMDBAggregateCrew], *, show_id: int
+) -> list[tuple[TMDBAggregateCrew, TMDBJob, tuple[str, str]]]:
+    """Flatten crew entries to `(member, job, (department, job))` triples.
+
+    One place rather than two, because the interning pass and the row build have
+    to agree on exactly which jobs survive: the writer looks each row's pair up
+    in the map the interning pass produced, so a guard that drifted between them
+    would be a `KeyError` thousands of shows into a multi-hour run.
+
+    `crew_role` is NOT NULL in both columns, so a pair missing either half cannot
+    be interned. Measured never to happen — which is why it is logged rather than
+    raised: one malformed entry must not cost the show its whole payload, and a
+    warning is how we would learn the measurement had gone stale.
+    """
+    triples: list[tuple[TMDBAggregateCrew, TMDBJob, tuple[str, str]]] = []
+    for member in crew:
+        for job in member.jobs:
+            if not member.department or not job.job:
+                log.warning(
+                    "show %d: skipped crew credit for person %d — department=%r job=%r",
+                    show_id,
+                    member.tmdb_person_id,
+                    member.department,
+                    job.job,
+                )
+                continue
+            triples.append((member, job, (member.department, job.job)))
+    return triples
+
+
+async def _write_credits(
+    session: AsyncSession, *, show_id: int, credits: TMDBAggregateCredits
+) -> None:
+    """Show-level cast and crew from `aggregate_credits` (NEU-1039).
+
+    **One row per credit, not per person.** `aggregate_credits` nests
+    `roles: [{credit_id, character, episode_count}]` under a cast entry, so an
+    actor who played two characters on one show becomes two rows sharing a
+    `person_id` — which is what makes `episode_count` a per-character measure
+    rather than the billing-order proxy TV Maze gave us. Crew nests `jobs[]` the
+    same way.
+
+    **Delete-then-insert, with no locally-authored exemption**, unlike
+    `show_creator`. `credit_id` is nullable on both tables, but a null one here
+    means upstream omitted it rather than that somebody authored the credit by
+    hand — so exempting those rows from the delete would let a copy accumulate on
+    every pass. The tables carry no unique key to catch that, which is why the
+    refresh has to be total (see `catalog.models.ShowCast`).
+
+    People are interned across shows on `tmdb_id`; characters within this show on
+    their name; crew roles across TMDB on `(department, job)`.
+
+    **Nothing here prunes `catalog.character`**, and that is a decision rather
+    than an omission. A character whose last cast credit disappears leaves its
+    row behind, which is the cheaper of two wrongs: the same rows are the
+    interning target for episode guest cast (NEU-1040), which is written from a
+    different payload, so a prune scoped to this one would delete characters an
+    episode credit still references. The residue is bounded by a show's own
+    upstream renames, and `character` carries nothing but a name.
+    """
+    person_ids = await _upsert_by_tmdb_id(
+        session, m.Person, [_person_row(c) for c in (*credits.cast, *credits.crew)]
+    )
+    character_ids = await _intern_characters(
+        session,
+        show_id=show_id,
+        names=[
+            name
+            for member in credits.cast
+            for portrayal in member.roles
+            if (name := _character_name(portrayal)) is not None
+        ],
+    )
+    crew_credits = _crew_credits(credits.crew, show_id=show_id)
+    crew_role_ids = await _intern_crew_roles(session, [pair for _, _, pair in crew_credits])
+
+    await _replace_show_rows(
+        session,
+        m.ShowCast,
+        show_id,
+        [
+            {
+                "show_id": show_id,
+                "person_id": person_ids[member.tmdb_person_id],
+                "character_id": (
+                    None if (name := _character_name(portrayal)) is None else character_ids[name]
+                ),
+                "credit_id": portrayal.credit_id,
+                "episode_count": portrayal.episode_count,
+                "total_episode_count": member.total_episode_count,
+                "billing_order": member.billing_order,
+            }
+            for member in credits.cast
+            for portrayal in member.roles
+        ],
+    )
+    await _replace_show_rows(
+        session,
+        m.ShowCrew,
+        show_id,
+        [
+            {
+                "show_id": show_id,
+                "person_id": person_ids[member.tmdb_person_id],
+                "role_id": crew_role_ids[pair],
+                "credit_id": job.credit_id,
+                "episode_count": job.episode_count,
+                "total_episode_count": member.total_episode_count,
+            }
+            for member, job, pair in crew_credits
+        ],
+    )
 
 
 async def _write_season_networks(

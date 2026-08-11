@@ -9,7 +9,12 @@ take watch history with it.
 from sqlalchemy import func, select
 
 from tests.fixtures.tmdb.series_factory import (
+    make_aggregate_credits,
+    make_cast_member,
+    make_crew_member,
     make_episode,
+    make_job,
+    make_role,
     make_season_detail,
     make_season_summary,
     make_series,
@@ -574,6 +579,353 @@ class TestSharedVocabularies:
             for r in (await session.execute(select(m.Language))).scalars()
         }
         assert rows == {"en": "English", "de": None}
+
+
+class TestShowCredits:
+    """`aggregate_credits` into `person` / `character` / `crew_role` / `show_cast`
+    / `show_crew` (NEU-1039).
+
+    The properties are the ticket's acceptance criteria plus the two the writer
+    would fail silently on: that a re-ingest adds nothing, and that a blank
+    character is stored as no character rather than as one nobody played.
+    """
+
+    async def test_episode_count_is_stored_per_role_and_orders_the_cast(self, session):
+        """The behaviour change the ticket exists for. TV Maze gave us billing
+        order as a proxy for appearances; `roles[].episode_count` is the count
+        itself, so the two orderings are deliberately opposed here — a cast
+        listed by `order` would come back in the wrong sequence."""
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[
+                        make_cast_member(1, "Lead", [make_role("Walter", 62)], order=0),
+                        make_cast_member(2, "Recurring", [make_role("Saul", 43)], order=5),
+                        make_cast_member(3, "Guest", [make_role("Gale", 8)], order=1),
+                    ]
+                ),
+            ),
+        )
+
+        rows = await _cast(session, show_id)
+        assert [(r.name, c.episode_count) for c, _, r in rows] == [
+            ("Lead", 62),
+            ("Recurring", 43),
+            ("Guest", 8),
+        ]
+        assert [c.billing_order for c, _, _ in rows] == [0, 5, 1]
+
+    async def test_a_role_with_no_episode_count_sorts_last_not_first(self, session):
+        """`episode_count` is nullable, and Postgres sorts NULLs first under a
+        plain `DESC` — which would put a role upstream said nothing about ahead
+        of the show's lead. The stored value is right either way; the ordering is
+        what the ticket's acceptance criterion is about."""
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[
+                        make_cast_member(
+                            1, "Unknown Size", [make_role("Extra", 0) | {"episode_count": None}]
+                        ),
+                        make_cast_member(2, "Lead", [make_role("Walter", 62)]),
+                    ]
+                ),
+            ),
+        )
+
+        assert [person.name for _, _, person in await _cast(session, show_id)] == [
+            "Lead",
+            "Unknown Size",
+        ]
+
+    async def test_one_person_in_two_roles_is_two_credits_and_one_person(self, session):
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[
+                        make_cast_member(
+                            1,
+                            "Tatiana Maslany",
+                            [make_role("Sarah", 50), make_role("Helena", 30)],
+                        )
+                    ]
+                ),
+            ),
+        )
+
+        rows = await _cast(session, show_id)
+        assert [
+            (char.name if char else None, credit.episode_count) for credit, char, _ in rows
+        ] == [("Sarah", 50), ("Helena", 30)]
+        assert len({credit.person_id for credit, _, _ in rows}) == 1
+        assert await _count(session, m.Person) == 1
+        # The entry-level total, denormalised onto each of the person's rows.
+        assert {credit.total_episode_count for credit, _, _ in rows} == {80}
+
+    async def test_two_people_as_one_character_is_two_credits_and_one_character(self, session):
+        """Recasting, which per-show interning exists to preserve — 2,621
+        characters in prod are played by more than one person."""
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[
+                        make_cast_member(1, "First Actor", [make_role("Doctor", 40)]),
+                        make_cast_member(2, "Second Actor", [make_role("Doctor", 20)]),
+                    ]
+                ),
+            ),
+        )
+
+        rows = await _cast(session, show_id)
+        assert len(rows) == 2
+        assert len({credit.character_id for credit, _, _ in rows}) == 1
+        assert await _count(session, m.Character) == 1
+
+    async def test_the_same_character_name_on_two_shows_is_two_characters(self, session):
+        """The other half of per-show interning: cross-show identity is the one
+        thing the narrowing gives up, and it has to give it up consistently."""
+        credits = make_aggregate_credits(cast=[make_cast_member(1, "Actor", [make_role("Doc", 5)])])
+
+        await _write(session, make_series(1396, aggregate_credits=credits))
+        await _write(session, make_series(1399, aggregate_credits=credits))
+
+        assert await _count(session, m.Character) == 2
+        assert await _count(session, m.Person) == 1
+
+    async def test_a_blank_character_is_stored_as_no_character(self, session):
+        """1 of 7,629 sampled roles. Interning `''` would invent a role nobody
+        played, and NOT NULL would abort the pass on that one row."""
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(1, "Themselves", [make_role("", 12)])]
+                ),
+            ),
+        )
+
+        rows = await _cast(session, show_id)
+        assert [credit.character_id for credit, _, _ in rows] == [None]
+        assert await _count(session, m.Character) == 0
+
+    async def test_crew_is_one_row_per_job_against_a_shared_role_vocabulary(self, session):
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    crew=[
+                        make_crew_member(
+                            9,
+                            "Vince Gilligan",
+                            "Writing",
+                            [make_job("Writer", 29), make_job("Story", 3)],
+                        ),
+                        make_crew_member(
+                            10, "Michelle MacLaren", "Directing", [make_job("Director", 11)]
+                        ),
+                    ]
+                ),
+            ),
+        )
+
+        rows = await _crew(session, show_id)
+        assert [(role.department, role.job, credit.episode_count) for credit, role in rows] == [
+            ("Writing", "Writer", 29),
+            ("Directing", "Director", 11),
+            ("Writing", "Story", 3),
+        ]
+        assert await _count(session, m.CrewRole) == 3
+
+    async def test_a_crew_role_is_interned_across_shows(self, session):
+        """`crew_role` is a TMDB-wide vocabulary, unlike `character` — a second
+        show naming Directing/Director must reuse the row, not add one."""
+        credits = make_aggregate_credits(
+            crew=[make_crew_member(9, "A Director", "Directing", [make_job("Director", 2)])]
+        )
+
+        await _write(session, make_series(1396, aggregate_credits=credits))
+        await _write(session, make_series(1399, aggregate_credits=credits))
+
+        assert await _count(session, m.CrewRole) == 1
+        assert await _count(session, m.ShowCrew) == 2
+
+    async def test_re_ingesting_the_same_show_duplicates_nothing(self, session):
+        """Neither credit table carries a unique key — `show_cast` deliberately
+        so, since refresh is delete-then-insert. Nothing but this test catches a
+        refresh that stopped being total."""
+        payload = make_series(
+            1396,
+            aggregate_credits=make_aggregate_credits(
+                cast=[make_cast_member(1, "Lead", [make_role("Walter", 62)])],
+                crew=[make_crew_member(9, "Writer Person", "Writing", [make_job("Writer", 29)])],
+            ),
+        )
+        await _write(session, payload)
+
+        await _write(session, payload)
+
+        assert await _count(session, m.ShowCast) == 1
+        assert await _count(session, m.ShowCrew) == 1
+        assert await _count(session, m.Person) == 2
+        assert await _count(session, m.Character) == 1
+        assert await _count(session, m.CrewRole) == 1
+
+    async def test_a_dropped_credit_is_removed_on_the_next_pass(self, session):
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[
+                        make_cast_member(1, "Stays", [make_role("Walter", 62)]),
+                        make_cast_member(2, "Goes", [make_role("Gale", 8)]),
+                    ]
+                ),
+            ),
+        )
+
+        await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(1, "Stays", [make_role("Walter", 62)])]
+                ),
+            ),
+        )
+
+        rows = await _cast(session, show_id)
+        assert [person.name for _, _, person in rows] == ["Stays"]
+        # The dropped credit's character stays interned. Stated rather than
+        # asserted-away: `catalog.character` is also the interning target for
+        # episode guest cast (NEU-1040), written from a different payload, so a
+        # prune scoped to show cast would delete rows an episode credit needs.
+        assert await _count(session, m.Character) == 2
+
+    async def test_a_crew_entry_missing_its_department_is_skipped_not_fatal(self, session):
+        """`crew_role` is NOT NULL in both columns, so an unnamed pair cannot be
+        interned. Measured never to happen — and if the measurement goes stale,
+        one malformed entry must cost that credit rather than the show."""
+        show_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    crew=[
+                        make_crew_member(9, "No Department", "", [make_job("Writer", 4)]),
+                        make_crew_member(
+                            10, "Real Director", "Directing", [make_job("Director", 6)]
+                        ),
+                    ]
+                ),
+            ),
+        )
+
+        assert [role.job for _, role in await _crew(session, show_id)] == ["Director"]
+        assert await _count(session, m.CrewRole) == 1
+
+    async def test_a_person_upserts_on_tmdb_id_and_keeps_their_surrogate(self, session):
+        """`catalog.person` conflict-targets `tmdb_id`, an acceptance criterion
+        in its own right: an id that churned on every pass would break every
+        credit row pointing at it mid-run."""
+        first_id = await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(1, "Stale Name", [make_role("Walter", 1)])]
+                ),
+            ),
+        )
+        before = (await _cast(session, first_id))[0][2].id
+
+        await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(1, "Bryan Cranston", [make_role("Walter", 62)])]
+                ),
+            ),
+        )
+
+        person = (await _cast(session, first_id))[0][2]
+        assert person.id == before
+        assert person.name == "Bryan Cranston"
+        assert await _count(session, m.Person) == 1
+
+    async def test_an_absent_namespace_leaves_the_credits_alone(self, session):
+        """Same rule as every other namespace: a delta fetched without
+        `aggregate_credits` must not empty a show's cast."""
+        await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(1, "Lead", [make_role("Walter", 62)])]
+                ),
+            ),
+        )
+
+        await _write(session, make_series(1396))
+
+        assert await _count(session, m.ShowCast) == 1
+
+    async def test_an_empty_namespace_clears_the_credits(self, session):
+        await _write(
+            session,
+            make_series(
+                1396,
+                aggregate_credits=make_aggregate_credits(
+                    cast=[make_cast_member(1, "Lead", [make_role("Walter", 62)])]
+                ),
+            ),
+        )
+
+        await _write(session, make_series(1396, aggregate_credits=make_aggregate_credits()))
+
+        assert await _count(session, m.ShowCast) == 0
+
+
+async def _cast(session, show_id: int) -> list[tuple[m.ShowCast, m.Character | None, m.Person]]:
+    """This show's cast in the order the read path will serve it.
+
+    **`NULLS LAST` is not decoration.** `episode_count` is nullable — nothing
+    guarantees TMDB states one — and Postgres sorts NULLs *first* under a plain
+    `DESC`, which would put a role of unknown size ahead of the show's lead. This
+    helper is the shape the cutover read path should copy, so it spells the
+    ordering out rather than leaving the trap for it to inherit.
+    """
+    rows = await session.execute(
+        select(m.ShowCast, m.Character, m.Person)
+        .join(m.Person, m.Person.id == m.ShowCast.person_id)
+        .outerjoin(m.Character, m.Character.id == m.ShowCast.character_id)
+        .where(m.ShowCast.show_id == show_id)
+        .order_by(m.ShowCast.episode_count.desc().nullslast())
+        .execution_options(populate_existing=True)
+    )
+    return list(rows.all())
+
+
+async def _crew(session, show_id: int) -> list[tuple[m.ShowCrew, m.CrewRole]]:
+    rows = await session.execute(
+        select(m.ShowCrew, m.CrewRole)
+        .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
+        .where(m.ShowCrew.show_id == show_id)
+        .order_by(m.ShowCrew.episode_count.desc().nullslast())
+        .execution_options(populate_existing=True)
+    )
+    return list(rows.all())
 
 
 async def _show(session, show_id: int) -> m.Show:
