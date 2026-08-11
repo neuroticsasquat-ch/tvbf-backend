@@ -101,16 +101,22 @@ from tvbf.tvmaze.runs import finalize_run, record_progress, warn_if_all_gone
 
 log = logging.getLogger(__name__)
 
-# The season numbers the first request guesses at, sized to whatever
-# `append_to_response` has left after the audit's namespaces. Derived rather
-# than written out so adding a twelfth namespace narrows the window instead of
-# silently overflowing the cap.
-#
-# Starts at 0 — specials — because the measurement says so: 0..8 covers 97.5% of
-# sampled shows against 94.0% for 1..9. See the module docstring.
-SPECULATIVE_SEASONS: tuple[int, ...] = tuple(
-    range(0, APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND))
-)
+
+def speculative_seasons(namespaces: Sequence[str] = DEFAULT_APPEND) -> tuple[int, ...]:
+    """The season numbers a first request guesses at, given what else it appends.
+
+    Derived rather than written out so adding a twelfth namespace narrows the
+    window instead of silently overflowing the cap — and taking the namespaces
+    as an argument so a caller that appends *none* of them gets the whole budget
+    as seasons rather than nine of it.
+
+    Starts at 0 — specials — because the measurement says so: 0..8 covers 97.5%
+    of sampled shows against 94.0% for 1..9. See the module docstring.
+    """
+    return tuple(range(0, APPEND_TO_RESPONSE_LIMIT - len(namespaces)))
+
+
+SPECULATIVE_SEASONS: tuple[int, ...] = speculative_seasons()
 
 
 # How often to log a running total. At the measured 7.27 shows/sec this is a
@@ -178,7 +184,10 @@ async def synced_series_ids(session: AsyncSession) -> set[int]:
 
 
 async def fetch_series_with_seasons(
-    client: TMDBClient, series_id: int
+    client: TMDBClient,
+    series_id: int,
+    *,
+    namespaces: Sequence[str] = DEFAULT_APPEND,
 ) -> tuple[TMDBSeries, list[TMDBSeasonDetail]]:
     """One show, complete: the series request plus however many seasons overflowed.
 
@@ -190,8 +199,14 @@ async def fetch_series_with_seasons(
     stamped `tmdb_synced_at` and never revisited, which is exactly the silent
     partial the watermark exists to prevent. Failing leaves the watermark null,
     so the next run picks the show up again.
+
+    `namespaces` exists for the one caller that needs the episodes and nothing
+    else — NEU-1045's episode mapping, which passes `()` and thereby trades the
+    audit's eleven namespaces for eleven more speculative seasons. The ingest
+    itself never passes it: a narrower payload here would mean a show mirrored
+    without its credits and then stamped as complete.
     """
-    append, _ = plan_append(SPECULATIVE_SEASONS)
+    append, _ = plan_append(speculative_seasons(namespaces), namespaces)
     series = TMDBSeries.model_validate(await client.get_tv_series(series_id, append=append))
 
     arrived = {detail.season_number for detail in series.appended_seasons}

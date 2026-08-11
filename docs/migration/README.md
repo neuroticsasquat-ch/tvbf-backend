@@ -141,6 +141,62 @@ was never in the ticket.
 episode watches), and confirming its show id is necessary but not sufficient:
 those watches must also map at episode grain, which is NEU-1045's.
 
+## Episode-grain mapping (NEU-1045)
+
+No artifact here either — the pass writes to the database and the report is a
+query, run live and read once, for the same reasons the queue above is.
+
+**Run it after `task enrich:tmdb-ids` and before the full TMDB ingest.** The
+episode upsert conflict-targets `tmdb_id`, and a copied episode row carries
+none: run the ingest first and every matched show ends up holding each episode
+twice — a TMDB row with a fresh id, and the copied row that
+`app.user_episode_watch` actually points at. Stamping the copied rows first is
+what makes the ingest update them in place instead.
+
+```bash
+# the pass: one request per matched show, resumable, safe to kill
+task map:episodes
+task map:episodes -- --limit 100     # smoke run first
+
+# production
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.episode_map map'
+```
+
+Then read the residue. Unmatched episodes are the expected output rather than a
+failure — a two-parter counted once upstream and twice here has no key to match
+on — so the report surfaces only the ones somebody would lose something over:
+
+```bash
+task map:episodes:report
+```
+
+Four things in it are worth reading, in this order:
+
+1. `unmirrored_watches` — watched episodes with **no `catalog.episode` row at
+   all**, which every other number in the report is computed without. The TV
+   Maze daily keeps adding episodes until cutover and every one added after
+   `task copy:catalog` ran is watchable while having nothing to map, so this is
+   expected to be non-empty on any day the copy has not just been re-run. The
+   fix is operational: re-run `task copy:catalog`, then this. The CLI logs it as
+   an error above the counts for the same reason.
+2. `systematic_shows` — a matched show where **nothing** mapped. That is a claim
+   about the show rather than its episodes, and usually means the `tmdb_id`
+   NEU-1043 attached belongs to a different series, which `task queue:confirm`
+   fixes. Check it against the run's log first: the flag is `0 of N mapped`, and
+   a show whose fetch failed during the pass satisfies that exactly as well —
+   the database cannot tell those apart, but the pass's per-show warnings can.
+3. `unmatched_user_data` — every unmapped episode carrying a watch or a rating,
+   worst first. Each row keeps its TV Maze data and its watch record whatever
+   happens; the entry is there so a systematic pattern on a popular show is
+   visible rather than inferred. `synthetic: true` marks a row the copy invented
+   a negative number for — a null-numbered TV Maze special, permanently
+   unmappable and not a mismatch to investigate.
+4. `totals.watched_episodes_unmapped` — the number the cutover gate reads.
+
+The report only means anything **after** the pass: before one, every matched
+show has zero mapped episodes and reads as systematic.
+
 Two rows are genuinely unmapped and need a decision either way: *Cunk on Earth*
 (several *Cunk* entries, so the rule refused to guess) and *Discretion* (no
 premiere date, excluded from tier 3 by design). Neither carries watch history.
