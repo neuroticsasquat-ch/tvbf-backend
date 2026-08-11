@@ -272,6 +272,21 @@ tasks:
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_map report
 
+  dedupe:seasons:
+    desc: Delete the copied season rows the TMDB ingest superseded (idempotent; NEU-1119)
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.season_dedupe dedupe {{.CLI_ARGS}}
+
+  dedupe:seasons:report:
+    desc: 'Count the duplicate seasons and what the pass deliberately keeps, as JSON (NEU-1119)'
+    # `silent` + `-T` for the same reasons `map:episodes:report` needs them: the
+    # report is the process stdout, so go-task's banner and docker's TTY carriage
+    # returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.season_dedupe report
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
