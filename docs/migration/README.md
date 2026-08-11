@@ -200,3 +200,89 @@ show has zero mapped episodes and reads as systematic.
 Two rows are genuinely unmapped and need a decision either way: *Cunk on Earth*
 (several *Cunk* entries, so the rule refused to guess) and *Discretion* (no
 premiere date, excluded from tier 3 by design). Neither carries watch history.
+
+## Season-grain deduplication (NEU-1119)
+
+The copy left every `catalog.season` row with `tmdb_id IS NULL`, and nothing ever
+mapped the season grain — so once the full ingest ran, every matched show ended
+up carrying two rows for each season: the copied one under its preserved TV Maze
+id, and the ingested one under a fresh surrogate. NEU-1119 chose **delete** over
+map because the ingest had already run (228,841 shows synced), which closes the
+mapping window `uq_season_tmdb_id` guards.
+
+**Run `report` first.** It writes nothing and says exactly what the pass would do:
+
+```bash
+task dedupe:seasons:report
+
+# production
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.season_dedupe report'
+```
+
+Measured against production on 2026-08-11, of 188,134 copied seasons:
+
+| | rows | |
+| -- | -- | -- |
+| `deletable_duplicates` | 122,350 | deleted |
+| `kept_under_unmatched_show` | 47,445 | the only season data those shows have |
+| `kept_no_counterpart` | 18,339 | TMDB has no season of that number |
+| `ambiguous` | 0 | two ingested rows for one number — refused, not guessed |
+| `episodes_to_repoint` | 2,125,419 | 7,120 of them carrying watch or rating history |
+
+Then the pass. It re-points the episodes onto the surviving season and deletes
+the copy, in one transaction per 500 seasons — safe to kill, and resumable
+because a row leaves the work list by being deleted:
+
+```bash
+task dedupe:seasons -- --limit 100    # smoke run first
+task dedupe:seasons
+```
+
+Read the report again afterwards. `deletable_duplicates` should be `0` — which
+says the pass has nothing left to do, **not** that the season grain is clean.
+`still_doubled` is what scores that, and it does not reach zero (below).
+
+Four things about it are worth knowing before running it in production:
+
+1. **`episodes_to_repoint` is not zero, and the ticket said it would be.**
+   NEU-1119 assumed `upsert_episodes` had already moved these episodes onto the
+   ingested season. It moves only the episodes it *writes*, and a copied episode
+   with no `tmdb_id` is not one — so a bare `DELETE` would trip `ON DELETE SET
+   NULL` on 2.1 million rows, 7,120 of them watched. The pass re-points first.
+2. **`still_doubled` stays non-empty, and that is correct.** It lists every
+   `(show, season number)` that will carry more than one row *after* the pass —
+   the residue of "no show carries two `catalog.season` rows for one season",
+   which this pass cannot fully reach. Three shapes, told apart by two fields:
+   `show_matched: false` is TV Maze's own duplicate numbering under a
+   locally-authored show (**9** pairs in production), where "a season under a
+   locally-authored show is untouched" wins; `show_matched: true` with
+   `ingested_rows: 0` is the same duplicate under a matched show on a number TMDB
+   has no season for, so neither row has a counterpart to defer to (**33** pairs);
+   and `ingested_rows` above 1 is two rows the *ingest* wrote for one number,
+   which is the ambiguity the pass refuses rather than guesses at (**0**). Forty-two
+   pairs in total, measured 2026-08-11.
+3. **`task copy:catalog` puts the rows back, but not the parentage.** Its
+   anti-join verification demands a catalog row for every `tvmaze.season`, so
+   re-running it re-inserts each deleted row under its original id — and until it
+   is re-run, `verify_copy` reports `catalog.season` short. It does **not**
+   restore `catalog.episode.season_id`: `_COPY_EPISODES` skips rows already
+   present, so a bare re-copy hands back the seasons with no episodes attached. A
+   full revert is two statements, the second being:
+
+   ```sql
+   UPDATE catalog.episode e
+      SET season_id = te.season_id
+     FROM tvmaze.episode te
+    WHERE te.id = e.id AND te.season_id IS NOT NULL;
+   ```
+
+   `tvmaze.episode.season_id` holds every original pointer for as long as that
+   schema stands (NEU-1051 has not run), which is what makes the work reversible
+   in full rather than in part.
+4. **The pass is safe to kill.** It commits per 500 seasons, so an interrupted
+   run keeps everything earlier batches did and the next run picks up the rest.
+
+Re-run the pass after any later ingest or catalog delta: a delta that adds a
+season to a matched show on a number a copied row still holds is a fresh
+duplicate, and there is no watermark to make that a one-shot.
