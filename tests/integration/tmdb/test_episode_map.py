@@ -70,7 +70,7 @@ def _season_block(tmdb_id: int, number: int, episode_numbers: list[int]) -> dict
     )
 
 
-def mock_series(tmdb_id: int, seasons: dict[int, list[int]]) -> None:
+def mock_series(tmdb_id: int, seasons: dict[int, list[int]]) -> dict[int, respx.Route]:
     """Route `/tv/{id}` and every `/tv/{id}/season/{n}` for one show.
 
     The series route honours `append_to_response` exactly as measured: a
@@ -90,10 +90,12 @@ def mock_series(tmdb_id: int, seasons: dict[int, list[int]]) -> None:
         return httpx.Response(200, json=payload)
 
     respx.get(f"{BASE}/tv/{tmdb_id}").mock(side_effect=_respond)
-    for number, numbers in seasons.items():
-        respx.get(f"{BASE}/tv/{tmdb_id}/season/{number}").mock(
+    return {
+        number: respx.get(f"{BASE}/tv/{tmdb_id}/season/{number}").mock(
             return_value=httpx.Response(200, json=_season_block(tmdb_id, number, numbers))
         )
+        for number, numbers in seasons.items()
+    }
 
 
 async def _seed_show(session, *, tmdb_id: int | None, name: str = "Mapped Show") -> int:
@@ -184,15 +186,31 @@ async def test_an_episode_upstream_does_not_have_is_left_alone(session):
 
 @respx.mock
 async def test_a_season_outside_the_speculative_window_still_maps(session):
-    """A twelfth season overflows `append_to_response` and needs its own request."""
+    """A season past the window overflows `append_to_response` and needs its own request.
+
+    The window is `0..19` here rather than the ingest's `0..8`: this pass appends
+    no namespaces, so the whole 20-entry budget goes to seasons.
+    """
     show_id = await _seed_show(session, tmdb_id=1396)
-    episode_id = await _seed_episode(session, show_id, season=12, number=1)
-    mock_series(1396, {1: [1], 12: [1]})
+    episode_id = await _seed_episode(session, show_id, season=25, number=1)
+    mock_series(1396, {1: [1], 25: [1]})
 
     result = await _run(session)
 
-    assert await _episode_tmdb_id(session, episode_id) == 1396 * 10_000 + 1201
+    assert await _episode_tmdb_id(session, episode_id) == 1396 * 10_000 + 2501
     assert result.episodes.matched == 1
+
+
+@respx.mock
+async def test_a_twelfth_season_rides_the_first_request(session):
+    """The budget the ingest spends on namespaces is spent on seasons here."""
+    show_id = await _seed_show(session, tmdb_id=1396)
+    await _seed_episode(session, show_id, season=12, number=1)
+    season_routes = mock_series(1396, {12: [1]})
+
+    await _run(session)
+
+    assert season_routes[12].call_count == 0
 
 
 @respx.mock
@@ -360,6 +378,7 @@ async def test_every_unmapped_watched_episode_is_in_the_report(session, make_use
             "episode_number": 9,
             "episode_name": "The Odd One",
             "air_date": "2008-01-20",
+            "synthetic": False,
             "watches": 1,
             "ratings": 0,
         }
@@ -451,6 +470,48 @@ async def test_a_show_whose_only_residue_is_specials_is_not_flagged(session):
     report = await build_report(session)
 
     assert show_id not in {row["show_id"] for row in report.systematic_shows}
+
+
+@respx.mock
+async def test_a_watched_special_is_reported_as_synthetic(session, make_user):
+    """156 watched specials in production, and none of them is a mapping failure.
+
+    They belong in the report — a watched episode is never silently dropped —
+    but a reader must not have to know that a negative number means invented.
+    """
+    user = await make_user(email="em6@example.com")
+    show_id = await _seed_show(session, tmdb_id=1396)
+    special = await _seed_episode(session, show_id, season=1, number=-1)
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=special))
+    await session.commit()
+    mock_series(1396, {0: [1], 1: [1]})
+    await _run(session)
+
+    report = await build_report(session)
+
+    (row,) = [r for r in report.unmatched_user_data if r["episode_id"] == special]
+    assert row["synthetic"] is True
+
+
+async def test_a_watch_the_copy_never_mirrored_is_reported_loudly(session, make_user):
+    """The daily keeps adding episodes after `copy:catalog` ran, and they are watchable.
+
+    Such a row is invisible to every other query here, all of which read *from*
+    `catalog.episode` — so without this it would read as a clean report while a
+    user's watch had no catalog row at all.
+    """
+    user = await make_user(email="em7@example.com")
+    show_id = await _seed_show(session, tmdb_id=1396)
+    episode_id = _next_id()
+    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=2, number=1))
+    await session.flush()
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=episode_id))
+    await session.commit()
+
+    report = await build_report(session)
+
+    assert {"episode_id": episode_id, "watches": 1} in report.unmirrored_watches
+    assert report.totals["unmirrored_watched_episodes"] >= 1
 
 
 @respx.mock

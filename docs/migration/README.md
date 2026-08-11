@@ -171,16 +171,28 @@ on — so the report surfaces only the ones somebody would lose something over:
 task map:episodes:report
 ```
 
-Three things in it are worth reading in order:
+Four things in it are worth reading, in this order:
 
-1. `systematic_shows` — a matched show where **nothing** mapped. That is a claim
-   about the show, not its episodes: it usually means the `tmdb_id` NEU-1043
-   attached belongs to a different series, and `task queue:confirm` is the fix.
-2. `unmatched_user_data` — every unmapped episode carrying a watch or a rating,
+1. `unmirrored_watches` — watched episodes with **no `catalog.episode` row at
+   all**, which every other number in the report is computed without. The TV
+   Maze daily keeps adding episodes until cutover and every one added after
+   `task copy:catalog` ran is watchable while having nothing to map, so this is
+   expected to be non-empty on any day the copy has not just been re-run. The
+   fix is operational: re-run `task copy:catalog`, then this. The CLI logs it as
+   an error above the counts for the same reason.
+2. `systematic_shows` — a matched show where **nothing** mapped. That is a claim
+   about the show rather than its episodes, and usually means the `tmdb_id`
+   NEU-1043 attached belongs to a different series, which `task queue:confirm`
+   fixes. Check it against the run's log first: the flag is `0 of N mapped`, and
+   a show whose fetch failed during the pass satisfies that exactly as well —
+   the database cannot tell those apart, but the pass's per-show warnings can.
+3. `unmatched_user_data` — every unmapped episode carrying a watch or a rating,
    worst first. Each row keeps its TV Maze data and its watch record whatever
    happens; the entry is there so a systematic pattern on a popular show is
-   visible rather than inferred.
-3. `totals.watched_episodes_unmapped` — the number the cutover gate reads.
+   visible rather than inferred. `synthetic: true` marks a row the copy invented
+   a negative number for — a null-numbered TV Maze special, permanently
+   unmappable and not a mismatch to investigate.
+4. `totals.watched_episodes_unmapped` — the number the cutover gate reads.
 
 The report only means anything **after** the pass: before one, every matched
 show has zero mapped episodes and reads as systematic.

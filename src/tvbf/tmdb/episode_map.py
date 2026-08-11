@@ -63,7 +63,7 @@ Four outcomes, three of which are not a match, all counted per show:
 for TV Maze's null-numbered specials (27,498 rows in prod, 156 watched), and TMDB
 numbers its specials positively inside season 0. There is no key to match on, by
 construction, so those rows are excluded from the work list rather than retried
-every run — see `_CANDIDATES`.
+every run — see `_HAS_MAPPABLE_EPISODE`.
 
 ## Re-running
 
@@ -85,6 +85,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -157,38 +158,34 @@ class EpisodeMapResult:
     episodes: ShowMapResult
 
 
-# Matched shows still carrying a mappable unmapped episode, worst-numbered rows
-# excluded. Keyset paging rather than OFFSET, exactly as `enrichment.py` does it:
-# a show leaves the candidate set the moment its episodes are written, so an
-# offset would step over whatever slid into its place.
+# What makes a show worth a request: it is matched, and it still holds an episode
+# that *could* map. Written once and shared by the work list and its count, the
+# way `enrichment._NOT_HUMAN` is — the denominator in the progress log means
+# nothing if it drifts from what the loop actually takes.
+_HAS_MAPPABLE_EPISODE = f"""
+    s.tmdb_id IS NOT NULL
+    AND EXISTS (
+        SELECT 1
+          FROM catalog.episode e
+         WHERE e.show_id = s.id
+           AND e.tmdb_id IS NULL
+           AND e.episode_number >= {_LOWEST_MAPPABLE_NUMBER}
+    )
+"""
+
+# Keyset paging rather than OFFSET, exactly as `enrichment.py` does it: a show
+# leaves the candidate set the moment its episodes are written, so an offset
+# would step over whatever slid into its place.
 _CANDIDATES = text(f"""
     SELECT s.id, s.tmdb_id, s.name
       FROM catalog.show s
-     WHERE s.tmdb_id IS NOT NULL
+     WHERE {_HAS_MAPPABLE_EPISODE}
        AND s.id > :after_id
-       AND EXISTS (
-           SELECT 1
-             FROM catalog.episode e
-            WHERE e.show_id = s.id
-              AND e.tmdb_id IS NULL
-              AND e.episode_number >= {_LOWEST_MAPPABLE_NUMBER}
-       )
      ORDER BY s.id
      LIMIT :limit
 """)
 
-_REMAINING = text(f"""
-    SELECT count(*)
-      FROM catalog.show s
-     WHERE s.tmdb_id IS NOT NULL
-       AND EXISTS (
-           SELECT 1
-             FROM catalog.episode e
-            WHERE e.show_id = s.id
-              AND e.tmdb_id IS NULL
-              AND e.episode_number >= {_LOWEST_MAPPABLE_NUMBER}
-       )
-""")
+_REMAINING = text(f"SELECT count(*) FROM catalog.show s WHERE {_HAS_MAPPABLE_EPISODE}")
 
 # Every episode of one show, mapped or not: an already-mapped row is what makes a
 # key ambiguous, so the ambiguity check cannot be run over the unmapped ones
@@ -300,8 +297,15 @@ async def map_show_episodes(
     payload the ingest would mirror — and an overflow fetch that fails takes the
     show down rather than mapping half of it, which is the behaviour that
     function already owns.
+
+    **With no appended namespaces**, though: episode ids are all this pass reads,
+    so the audit's eleven namespaces would be a show's whole credit list,
+    translations and images fetched 63,000 times and discarded. Spending that
+    budget on seasons instead widens the speculative window from `0..8` to
+    `0..19`, which is the difference between one request and two for a
+    long-running show.
     """
-    series, overflow = await fetch_series_with_seasons(client, show.tmdb_id)
+    series, overflow = await fetch_series_with_seasons(client, show.tmdb_id, namespaces=())
     upstream = _upstream_episode_ids([*series.appended_seasons, *overflow])
 
     local = await _local_episodes(session, show.id)
@@ -420,7 +424,18 @@ async def map_episode_ids(
                     )
                     continue
                 consecutive_failures += 1
-                log.warning("show %d (%s): episode mapping failed: %s", show.id, show.name, exc)
+                if isinstance(exc, httpx.HTTPStatusError):
+                    # Retried to exhaustion by the client already, so this is a
+                    # persistent upstream failure rather than a bug here — the
+                    # status line is the whole story and a traceback is noise.
+                    log.warning("show %d (%s): episode mapping failed: %s", show.id, show.name, exc)
+                else:
+                    # Anything else is ours, and the same distinction
+                    # `mirror_series` draws: without the traceback a bug in this
+                    # loop reads as an upstream problem.
+                    log.exception(
+                        "show %d (%s): unexpected episode mapping error", show.id, show.name
+                    )
                 if consecutive_failures >= failure_threshold:
                     # Committed first: the batch's earlier shows cost upstream
                     # calls and are correct, so an abort must not throw them away.
@@ -465,7 +480,11 @@ async def map_episode_ids(
 # the copy preserved TV Maze's ids as the catalog surrogates, which is the whole
 # reason user data never has to move. The join stays correct past that point too.
 
-_UNMATCHED_USER_DATA = text("""
+# `synthetic` rides each row rather than only the totals: a watched null-numbered
+# special (156 of them in production) is a permanent, understood residue, and a
+# reader asked to tell it from a genuine mismatch by the sign of a number is
+# being asked to know something the report should say.
+_UNMATCHED_USER_DATA = text(f"""
     SELECT e.id AS episode_id,
            e.show_id,
            s.name AS show_name,
@@ -475,6 +494,7 @@ _UNMATCHED_USER_DATA = text("""
            e.episode_number,
            e.name AS episode_name,
            e.air_date,
+           e.episode_number < {_LOWEST_MAPPABLE_NUMBER} AS synthetic,
            (SELECT count(*) FROM app.user_episode_watch w WHERE w.episode_id = e.id) AS watches,
            (SELECT count(*) FROM app.user_episode_rating r WHERE r.episode_id = e.id) AS ratings
       FROM catalog.episode e
@@ -533,6 +553,23 @@ _WATCHED_TOTALS = text("""
      WHERE EXISTS (SELECT 1 FROM app.user_episode_watch w WHERE w.episode_id = e.id)
 """)
 
+# A watched episode with **no `catalog.episode` row at all** is invisible to every
+# query above, which all read *from* that table — and it reads as a clean report,
+# which is the one wrong answer this thing must not give. It happens for real, and
+# nightly: the TV Maze daily keeps adding episodes right up to cutover, and every
+# one added after `task copy:catalog` ran is watchable while having nothing to
+# map. Same failure mode, same shape and same fix as
+# `human_queue.unmirrored_user_touched_shows` — re-run the copy — so it is
+# reported here rather than repaired.
+_UNMIRRORED_WATCHES = text("""
+    SELECT w.episode_id,
+           count(*) AS watches
+      FROM app.user_episode_watch w
+     WHERE NOT EXISTS (SELECT 1 FROM catalog.episode e WHERE e.id = w.episode_id)
+     GROUP BY w.episode_id
+     ORDER BY watches DESC, w.episode_id
+""")
+
 
 @dataclass(frozen=True)
 class EpisodeMapReport:
@@ -541,12 +578,15 @@ class EpisodeMapReport:
     totals: dict[str, int]
     unmatched_user_data: list[dict[str, Any]]
     systematic_shows: list[dict[str, Any]]
+    # Watched episodes the copy never mirrored — not a mapping outcome at all.
+    unmirrored_watches: list[dict[str, int]]
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "totals": self.totals,
             "unmatched_user_data": self.unmatched_user_data,
             "systematic_shows": self.systematic_shows,
+            "unmirrored_watches": self.unmirrored_watches,
         }
 
 
@@ -554,8 +594,13 @@ async def build_report(session: AsyncSession) -> EpisodeMapReport:
     """Every unmapped episode a user has touched, worst first, plus the 0% shows.
 
     Needs no TMDB credential: it is entirely a read of what the pass left behind.
-    Read it **after** the pass — before one, every matched show reads as
-    systematic, because nothing has tried yet.
+
+    **Read it after the pass, and read the pass's log beside it.** Before a run,
+    every matched show has zero mapped episodes and so reads as systematic; and
+    the systematic flag is `0 of N mapped`, which a show whose fetch failed
+    during the run satisfies exactly as well as a show matched to the wrong
+    series does. The database cannot tell those apart — the run's own per-show
+    warnings are what does.
     """
     unmatched = [
         {
@@ -568,6 +613,7 @@ async def build_report(session: AsyncSession) -> EpisodeMapReport:
             "episode_number": row.episode_number,
             "episode_name": row.episode_name,
             "air_date": row.air_date.isoformat() if row.air_date else None,
+            "synthetic": row.synthetic,
             "watches": row.watches,
             "ratings": row.ratings,
         }
@@ -586,6 +632,11 @@ async def build_report(session: AsyncSession) -> EpisodeMapReport:
         for row in (await session.execute(_SYSTEMATIC_SHOWS)).all()
     ]
 
+    unmirrored = [
+        {"episode_id": row.episode_id, "watches": row.watches}
+        for row in (await session.execute(_UNMIRRORED_WATCHES)).all()
+    ]
+
     totals = (await session.execute(_TOTALS)).one()
     watched = (await session.execute(_WATCHED_TOTALS)).one()
     return EpisodeMapReport(
@@ -597,7 +648,9 @@ async def build_report(session: AsyncSession) -> EpisodeMapReport:
             "watched_episodes_unmapped": watched.watched_unmapped,
             "unmatched_carrying_user_data": len(unmatched),
             "systematic_shows": len(systematic),
+            "unmirrored_watched_episodes": len(unmirrored),
         },
         unmatched_user_data=unmatched,
         systematic_shows=systematic,
+        unmirrored_watches=unmirrored,
     )

@@ -87,6 +87,17 @@ async def _report() -> int:
     sys.stdout.write(json.dumps(report.to_dict(), indent=2) + "\n")
 
     totals = report.totals
+    # Before the counts, because it is the one way this report can be wrong
+    # rather than merely long: these watches have no catalog row at all, so every
+    # other number below is silently computed without them.
+    if report.unmirrored_watches:
+        log.error(
+            "%d watched episode(s) have no catalog.episode row and are NOT counted below "
+            "— re-run `task copy:catalog`, then this: %s",
+            len(report.unmirrored_watches),
+            ", ".join(str(row["episode_id"]) for row in report.unmirrored_watches),
+        )
+
     log.info(
         "%d of %d watched episode(s) are unmapped; %d unmapped row(s) carry watch or rating "
         "history, across %d show(s) where nothing mapped at all",
@@ -101,6 +112,18 @@ async def _report() -> int:
             "TMDB series — check those before the individual misses"
         )
     return 0
+
+
+async def run(args: argparse.Namespace) -> int:
+    """The whole job, minus argument parsing. Returns the process exit code.
+
+    Split out from `main` so tests can await it on their own event loop —
+    `main`'s `asyncio.run` would otherwise rebuild the loop under the shared
+    engine's pooled connections.
+    """
+    if args.mode == "map":
+        return await _map(args.limit)
+    return await _report()
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
@@ -123,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     configure_logging(settings.log_level)
     try:
-        return asyncio.run(_map(args.limit) if args.mode == "map" else _report())
+        return asyncio.run(run(args))
     except Exception:
         log.exception("episode-grain mapping failed")
         return 1
