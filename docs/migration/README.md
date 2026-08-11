@@ -7,6 +7,34 @@ go/no-go re-runs the same harness against the same file — and because a
 procedure that only exists in somebody's terminal history is a procedure that
 will not survive to the day it is needed.
 
+## Production run log
+
+**Merging a pass is not running it.** Every job below is a one-shot operation whose
+value comes from being executed against production, several have ordering windows
+that close, and nothing about a merged PR records whether the run happened. This
+table is that record — update the row in the same PR that runs the pass, or in a
+follow-up if the run comes later.
+
+The cost of not having had this: NEU-1045 merged on 2026-08-11, a day *after* the
+full catalog ingest started, so its window had already shut. Nobody noticed until
+NEU-1066 measured the episode grain and found all 7,137 watched episodes still
+pointing at unmapped rows.
+
+| Pass | Task | Ordering | Run in prod |
+| -- | -- | -- | -- |
+| Watch archive (NEU-1029) | `task archive:watches` | before anything else | ✅ 2026-08-09 — 9,359 rows |
+| Reconciliation baseline (NEU-1030) | `task reconcile:capture` | before cutover | ✅ 2026-08-09 — committed here |
+| Catalog copy (NEU-1042) | `task copy:catalog` | before enrichment | ✅ 2026-08-09 — 89,025 shows |
+| TMDB id enrichment (NEU-1043) | `task enrich:tmdb-ids` | after copy, **before ingest** | ✅ 2026-08-10 — 62,882 matched, 26,143 unmatched, 107 collisions |
+| Collision remediation (NEU-1065) | `neu-1043-collision-remediation.sql` | after enrichment | ✅ 2026-08-10 — 18 rows |
+| Human queue (NEU-1044) | `task queue:confirm` / `queue:reject` | after enrichment, **before ingest** | ⚠️ partial — 4 guesses confirmed 2026-08-10; 2 user-touched rows still unresolved, and the window has closed (see NEU-1066) |
+| Episode-grain mapping (NEU-1045) | `task map:episodes` | after enrichment, **before ingest** | ❌ **never run — window closed.** The ingest started 2026-08-10, this merged 2026-08-11. Running it now maps nothing: 1,909,367 rows collide and 760,254 have no TMDB counterpart. Needs a re-point pass instead. |
+| Full catalog ingest (NEU-1034) | `task ingest:catalog` | after copy + enrichment | ✅ 2026-08-10 → 2026-08-11 — 228,723 shows |
+| Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
+| Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ⬜ not yet |
+| User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ blocked — the FK still points at `tvmaze.show` |
+| Episode-grain re-point | — | after ingest | ⬜ ticket not written — see NEU-1066's findings |
+
 ## `reconciliation-baseline.json`
 
 Per-user, per-show counts of tracked shows, episode watches, show ratings,
@@ -286,3 +314,93 @@ Four things about it are worth knowing before running it in production:
 Re-run the pass after any later ingest or catalog delta: a delta that adds a
 season to a matched show on a number a copied row still holds is a fresh
 duplicate, and there is no watermark to make that a one-shot.
+
+## Show-grain prune (NEU-1066)
+
+The show grain's version of the same problem, with the opposite outcome for
+matched rows. `catalog.show` upserts conflict-target `tmdb_id` (ADR-0008) and
+Postgres treats NULLs as distinct in a unique index, so the full ingest split the
+copied population in two: a row NEU-1043 had mapped conflicted and received the
+TMDB payload *on the same row* — preserved id, no duplicate — while a row with
+`tmdb_id IS NULL` could not conflict with anything, and TMDB's series was inserted
+beside it under a fresh surrogate.
+
+So `catalog` holds two rows for one show wherever matching failed and TMDB has the
+series anyway: id 10158 with TV Maze's "ITV News at Ten" and id 1003587 with
+TMDB's, each carrying its own disjoint seasons and episodes.
+
+### Why the rule is "unmatched and untouched", not "duplicate"
+
+The ticket proposed hiding duplicates from discovery, on the grounds that an
+unmatched row is ambiguous between "TMDB has it and we failed to match" and "TMDB
+does not have it". The ingest dissolves that: TMDB's whole catalog is local now,
+so the question is answerable in SQL. Measured against production 2026-08-11, of
+26,143 unmatched rows only 6,464 share a folded title with an ingested row and
+3,337 also agree on first-air year — three quarters duplicate nothing at all.
+
+That is what makes the simpler rule right rather than blunt. **The catalog is
+TMDB, plus the shows users have history on.** Locally-authored rows exist to hold
+the no-loss guarantee, not to preserve the breadth of the source being retired.
+
+Stated rather than discovered: the pass drops 26,141 shows including 4,898 Russian
+and 2,326 Chinese entries — the long tail the project spec flagged as unproven.
+2,406 of them have no episodes at all. `task copy:catalog` restores every one of
+them under its original id while `tvmaze` stands.
+
+### Running it
+
+```bash
+task prune:shows:report          # writes nothing; run this first
+
+# production
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.show_prune report'
+
+task prune:shows -- --limit 100  # smoke run
+task prune:shows
+```
+
+Expected against production:
+
+| | rows | |
+| -- | -- | -- |
+| `deletable` | 26,141 | deleted, taking 47,443 seasons and 840,169 episodes |
+| `deletable_with_title_twin` | 6,464 | duplicates the matcher missed |
+| `deletable_without_title_twin` | 19,679 | no ingested row shares the title — breadth from the retired source |
+| `kept_user_touched` | 2 | enumerated below — the accepted exceptions |
+| `kept_human_verdict` | 0 | `match_method='human'` with no `tmdb_id` is a person's ruling |
+| `kept_not_copied` | 0 | a row authored after the migration is not a copy |
+
+The pass **refuses to run before the full ingest** — under 150,000 shows carrying
+`tmdb_synced_at` it raises `IngestNotRun` rather than treating every copied row as
+unmatched and taking all 89,025.
+
+### The two shows it keeps, and why neither is a locally-authored row
+
+Both were checked against the live TMDB API on 2026-08-11, and **neither is absent
+from TMDB** — which is the general rule worth carrying: "unmatched" almost always
+means a grain mismatch or a failed lookup, not a missing series.
+
+| Show | catalog id | What TMDB actually has |
+| -- | -- | -- |
+| Discretion | 87519 | A plain duplicate — TMDB 300966, already ingested as id 1202502 |
+| Cunk on Earth | 63900 | **Season 2 of "Cunk on…"** (TMDB 79063, ingested as 1067768, seasons *Britain* and *Earth*). `/find` by its tvdb id returns nothing and tier 3's search returns four results with no exact title match, so both tiers correctly declined |
+
+Each is one `app.user_show_watch` row and nothing else — no episode watches, no
+ratings, no activity events, same user. `queue:confirm` cannot resolve them
+post-ingest (`uq_show_tmdb_id` refuses, since the ingested row already holds the
+id), so the fix is `neu-1066-user-touched-remediation.sql`: re-point the two My
+Shows rows, then re-run `task prune:shows` to take the copies. **That file cannot
+run until NEU-1046 has repointed the foreign keys** — `app.user_show_watch.show_id`
+still references `tvmaze.show.id`, and both destinations are catalog surrogates
+above TV Maze's highest id, so the write is refused today. Note that the Cunk
+row changes what that user sees on their list, from "Cunk on Earth" to "Cunk on…".
+
+`still_doubled` in the report is the scoreboard for *"no show appears twice"*, and
+its limit is worth stating: it matches on **exact folded title equality**, so it
+sees "Discretion" and will be empty after the remediation — but it cannot see a
+grain mismatch. "Cunk on Earth" against TMDB's "Cunk on…" is a genuine duplicate
+that no title comparison will ever pair, which is why the two kept rows are
+enumerated above by hand rather than left for the query to find. Read an empty
+`still_doubled` as "no title-identical duplicate remains", not as "the show grain
+is clean".

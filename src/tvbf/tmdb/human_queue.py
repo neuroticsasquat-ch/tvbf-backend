@@ -92,7 +92,14 @@ _EPISODE = "tvmaze.episode"
 # exactly as the reconciliation harness does it — and it is included for the
 # same reason: this query's job is that nothing slips through, not that the
 # common cases are covered.
-_TOUCHED = f"""
+#
+# Public because `show_prune` (NEU-1066) asks the identical question for the
+# opposite purpose — it deletes the rows this queue would never surface — and a
+# second copy of this union is the one way the two could disagree about whether a
+# show is safe to drop. It lives here rather than in a shared module because this
+# is where the concept was defined; when NEU-1046 repoints the episode-grain
+# foreign keys off `tvmaze.episode`, both callers move together.
+TOUCHED_SHOWS = f"""
     SELECT show_id FROM app.user_show_watch
     UNION
     SELECT show_id FROM app.user_show_rating
@@ -118,7 +125,7 @@ _TOUCHED = f"""
 # repaired here — but it is reported loudly, because the alternative is a queue
 # that says "empty" while a user's show has no mapping at all.
 _UNMIRRORED = text(f"""
-    WITH touched AS ({_TOUCHED})
+    WITH touched AS ({TOUCHED_SHOWS})
     SELECT DISTINCT t.show_id
       FROM touched t
      WHERE t.show_id IS NOT NULL
@@ -127,7 +134,7 @@ _UNMIRRORED = text(f"""
 """)
 
 _QUEUE = text(f"""
-    WITH touched AS ({_TOUCHED})
+    WITH touched AS ({TOUCHED_SHOWS})
     SELECT s.id,
            s.name,
            s.first_air_date,
