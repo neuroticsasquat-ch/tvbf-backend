@@ -28,12 +28,15 @@ here no-ops on `None` rather than treating it as an empty list. Replacing a
 show's AKAs because the caller did not ask for them is the same failure
 `prune_seasons` exists to prevent.
 
-**Show credits are one entry to many rows.** `aggregate_credits` nests
-`roles[]` / `jobs[]` under a person, so one cast entry becomes one `show_cast`
-row *per character* and one crew entry one `show_crew` row *per job*. Character
-and crew role are interned rather than upserted on an upstream id, because
-neither is an entity upstream — see `_intern_characters` (NEU-1039). Episode
-`guest_stars` / `crew` ride the season payload instead and are NEU-1040's.
+**Show credits are one entry to many rows; episode credits are one to one.**
+`aggregate_credits` nests `roles[]` / `jobs[]` under a person, so one cast entry
+becomes one `show_cast` row *per character* and one crew entry one `show_crew`
+row *per job*. Episode `guest_stars` / `crew` ride the season payload and do not
+nest — an appearance is a row (NEU-1040). Character and crew role are interned
+rather than upserted on an upstream id in both cases, because neither is an
+entity upstream; character interns against the **show** at either grain, so a
+guest credit resolves to the character the show cast already named. See
+`_intern_characters` and `_write_episode_credits`.
 """
 
 import logging
@@ -53,8 +56,8 @@ from tvbf.tmdb.api_payloads import (
     TMDBCreatedBy,
     TMDBCreditPerson,
     TMDBEpisode,
+    TMDBEpisodeCrewMember,
     TMDBJob,
-    TMDBRole,
     TMDBSeasonDetail,
     TMDBSeries,
     TMDBWatchProviders,
@@ -383,28 +386,48 @@ async def prune_missing_seasons(
     return pruned
 
 
+def _dedupe_episodes(episodes: Sequence[TMDBEpisode]) -> dict[int, TMDBEpisode]:
+    """`{tmdb_id: episode}`, last occurrence winning.
+
+    The same episode can arrive twice — an appended `season/N` and a
+    `get_tv_season` overflow for the same season, say. Postgres refuses to let
+    one statement's `ON CONFLICT` touch a row twice, so this is a hard error and
+    not a tidiness concern.
+
+    Shared by the episode write and the credit write so both spend the *same*
+    payload for a duplicated episode. Deduplicating twice, independently, would
+    let the row come from one copy and its guest cast from the other.
+    """
+    return {ep.tmdb_id: ep for ep in episodes}
+
+
 async def upsert_episodes(
     session: AsyncSession,
     *,
     show_id: int,
     episodes: Sequence[TMDBEpisode],
     screened_episode_ids: set[int] | None = None,
-) -> None:
-    """Write a show's episodes, resolving each one's season by number.
+) -> dict[int, int]:
+    """Write a show's episodes, returning `{tmdb_id: surrogate id}`.
 
-    The `{season_number: surrogate id}` map is built from a **live query**, so
-    this has to run after the prune: a season about to be deleted must not win
-    the lookup and leave its episodes pointed at a row that is going away, only
-    for `ON DELETE SET NULL` to blank them. Run in the documented order, a
-    duplicate-numbered phantom's episodes land on the survivor instead.
+    Each episode's season is resolved by number. The `{season_number: surrogate
+    id}` map is built from a **live query**, so this has to run after the prune:
+    a season about to be deleted must not win the lookup and leave its episodes
+    pointed at a row that is going away, only for `ON DELETE SET NULL` to blank
+    them. Run in the documented order, a duplicate-numbered phantom's episodes
+    land on the survivor instead.
 
     `screened_episode_ids` is the `screened_theatrically` namespace, or `None`
     when it was not requested — in which case the column is left off the write
     entirely rather than defaulted to false, so a fetch that did not ask cannot
     clear a flag a fetch that did ask set.
+
+    The returned map is what episode-grain credits are written against
+    (NEU-1040): `episode_guest_cast` and `episode_crew` reference the surrogate,
+    and this statement is the only place it is known without a re-query.
     """
     if not episodes:
-        return
+        return {}
 
     season_rows = (
         await session.execute(
@@ -419,11 +442,7 @@ async def upsert_episodes(
     # ambiguity is representable and worth being deterministic about.
     season_by_number = {r.season_number: r.id for r in season_rows}
 
-    # The same episode can arrive twice — an appended `season/N` and a
-    # `get_tv_season` overflow for the same season, say. Postgres refuses to let
-    # one statement's ON CONFLICT touch a row twice, so this is a hard error and
-    # not a tidiness concern.
-    deduped: dict[int, TMDBEpisode] = {ep.tmdb_id: ep for ep in episodes}
+    deduped = _dedupe_episodes(episodes)
 
     values_list: list[dict[str, Any]] = []
     for ep in deduped.values():
@@ -447,14 +466,16 @@ async def upsert_episodes(
             row["screened_theatrically"] = ep.tmdb_id in screened_episode_ids
         values_list.append(row)
 
+    episode_ids: dict[int, int] = {}
     for start in range(0, len(values_list), _BATCH_SIZE):
         chunk = values_list[start : start + _BATCH_SIZE]
         stmt = insert(m.Episode).values(chunk)
         stmt = stmt.on_conflict_do_update(
             index_elements=[m.Episode.tmdb_id],
             set_={c: getattr(stmt.excluded, c) for c in chunk[0] if c != "tmdb_id"},
-        )
-        await session.execute(stmt)
+        ).returning(m.Episode.tmdb_id, m.Episode.id)
+        episode_ids |= {row.tmdb_id: row.id for row in (await session.execute(stmt)).all()}
+    return episode_ids
 
 
 async def _set_air_pointers(session: AsyncSession, *, show_id: int, series: TMDBSeries) -> None:
@@ -938,15 +959,20 @@ def _person_row(credit: TMDBCreditPerson) -> dict[str, Any]:
     }
 
 
-def _character_name(portrayal: TMDBRole) -> str | None:
-    """A portrayal's character name, or `None` when upstream sent nothing usable.
+def _character_name(character: str | None) -> str | None:
+    """A credit's character name, or `None` when upstream sent nothing usable.
 
-    Blank is rare and real — 1 of 7,629 sampled roles. `catalog.show_cast`
-    allows a null `character_id` for exactly this, because interning `''` would
-    invent a character nobody played and NOT NULL would abort a multi-hour pass
-    on one row.
+    Blank is rare and real — 1 of 7,629 sampled show-level roles, and 0 of 1,460
+    sampled episode guest credits. `catalog.show_cast` and
+    `catalog.episode_guest_cast` both allow a null `character_id` for exactly
+    this, because interning `''` would invent a character nobody played and NOT
+    NULL would abort a multi-hour pass on one row.
+
+    Takes the raw string rather than a credit, because the two grains carry it on
+    differently-shaped entries — nested in `roles[]` at show level, on the entry
+    itself for a guest credit — and the answer must not differ between them.
     """
-    name = (portrayal.character or "").strip()
+    name = (character or "").strip()
     return name or None
 
 
@@ -1021,7 +1047,7 @@ async def _write_credits(
             name
             for member in credits.cast
             for portrayal in member.roles
-            if (name := _character_name(portrayal)) is not None
+            if (name := _character_name(portrayal.character)) is not None
         ],
     )
     crew_credits = _crew_credits(credits.crew, show_id=show_id)
@@ -1036,7 +1062,9 @@ async def _write_credits(
                 "show_id": show_id,
                 "person_id": person_ids[member.tmdb_person_id],
                 "character_id": (
-                    None if (name := _character_name(portrayal)) is None else character_ids[name]
+                    None
+                    if (name := _character_name(portrayal.character)) is None
+                    else character_ids[name]
                 ),
                 "credit_id": portrayal.credit_id,
                 "episode_count": portrayal.episode_count,
@@ -1063,6 +1091,204 @@ async def _write_credits(
             for member, job, pair in crew_credits
         ],
     )
+
+
+async def _replace_episode_rows(
+    session: AsyncSession, model: Any, episode_scope: Sequence[int], rows: list[dict[str, Any]]
+) -> None:
+    """Make `rows` the whole of these episodes' rows in `model`.
+
+    `episode_scope` is a list of **surrogate** episode ids — deliberately not
+    named `episode_ids`, which the callers here use for the
+    `{tmdb_id: surrogate id}` map. One name for both is how a caller ends up
+    passing the map and deleting by TMDB ids.
+
+    The episode-grain twin of `_replace_show_rows`, scoped to the episodes whose
+    payload actually carried the credit list rather than to the show. That scope
+    is the point: a delta or a single-season re-fetch speaks for the episodes it
+    returned and for no others, and a show-wide delete would empty the credits of
+    every season it did not carry.
+
+    No locally-authored exemption, for the same reason `_write_credits` needs
+    none: a null `credit_id` on these tables means upstream omitted it, not that
+    somebody authored the credit by hand.
+
+    The insert is batched against the 32,767-parameter cap for the reason every
+    other write here is. The delete is batched for a different one, and not
+    because it is near that cap — a soap binds one parameter per episode and
+    stays an order of magnitude clear. It is that a single `IN` list spanning
+    every episode of a 12,000-episode show takes row locks across the whole
+    table in one statement, where the chunked form releases nothing but holds
+    far less at a time on a pass that runs for hours.
+    """
+    for start in range(0, len(episode_scope), _BATCH_SIZE):
+        await session.execute(
+            delete(model).where(model.episode_id.in_(episode_scope[start : start + _BATCH_SIZE]))
+        )
+    for start in range(0, len(rows), _BATCH_SIZE):
+        await session.execute(insert(model).values(rows[start : start + _BATCH_SIZE]))
+
+
+def _episode_crew_credits(
+    episodes: Sequence[tuple[int, TMDBEpisode]], *, show_id: int
+) -> list[tuple[int, TMDBEpisodeCrewMember, tuple[str, str]]]:
+    """Flatten to `(episode_id, member, (department, job))` triples.
+
+    The episode-grain twin of `_crew_credits`, and one place rather than two for
+    the same reason: the interning pass and the row build have to agree on
+    exactly which credits survive, or a pair that drifted between them is a
+    `KeyError` thousands of shows into a multi-hour run.
+
+    A pair missing either half cannot be interned, since `crew_role` is NOT NULL
+    in both columns. Measured never to happen — 0 blank of 7,456 sampled entries
+    (`scripts/probe_tmdb_episode_credits_append.py`) — which is exactly why it is
+    logged rather than raised: one malformed entry must not cost the show its
+    whole payload, and the warning is how we would learn the measurement had gone
+    stale. `_write_episode_credits` is what keeps that promise true at the
+    episode grain, by holding an episode that lost *every* entry out of the
+    refresh instead of clearing it.
+
+    The warning names upstream's ids, not ours. A surrogate `episode_id` cannot
+    be looked up in the TMDB payload the warning is about without a round trip
+    to the database, which is the one thing whoever is reading it does not have.
+    """
+    triples: list[tuple[int, TMDBEpisodeCrewMember, tuple[str, str]]] = []
+    for episode_id, episode in episodes:
+        for member in episode.crew or ():
+            if not member.department or not member.job:
+                log.warning(
+                    "show %d, TMDB episode %d (S%02dE%02d): skipped crew credit for "
+                    "person %d — department=%r job=%r",
+                    show_id,
+                    episode.tmdb_id,
+                    episode.season_number,
+                    episode.episode_number,
+                    member.tmdb_person_id,
+                    member.department,
+                    member.job,
+                )
+                continue
+            triples.append((episode_id, member, (member.department, member.job)))
+    return triples
+
+
+async def _write_episode_credits(
+    session: AsyncSession,
+    *,
+    show_id: int,
+    episodes: Sequence[TMDBEpisode],
+    episode_ids: dict[int, int],
+) -> None:
+    """Guest cast and crew at episode grain, from the season payload (NEU-1040).
+
+    **This costs no request at all**, which is the finding the ticket turned on.
+    TV Maze needed a dedicated ~29-hour pass over 188k seasons for the same data
+    (ADR-0003), so the question was whether TMDB's episode credits ride the
+    *appended* `season/N` block or only the standalone season fetch the ingest
+    does not make. Measured 2026-08-11
+    (`scripts/probe_tmdb_episode_credits_append.py`): the appended block carries
+    them, at exact parity with the standalone response — same 1,460 guest stars
+    and 7,456 crew entries, same key sets, no episode truncated. So there is no
+    second pass, no per-season watermark, and nothing to resume beyond the show
+    grain `tmdb_synced_at` already covers.
+
+    **Flat, where show credits nest.** A guest credit is one episode and one
+    character and a crew member holds one job, so an entry is a row — there is no
+    `roles[]` / `jobs[]` to unpack and no `episode_count`, because the appearance
+    *is* the count.
+
+    **Absent is not empty, per episode.** An episode whose payload carried no
+    `guest_stars` key is left out of that table's refresh entirely rather than
+    having its guest cast cleared — the distinction `TMDBEpisode` draws for
+    exactly this, and the two lists are scoped independently because an episode
+    can carry one without the other.
+
+    Characters intern against **the show**, not the episode: a guest credit's role
+    is a role of the show, so a returning guest resolves to the character the
+    show cast already interned (see `catalog.models.EpisodeGuestCast`). Crew
+    roles intern across TMDB, into the one vocabulary show crew shares.
+
+    Rows are deduplicated on the three-part keys the tables enforce —
+    `(episode, person, character)` and `(episode, person, role)`. Upstream
+    sending one credit twice is otherwise an integrity error that costs the whole
+    show, and Postgres will not let one statement's `ON CONFLICT` touch a row
+    twice either way.
+
+    Episodes are run through `_dedupe_episodes` **here** rather than trusted to
+    have been deduplicated by the caller: a duplicated episode resolves to one
+    surrogate id, so two copies of it would contribute their guest lists twice to
+    the same episode and silently merge them.
+    """
+    scoped = [
+        (episode_ids[ep.tmdb_id], ep)
+        for ep in _dedupe_episodes(episodes).values()
+        if ep.tmdb_id in episode_ids
+    ]
+    guests = [(eid, guest) for eid, ep in scoped for guest in ep.guest_stars or ()]
+    crew_credits = _episode_crew_credits(scoped, show_id=show_id)
+
+    guest_scope = [eid for eid, ep in scoped if ep.guest_stars is not None]
+    # An episode every one of whose crew entries was skipped is held out of the
+    # refresh rather than emptied. Otherwise `_episode_crew_credits`'s promise —
+    # that one malformed entry costs that row and not the payload — would be
+    # false at this grain: the episode would still be in scope for the delete
+    # and would contribute nothing to the insert, so a payload we could not
+    # parse would silently clear crew a payload we could parse had stored. An
+    # explicitly empty `crew: []` stays in scope, because that is upstream
+    # stating a zero rather than us failing to read one.
+    usable = {episode_id for episode_id, _, _ in crew_credits}
+    crew_scope = [
+        eid for eid, ep in scoped if ep.crew is not None and (not ep.crew or eid in usable)
+    ]
+    if not guest_scope and not crew_scope:
+        return
+
+    person_ids = await _upsert_by_tmdb_id(
+        session,
+        m.Person,
+        [_person_row(guest) for _, guest in guests]
+        + [_person_row(member) for _, member, _ in crew_credits],
+    )
+    character_ids = await _intern_characters(
+        session,
+        show_id=show_id,
+        names=[
+            name for _, guest in guests if (name := _character_name(guest.character)) is not None
+        ],
+    )
+    crew_role_ids = await _intern_crew_roles(session, [pair for _, _, pair in crew_credits])
+
+    guest_rows: dict[tuple[int, int, int | None], dict[str, Any]] = {}
+    for episode_id, guest in guests:
+        name = _character_name(guest.character)
+        character_id = None if name is None else character_ids[name]
+        person_id = person_ids[guest.tmdb_person_id]
+        guest_rows.setdefault(
+            (episode_id, person_id, character_id),
+            {
+                "episode_id": episode_id,
+                "person_id": person_id,
+                "character_id": character_id,
+                "credit_id": guest.credit_id,
+                "credit_order": guest.credit_order,
+            },
+        )
+    await _replace_episode_rows(session, m.EpisodeGuestCast, guest_scope, list(guest_rows.values()))
+
+    crew_rows: dict[tuple[int, int, int], dict[str, Any]] = {}
+    for episode_id, member, pair in crew_credits:
+        person_id = person_ids[member.tmdb_person_id]
+        role_id = crew_role_ids[pair]
+        crew_rows.setdefault(
+            (episode_id, person_id, role_id),
+            {
+                "episode_id": episode_id,
+                "person_id": person_id,
+                "role_id": role_id,
+                "credit_id": member.credit_id,
+            },
+        )
+    await _replace_episode_rows(session, m.EpisodeCrew, crew_scope, list(crew_rows.values()))
 
 
 async def _write_season_networks(
@@ -1163,8 +1389,11 @@ async def upsert_series_payload(
     screened: set[int] | None = None
     if series.screened_theatrically is not None:
         screened = {e.tmdb_id for e in series.screened_theatrically.results}
-    await upsert_episodes(
+    episode_ids = await upsert_episodes(
         session, show_id=show_id, episodes=episodes, screened_episode_ids=screened
+    )
+    await _write_episode_credits(
+        session, show_id=show_id, episodes=episodes, episode_ids=episode_ids
     )
     await _set_air_pointers(session, show_id=show_id, series=series)
     await refresh_runtime(session, show_id=show_id)

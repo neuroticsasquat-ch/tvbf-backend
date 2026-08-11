@@ -37,8 +37,15 @@ becomes several credit rows, and `episode_count` arrives per role rather than
 per person (NEU-1039). That nesting is the whole reason the audit takes this
 namespace over `credits`, which carries the same people with no counts at all.
 
-Episode `crew` / `guest_stars` are still absent: they ride the season payload
-rather than this one, and they are NEU-1040's.
+**Episode `guest_stars` / `crew` are flat, and ride the appended season block.**
+Measured 2026-08-11 (`scripts/probe_tmdb_episode_credits_append.py`): an
+appended `season/N` carries the same 1,460 guest stars and 7,456 crew entries as
+the standalone `GET /tv/{id}/season/{n}`, key set for key set and episode for
+episode. So episode-grain credits cost a column rather than the per-season pass
+TV Maze needed (ADR-0003), and they nest one level *less* than
+`aggregate_credits` — a guest star is a person carrying `character` and `order`
+directly, a crew member a person carrying `department` and `job` directly, one
+row each (NEU-1040).
 """
 
 from datetime import date, datetime
@@ -153,16 +160,18 @@ class TMDBJob(_Payload):
 
 
 class TMDBCreditPerson(_Payload):
-    """The person half of a credit, identical across cast and crew entries.
+    """The person half of a credit, identical across **every** credit TMDB sends.
 
     TMDB returns a person inline on each credit and the ingest makes no
     per-person request, so the fields here are the whole of what `catalog.person`
     can ever know — the audit's person inventory (§5) and no more.
 
-    `total_episode_count` is the exception that proves the grain: it is the
-    audit's §8 correction, it belongs to the *entry* rather than the person, and
-    it therefore lands on each credit row the entry produces rather than on
-    `catalog.person`. It sits here only because cast and crew both carry it.
+    Measured identical across all four credit grains: `aggregate_credits.cast`,
+    `aggregate_credits.crew`, episode `guest_stars` and episode `crew` all send
+    exactly these eight keys plus whatever the grain adds
+    (`scripts/probe_tmdb_credit_shapes.py`,
+    `scripts/probe_tmdb_episode_credits_append.py`). Which is why every writer
+    can share one `_person_row`.
     """
 
     tmdb_person_id: int = Field(alias="id")
@@ -173,12 +182,26 @@ class TMDBCreditPerson(_Payload):
     popularity: float | None = None
     profile_path: OptionalStr = None
     adult: bool = False
-    # This person's episodes across the show, summed over their roles by TMDB —
-    # the entry-level total, denormalised onto each row the entry produces.
+
+
+class TMDBAggregateEntry(TMDBCreditPerson):
+    """A person as `aggregate_credits` returns them — with the entry-level total.
+
+    `total_episode_count` is the audit's §8 correction, and it belongs to the
+    *entry* rather than the person, so it lands on each credit row the entry
+    produces rather than on `catalog.person`.
+
+    It sits one level below `TMDBCreditPerson` rather than on it because the
+    episode grain has no counterpart: an episode credit is a single appearance,
+    and measured, neither `guest_stars[]` nor `crew[]` carries the key at all.
+    Inheriting it there would give every episode credit a field that is `None`
+    by construction rather than by absence.
+    """
+
     total_episode_count: int | None = None
 
 
-class TMDBAggregateCast(TMDBCreditPerson):
+class TMDBAggregateCast(TMDBAggregateEntry):
     """One cast entry — a person and every character they played on the show."""
 
     roles: list[TMDBRole] = Field(default_factory=list)
@@ -189,7 +212,7 @@ class TMDBAggregateCast(TMDBCreditPerson):
     billing_order: int | None = Field(default=None, alias="order")
 
 
-class TMDBAggregateCrew(TMDBCreditPerson):
+class TMDBAggregateCrew(TMDBAggregateEntry):
     """One crew entry — a person and every job they held on the show.
 
     No `order`: TMDB sends none on a crew entry, measured across 2,066 sampled
@@ -208,9 +231,69 @@ class TMDBAggregateCredits(_Payload):
     crew: list[TMDBAggregateCrew] = Field(default_factory=list)
 
 
+class TMDBEpisodeGuestStar(TMDBCreditPerson):
+    """One entry of an episode's `guest_stars[]`.
+
+    Flat where `aggregate_credits` nests: a guest star appears in one episode as
+    one character, so there is no `roles[]` to unpack and no `episode_count` to
+    carry — the appearance *is* the count.
+
+    `character` is `OptionalStr` for the same reason `TMDBRole.character` is —
+    not because it was measured blank here (0 of 1,460 sampled guest stars were,
+    against 1 of 7,629 show-level roles), but because
+    `catalog.EpisodeGuestCast.character_id` is nullable for that show-level
+    finding and coercing `""` to `None` is what keeps a blank from interning a
+    character nobody played.
+    """
+
+    character: OptionalStr = None
+    credit_id: OptionalStr = None
+    # Upstream's `order`, named for the column it lands in. Credit order within
+    # this episode — it means nothing compared across episodes, which is why
+    # `catalog.EpisodeGuestCast` keeps the term distinct from billing order.
+    credit_order: int | None = Field(default=None, alias="order")
+
+
+class TMDBEpisodeCrewMember(TMDBCreditPerson):
+    """One entry of an episode's `crew[]`.
+
+    `department` and `job` sit on the entry itself rather than in a nested
+    `jobs[]`, so one entry is one credit. The pair interns into the same
+    `catalog.crew_role` vocabulary show crew uses — measured 100% overlap, see
+    `catalog.models.CrewRole`.
+
+    Both halves are `OptionalStr` even though neither was blank in 7,456 sampled
+    entries, because `crew_role` is NOT NULL in both columns: the parse has to
+    survive so the writer can skip the one row and log it, rather than losing a
+    show's whole payload to it (see `_episode_crew_credits`).
+
+    No `order`: measured absent on all 7,456 sampled episode-crew entries, the
+    same as show crew.
+    """
+
+    department: OptionalStr = None
+    job: OptionalStr = None
+    credit_id: OptionalStr = None
+
+
 class TMDBEpisode(_Payload):
     """One episode, identical in shape wherever it appears — inside a season's
-    `episodes[]`, and as `last_episode_to_air` / `next_episode_to_air`."""
+    `episodes[]`, and as `last_episode_to_air` / `next_episode_to_air`.
+
+    The two credit lists default to `None` rather than `[]`, the same
+    "absent is not empty" distinction every appended namespace draws — an
+    episode that arrived without the key has said nothing about its credits,
+    where `[]` is upstream stating it has none.
+
+    Which episodes can arrive without it is worth being precise about, because
+    the obvious answer is the wrong one. `last_episode_to_air` and
+    `next_episode_to_air` parse through this class and carry neither key, but
+    they never reach the credit writer: `upsert_series_payload` builds its
+    episode list from the season details alone, and `_set_air_pointers` only
+    resolves ids. The default earns its keep on the season payloads themselves —
+    a narrowed or hand-built one, and any future caller that passes an episode
+    from somewhere other than a full season fetch.
+    """
 
     tmdb_id: int = Field(alias="id")
     season_number: int
@@ -226,6 +309,8 @@ class TMDBEpisode(_Payload):
     episode_type: OptionalStr = None
     vote_average: float | None = None
     vote_count: int | None = None
+    guest_stars: list[TMDBEpisodeGuestStar] | None = None
+    crew: list[TMDBEpisodeCrewMember] | None = None
 
 
 class TMDBSeasonSummary(_Payload):

@@ -75,7 +75,7 @@ The scope widened with the source (ADR-0007). TV Maze had two disjoint vocabular
 _Avoid_: crew type, job title, episode crew role, guest crew type
 
 **Guest credit**:
-A person portraying a character in a single episode rather than across a show. Reachable per-season from upstream, alongside the episode crew credits for the same episodes.
+A person portraying a character in a single episode rather than across a show. Arrives on the season payload alongside the episode crew credits for the same episodes — which under TMDB is the show request itself, so both cost no request of their own (NEU-1040).
 _Avoid_: guest star, one-off
 
 **Episode crew credit**:
