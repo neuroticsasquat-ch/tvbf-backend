@@ -6,6 +6,8 @@ that a locally-authored row is never touched, and that pruning a season cannot
 take watch history with it.
 """
 
+import logging
+
 from sqlalchemy import func, select
 
 from tests.fixtures.tmdb.series_factory import (
@@ -1183,6 +1185,119 @@ class TestEpisodeCredits:
 
         guests = await _guest_cast(session, show_id)
         assert sorted(g.Character.name for g in guests) == ["Survivor", "Victim"]
+
+    # --- an episode credit that names nobody (NEU-1128) -------------------
+    #
+    # TMDB sends entries with no `id` and no `name`. Before NEU-1128 each one
+    # failed `TMDBEpisode`, so the *series* payload failed and the whole show was
+    # lost — 12 of the first ~4,000 shows in NEU-1127's production backfill, and
+    # the same wall the daily delta hits.
+
+    async def test_a_guest_star_with_no_person_is_skipped_not_fatal(self, session):
+        """AC: the payload parses and the episode's other credits still land."""
+        nameless = make_guest_star(1, "Ignored", "Ghost")
+        del nameless["id"]
+        del nameless["name"]
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1, 1, 1, guest_stars=[nameless, make_guest_star(2, "Real", "Victim")]
+                    )
+                ]
+            ),
+        )
+
+        assert [g.Person.name for g in await _guest_cast(session, show_id)] == ["Real"]
+
+    async def test_a_crew_entry_with_no_person_is_skipped_not_fatal(self, session):
+        """The half the production traceback actually landed on."""
+        nameless = make_episode_crew_member(5, "Ignored", "Directing", "Director")
+        del nameless["id"]
+        del nameless["name"]
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [
+                    make_episode(
+                        1,
+                        1,
+                        1,
+                        crew=[
+                            nameless,
+                            make_episode_crew_member(6, "Michelle", "Writing", "Writer"),
+                        ],
+                    )
+                ]
+            ),
+        )
+
+        assert [c.Person.name for c in await _episode_crew(session, show_id)] == ["Michelle"]
+
+    async def test_an_episode_whose_every_guest_was_skipped_keeps_the_ones_it_had(self, session):
+        """AC: all-skipped holds the episode out of the refresh rather than emptying it.
+
+        The rule crew has carried since NEU-1040, which guest cast needed only
+        once an entry here became skippable. Without it the episode reads as
+        `guest_stars: []` — upstream stating a zero — and a guest list we simply
+        failed to parse is destroyed.
+        """
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest", "Victim")])]
+            ),
+        )
+        nameless = make_guest_star(2, "Ignored", "Ghost")
+        del nameless["id"]
+        del nameless["name"]
+
+        await _write(
+            session, _series_with_episodes([make_episode(1, 1, 1, guest_stars=[nameless])])
+        )
+
+        assert [g.Person.name for g in await _guest_cast(session, show_id)] == ["Guest"]
+
+    async def test_a_skipped_credit_is_logged_with_its_grain_and_upstream_ids(
+        self, session, caplog
+    ):
+        """AC: skipped *and logged*, naming upstream's ids.
+
+        The grain is what makes the line actionable — it is the one thing that
+        says which of the two refresh scopes just held an episode back — and the
+        ids are upstream's, because a surrogate cannot be looked up in the
+        payload the warning is about.
+        """
+        nameless = make_guest_star(1, "Ignored", "Ghost")
+        del nameless["id"]
+        del nameless["name"]
+
+        with caplog.at_level(logging.WARNING, logger="tvbf.tmdb.upsert"):
+            await _write(
+                session,
+                _series_with_episodes([make_episode(4242, 1, 1, guest_stars=[nameless])]),
+            )
+
+        assert "skipped guest credit with no person" in caplog.text
+        assert "TMDB episode 4242 (S01E01)" in caplog.text
+
+    async def test_an_explicitly_empty_guest_list_still_clears(self, session):
+        """AC: the guard must not swallow upstream's genuine zero.
+
+        The pair to the test above, and the reason the scope keys on
+        `not ep.guest_stars` rather than on the usable set alone.
+        """
+        show_id = await _write(
+            session,
+            _series_with_episodes(
+                [make_episode(1, 1, 1, guest_stars=[make_guest_star(1, "Guest", "Victim")])]
+            ),
+        )
+
+        await _write(session, _series_with_episodes([make_episode(1, 1, 1, guest_stars=[])]))
+
+        assert await _guest_cast(session, show_id) == []
 
     async def test_a_crew_entry_missing_its_department_is_skipped_not_fatal(self, session):
         """`crew_role` is NOT NULL in both columns. Measured never to happen — so

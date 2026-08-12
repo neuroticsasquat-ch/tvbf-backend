@@ -12,6 +12,8 @@ from tests.fixtures.tmdb.series_factory import (
     make_aggregate_credits,
     make_cast_member,
     make_crew_member,
+    make_episode,
+    make_guest_star,
     make_job,
     make_role,
     make_season_detail,
@@ -275,6 +277,42 @@ class TestAggregateCredits:
         role = TMDBRole.model_validate({"credit_id": "x", "character": blank, "episode_count": 1})
 
         assert role.character is None
+
+    def test_a_cast_entry_with_no_person_is_still_a_hard_failure(self):
+        """Show grain stays strict where episode grain was relaxed (NEU-1128).
+
+        The two failure modes are not comparable. An episode credit with no
+        person is one appearance we cannot store, and TMDB demonstrably sends
+        them — 12 of the first ~4,000 shows in NEU-1127's production backfill.
+        A show-level cast entry with none would be a payload we have
+        misunderstood, and has never been measured, so it must still stop the
+        parse rather than be dropped quietly.
+        """
+        nameless = make_cast_member(1, "Ignored", [make_role("Walt", 1)])
+        del nameless["id"]
+        del nameless["name"]
+
+        with pytest.raises(ValidationError):
+            TMDBAggregateCredits.model_validate(make_aggregate_credits(cast=[nameless]))
+
+    def test_an_episode_credit_with_no_person_parses(self):
+        """The episode-grain half of the same rule, at the level it is decided.
+
+        `TMDBEpisodeGuestStar` and `TMDBEpisodeCrewMember` are siblings of
+        `TMDBCreditPerson` rather than subclasses, because widening `int` to
+        `int | None` in a subclass is exactly the substitutability violation it
+        looks like. Dropping the entry is the writer's job — see
+        `upsert._has_person`.
+        """
+        nameless = make_guest_star(1, "Ignored", "Ghost")
+        del nameless["id"]
+        del nameless["name"]
+
+        episode = TMDBEpisode.model_validate(make_episode(1, 1, 1, guest_stars=[nameless]))
+
+        assert episode.guest_stars is not None
+        assert (episode.guest_stars[0].tmdb_person_id, episode.guest_stars[0].name) == (None, None)
+        assert episode.guest_stars[0].character == "Ghost"
 
     def test_a_crew_entry_has_no_order(self):
         """Measured absent on all 2,066 sampled show-crew entries, which is why

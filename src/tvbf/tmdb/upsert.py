@@ -56,7 +56,9 @@ from tvbf.tmdb.api_payloads import (
     TMDBCreatedBy,
     TMDBCreditPerson,
     TMDBEpisode,
+    TMDBEpisodeCreditPerson,
     TMDBEpisodeCrewMember,
+    TMDBEpisodeGuestStar,
     TMDBJob,
     TMDBSeasonDetail,
     TMDBSeries,
@@ -970,9 +972,16 @@ async def _intern_crew_roles(
     return ids
 
 
-def _person_row(credit: TMDBCreditPerson) -> dict[str, Any]:
+def _person_row(credit: TMDBCreditPerson | TMDBEpisodeCreditPerson) -> dict[str, Any]:
     """The `catalog.person` columns a credit carries. Cast and crew entries are
-    identical here — the difference between them is what nests underneath."""
+    identical here — the difference between them is what nests underneath.
+
+    Takes either grain's person. The episode grain's identity is optional in the
+    payload (NEU-1128), but both of its callers read from `_has_person`-filtered
+    lists, so what reaches here always names somebody — the filter is the
+    precondition, not a check this function repeats. Show grain needs no filter:
+    `TMDBCreditPerson` requires both fields, so the parse is the guarantee.
+    """
     return {
         "tmdb_id": credit.tmdb_person_id,
         "name": credit.name,
@@ -1155,6 +1164,93 @@ async def _replace_episode_rows(
         await session.execute(insert(model).values(rows[start : start + _BATCH_SIZE]))
 
 
+def _has_person(
+    credit: TMDBEpisodeCreditPerson, *, show_id: int, episode: TMDBEpisode, grain: str
+) -> bool:
+    """Whether an episode-grain credit names a person we can store (NEU-1128).
+
+    TMDB sends entries with no `id` and no `name` — 12 of the first ~4,000 shows
+    in NEU-1127's production backfill. `catalog.person` is keyed on `tmdb_id` and
+    `name` is NOT NULL, so there is nothing to intern and nothing to name; the
+    entry is dropped exactly as an uninternable `(department, job)` pair is.
+
+    Logged rather than raised for the reason `_episode_crew_credits` gives: one
+    malformed entry must not cost the show its whole payload, and the warning is
+    how we learn upstream's shape has moved again. It names upstream's ids for
+    the same reason that function does — a surrogate id cannot be found in the
+    payload the warning is about.
+
+    An empty `name` is refused alongside a missing id, because `catalog.person`
+    is keyed on `tmdb_id` **and** `name` is NOT NULL — an entry carrying one
+    without the other is no more storable than one carrying neither.
+
+    `grain` names which list the entry came from. Without it an operator reading
+    the log cannot tell a `guest_stars[]` skip from a `crew[]` one, which is the
+    single distinction that says which refresh scope just held an episode back.
+    """
+    if credit.tmdb_person_id is not None and credit.name:
+        return True
+    log.warning(
+        "show %d, TMDB episode %d (S%02dE%02d): skipped %s credit with no person — id=%r name=%r",
+        show_id,
+        episode.tmdb_id,
+        episode.season_number,
+        episode.episode_number,
+        grain,
+        credit.tmdb_person_id,
+        credit.name,
+    )
+    return False
+
+
+def _refresh_scope(
+    entries_by_episode: Sequence[tuple[int, Sequence[Any] | None]], usable: set[int]
+) -> list[int]:
+    """Which episodes a payload speaks for, for one episode-grain credit table.
+
+    Three cases, and the middle one is the whole reason this is not just
+    "episodes that carried the key":
+
+    - **absent** (`None`) — the payload said nothing about this episode's
+      credits, so it is out of scope and the rows it has are left alone. The
+      same "absent is not empty" distinction every appended namespace draws.
+    - **explicitly empty** (`[]`) — upstream stating a zero, which clears.
+    - **present but nothing usable** — every entry was skipped, by
+      `_has_person` or by an uninternable `(department, job)`. Held out rather
+      than emptied, or a list we merely failed to *read* would destroy one we
+      had already stored.
+
+    One function rather than one per table for the reason `_crew_credits` gives
+    about its own two callers: guest cast and crew have to implement this
+    identically, and two copies of a rule is two chances for one of them to
+    drift.
+    """
+    return [
+        episode_id
+        for episode_id, entries in entries_by_episode
+        if entries is not None and (not entries or episode_id in usable)
+    ]
+
+
+def _episode_guest_credits(
+    episodes: Sequence[tuple[int, TMDBEpisode]], *, show_id: int
+) -> list[tuple[int, TMDBEpisodeGuestStar]]:
+    """Flatten to `(episode_id, guest)` pairs, dropping the ones with no person.
+
+    The guest-cast twin of `_episode_crew_credits`, and separate from the inline
+    comprehension it replaces for the same reason that function is one place
+    rather than two: the pairs this returns decide both what is written *and*
+    which episodes are in scope for the delete, and those two must not be able
+    to disagree.
+    """
+    return [
+        (episode_id, guest)
+        for episode_id, episode in episodes
+        for guest in episode.guest_stars or ()
+        if _has_person(guest, show_id=show_id, episode=episode, grain="guest")
+    ]
+
+
 def _episode_crew_credits(
     episodes: Sequence[tuple[int, TMDBEpisode]], *, show_id: int
 ) -> list[tuple[int, TMDBEpisodeCrewMember, tuple[str, str]]]:
@@ -1181,6 +1277,8 @@ def _episode_crew_credits(
     triples: list[tuple[int, TMDBEpisodeCrewMember, tuple[str, str]]] = []
     for episode_id, episode in episodes:
         for member in episode.crew or ():
+            if not _has_person(member, show_id=show_id, episode=episode, grain="crew"):
+                continue
             if not member.department or not member.job:
                 log.warning(
                     "show %d, TMDB episode %d (S%02dE%02d): skipped crew credit for "
@@ -1250,22 +1348,18 @@ async def _write_episode_credits(
         for ep in _dedupe_episodes(episodes).values()
         if ep.tmdb_id in episode_ids
     ]
-    guests = [(eid, guest) for eid, ep in scoped for guest in ep.guest_stars or ()]
+    guests = _episode_guest_credits(scoped, show_id=show_id)
     crew_credits = _episode_crew_credits(scoped, show_id=show_id)
 
-    guest_scope = [eid for eid, ep in scoped if ep.guest_stars is not None]
-    # An episode every one of whose crew entries was skipped is held out of the
-    # refresh rather than emptied. Otherwise `_episode_crew_credits`'s promise —
-    # that one malformed entry costs that row and not the payload — would be
-    # false at this grain: the episode would still be in scope for the delete
-    # and would contribute nothing to the insert, so a payload we could not
-    # parse would silently clear crew a payload we could parse had stored. An
-    # explicitly empty `crew: []` stays in scope, because that is upstream
-    # stating a zero rather than us failing to read one.
-    usable = {episode_id for episode_id, _, _ in crew_credits}
-    crew_scope = [
-        eid for eid, ep in scoped if ep.crew is not None and (not ep.crew or eid in usable)
-    ]
+    # Both scopes follow one rule — see `_refresh_scope`. Guest cast needed it
+    # only from NEU-1128, which made an entry at that grain skippable for the
+    # first time; crew has carried it since NEU-1040.
+    guest_scope = _refresh_scope(
+        [(eid, ep.guest_stars) for eid, ep in scoped], {eid for eid, _ in guests}
+    )
+    crew_scope = _refresh_scope(
+        [(eid, ep.crew) for eid, ep in scoped], {eid for eid, _, _ in crew_credits}
+    )
     if not guest_scope and not crew_scope:
         return
 
