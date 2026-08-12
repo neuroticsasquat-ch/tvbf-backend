@@ -27,13 +27,13 @@ pointing at unmapped rows.
 | Catalog copy (NEU-1042) | `task copy:catalog` | before enrichment | ✅ 2026-08-09 — 89,025 shows |
 | TMDB id enrichment (NEU-1043) | `task enrich:tmdb-ids` | after copy, **before ingest** | ✅ 2026-08-10 — 62,882 matched, 26,143 unmatched, 107 collisions |
 | Collision remediation (NEU-1065) | `neu-1043-collision-remediation.sql` | after enrichment | ✅ 2026-08-10 — 18 rows |
-| Human queue (NEU-1044) | `task queue:confirm` / `queue:reject` | after enrichment, **before ingest** | ⚠️ partial — 4 guesses confirmed 2026-08-10; 2 user-touched rows still unresolved, and the window has closed (see NEU-1066) |
+| Human queue (NEU-1044) | `task queue:confirm` / `queue:reject` | after enrichment, **before ingest** | ⚠️ partial — 4 guesses confirmed 2026-08-10 and **re-stamped `'human'` 2026-08-12** when NEU-1048's gate caught that the verdict had never reached the database; 2 user-touched rows still unresolved, and the window has closed (see NEU-1066) |
 | Episode-grain mapping (NEU-1045) | `task map:episodes` | after enrichment, **before ingest** | ❌ **never run — window closed.** The ingest started 2026-08-10, this merged 2026-08-11. Running it now maps nothing: 1,909,367 rows collide and 760,254 have no TMDB counterpart. Needs a re-point pass instead. |
 | Full catalog ingest (NEU-1034) | `task ingest:catalog` | after copy + enrichment | ✅ 2026-08-10 → 2026-08-11 — 228,723 shows |
 | Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
 | Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ✅ 2026-08-11 — 26,141 shows deleted over 262 batches, taking 47,443 seasons and 840,169 episodes. `catalog.show` 255,010 → 228,869; 2 unmatched rows kept. Needed the `ix_show_*_episode_to_air_id` indexes first (see below) |
 | User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ blocked — the FK still points at `tvmaze.show` |
-| Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ⬜ not yet run — writes nothing, so run it as often as it takes to reach a go |
+| Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
 | Episode-grain re-point (NEU-1126) | `task` TBD | **after NEU-1046**, before NEU-1047 | ⬜ not built — 2,690,633 copied episodes still duplicate the ingested ones, and all 7,137 watched-or-rated episodes point at the copies |
 
 ## Deleting episodes needs two indexes that did not exist
@@ -501,12 +501,11 @@ warned about on stderr, on **both** axes — `advisory_languages` and
 **The artifact is the regression check.** The JSON is deterministic (buckets
 ordered by name, keys sorted), so two runs of an unchanged database are
 byte-identical and `git diff` over a saved copy is what shows a bucket getting
-*worse*. That needs a copy to diff against, so **commit the first production
-run's artifact to `docs/migration/neu-1048-coverage-baseline.json` in the same PR
-that records the run** — the same treatment and the same reason as
-`reconciliation-baseline.json`, which is committed precisely so the comparison
-outlives the container that produced it. A bucket that is thin today is the accepted cost; a bucket that is
-thinner than last run is the regression this exists to catch.
+*worse*. That needs a copy to diff against, which is
+`neu-1048-coverage-baseline.json` beside this file — the same treatment
+`reconciliation-baseline.json` gets and for the same reason: the comparison has
+to outlive the container that produced it. **Overwrite it from any later
+production run** and let `git diff` be the review.
 
 One limit, inherited from `show_prune`: the twin test is exact folded-title
 equality, so it cannot see a grain mismatch — "Cunk on Earth" against TMDB's
@@ -527,3 +526,32 @@ ssh tom@ssh.neuroticsasquat.ch \
 Run it **before NEU-1046 and before NEU-1051**. The denominator is `tvmaze.show`
 — the 88,971 rows the migration started from — which is only readable while that
 schema still stands.
+
+### The first production run (2026-08-12)
+
+**NO-GO, then GO.** The first run failed one criterion, and on exactly the case
+the criterion was widened to catch: four shows carrying `match_method =
+'title_year'` — *Dr. Brain*, *Monsters: The Lyle and Erik Menendez Story*, *You
+Are What You Eat: A Twin Experiment* and *The Traitors Ireland Uncloaked* (12
+episode watches). All four were confirmed correct **by hand on 2026-08-10** and
+the verdict never reached the database, which NEU-1044's own description
+predicted in as many words: *"the rows still read `match_method = 'title_year'`,
+indistinguishable from an unreviewed guess."* Four `queue:confirm` calls
+re-stamped them `'human'` — the operation `human_queue` describes as the point
+rather than a no-op — and the re-run passed every criterion.
+
+Worth keeping, because it is the argument for the criterion being the queue's and
+not a narrower one: an unresolved verdict that lives only in a ticket comment is
+invisible to everything except a gate that asks the database.
+
+| | |
+| -- | -- |
+| TV Maze shows | 89,039 |
+| carried | 62,884 (62,882 matched) |
+| dropped | 26,155 — 6,469 with a title twin, 3,343 of those also agreeing on year, 19,686 with no counterpart |
+| advisory | **Russian**, 69.4% absent (6,379 shows, 1,480 carried) |
+| eras | none flagged |
+
+The Russian bucket is the long tail ADR-0007 flagged without measuring, now
+measured. It is NEU-1066's accepted cost rather than a regression — the point of
+committing the artifact is that the *next* run can tell those apart.
