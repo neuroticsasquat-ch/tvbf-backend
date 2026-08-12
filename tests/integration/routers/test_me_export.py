@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
 from tvbf.main import app
 from tvbf.tvmaze import models as tv
@@ -48,6 +49,7 @@ async def _seed_show(
             )
         )
     await session.flush()
+    await mirror_spine(session)
 
 
 @pytest.mark.asyncio

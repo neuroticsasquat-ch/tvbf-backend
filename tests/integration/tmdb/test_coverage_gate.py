@@ -29,6 +29,7 @@ from datetime import UTC, date, datetime
 
 from sqlalchemy import text as sql_text
 
+from tests.fixtures.spines import without_catalog_fk
 from tvbf.app.models import ActivityEvent, User, UserEpisodeWatch, UserShowWatch
 from tvbf.catalog import models as cm
 from tvbf.tmdb.coverage_gate import (
@@ -148,10 +149,11 @@ async def test_clean_catalog_is_a_go(session):
 async def test_dangling_show_fk_is_a_no_go(session):
     """The precondition NEU-1046's `ALTER TABLE` enforces, asked while it is still a report line."""
     show_id = await _copied_show(session, carried=False)
-    session.add(UserShowWatch(user_id=await _user(session), show_id=show_id))
-    await session.commit()
+    async with without_catalog_fk(session, "user_show_watch"):
+        session.add(UserShowWatch(user_id=await _user(session), show_id=show_id))
+        await session.commit()
 
-    report = await build_gate_report(session, min_ingested=_NO_FLOOR)
+        report = await build_gate_report(session, min_ingested=_NO_FLOOR)
 
     assert report.verdict == "no-go"
     criterion = _criterion(report, "fk_targets_resolve")
@@ -163,10 +165,11 @@ async def test_dangling_episode_fk_is_a_no_go(session):
     """A watched episode with no `catalog.episode` row — the daily keeps making these."""
     show_id = await _copied_show(session)
     episode_id = await _episode(session, show_id=show_id, mirrored=False)
-    session.add(UserEpisodeWatch(user_id=await _user(session), episode_id=episode_id))
-    await session.commit()
+    async with without_catalog_fk(session, "user_episode_watch"):
+        session.add(UserEpisodeWatch(user_id=await _user(session), episode_id=episode_id))
+        await session.commit()
 
-    report = await build_gate_report(session, min_ingested=_NO_FLOOR)
+        report = await build_gate_report(session, min_ingested=_NO_FLOOR)
 
     assert report.verdict == "no-go"
     criterion = _criterion(report, "fk_targets_resolve")

@@ -2,6 +2,7 @@ from datetime import date, timedelta
 
 import pytest
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
 from tvbf.app.repos import episode_repo
 from tvbf.app.services import my_shows_service
@@ -30,6 +31,7 @@ async def _seed_show(
         )
         session.add(Episode(id=show_id * 100 + i, show_id=show.id, season=1, number=i, airdate=ad))
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -218,6 +220,7 @@ async def test_watch_next_excludes_unaired_and_watched(session, make_user):
         Episode(id=91002003, show_id=show.id, season=1, number=3, airdate=today + timedelta(days=1))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     session.add(UserEpisodeWatch(user_id=user.id, episode_id=91002001))
     await session.commit()
@@ -239,6 +242,7 @@ async def test_watch_next_skips_show_with_nothing_aired_unwatched(session, make_
         Episode(id=91003001, show_id=show.id, season=1, number=1, airdate=today - timedelta(days=2))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     session.add(UserEpisodeWatch(user_id=user.id, episode_id=91003001))
     await session.commit()
@@ -258,6 +262,7 @@ async def test_watch_next_skips_show_not_in_my_shows(session, make_user):
     )
     await session.flush()
     # User has watched episodes but show isn't in My Shows.
+    await mirror_spine(session)
     session.add(UserEpisodeWatch(user_id=user.id, episode_id=91004001))
     await session.commit()
     assert await my_shows_service.list_watch_next(session, user_id=user.id) == []
@@ -279,6 +284,7 @@ async def test_watch_next_default_sort_airdate_desc(session, make_user):
         Episode(id=91005101, show_id=b.id, season=1, number=1, airdate=today - timedelta(days=1))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=a.id)
     await my_shows_service.add(session, user_id=user.id, show_id=b.id)
     await session.commit()
@@ -304,6 +310,7 @@ async def test_upcoming_returns_only_future_episodes(session, make_user):
         Episode(id=91006003, show_id=show.id, season=1, number=3, airdate=today + timedelta(days=9))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -328,6 +335,7 @@ async def test_upcoming_default_sort_airdate_asc(session, make_user):
         Episode(id=91007101, show_id=b.id, season=1, number=1, airdate=today + timedelta(days=2))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=a.id)
     await my_shows_service.add(session, user_id=user.id, show_id=b.id)
     await session.commit()
@@ -344,6 +352,7 @@ async def test_upcoming_skips_episodes_with_null_airdate(session, make_user):
     await session.flush()
     session.add(Episode(id=91008001, show_id=show.id, season=1, number=1, airdate=None))
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -574,6 +583,7 @@ async def test_upcoming_seasons_returns_unaired_season(session, make_user):
         )
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -600,6 +610,7 @@ async def test_upcoming_seasons_collapses_to_next_per_show(session, make_user):
         Season(id=92001507, show_id=show.id, number=7, premiere_date=today + timedelta(days=400))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -617,6 +628,7 @@ async def test_upcoming_seasons_includes_season_with_no_episodes(session, make_u
     await session.flush()
     session.add(Season(id=92002001, show_id=show.id, number=1))
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -656,6 +668,7 @@ async def test_list_upcoming_shows_returns_show_with_no_aired_episodes(session, 
     )
     session.add(show)
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -675,6 +688,7 @@ async def test_upcoming_shows_excludes_show_with_any_aired_episode(session, make
         Episode(id=92005001, show_id=show.id, season=1, number=1, airdate=today - timedelta(days=5))
     )
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 
@@ -688,6 +702,7 @@ async def test_upcoming_shows_includes_show_with_null_premiere_and_no_episodes(s
     show = Show(id=920060, name="Bare", tvmaze_updated=1)
     session.add(show)
     await session.flush()
+    await mirror_spine(session)
     await my_shows_service.add(session, user_id=user.id, show_id=show.id)
     await session.commit()
 

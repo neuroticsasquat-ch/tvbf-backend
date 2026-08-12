@@ -3,10 +3,12 @@
 Every test here is one of the ticket's acceptance criteria or one of the ways a
 row could silently leave the queue without anybody having decided anything.
 
-Seeding is doubled on purpose: `app.user_*` rows carry foreign keys into
-`tvmaze`, while the mapping state being queried lives in `catalog`. The two rows
-share an id, which is the migration's premise (NEU-1042 preserved TV Maze ids as
-`catalog.show.id`) and the only reason one query can span both.
+Seeding is doubled on purpose: the queue reads `catalog` for the mapping state
+while `human_queue.unmirrored_user_touched_shows` reads `tvmaze` for the rows the
+copy never reached, so a row has to exist on both spines under one id. That id is
+the migration's premise (NEU-1042 preserved TV Maze ids as `catalog.show.id`) and
+the only reason one query can span both — and since NEU-1046 it is also what the
+`app.user_*` foreign keys resolve against.
 """
 
 from datetime import date
@@ -17,6 +19,7 @@ import pytest
 import respx
 from sqlalchemy import select, text
 
+from tests.fixtures.spines import mirror_spine, without_catalog_fk
 from tvbf.app.models import (
     ActivityEvent,
     UserEpisodeRating,
@@ -65,6 +68,7 @@ async def _seed_episode(session, show_id: int) -> int:
     episode_id = _next_id()
     session.add(MazeEpisode(id=episode_id, show_id=show_id, season=1, number=1))
     await session.flush()
+    await mirror_spine(session)
     return episode_id
 
 
@@ -225,11 +229,12 @@ async def test_a_show_the_copy_never_mirrored_is_reported_separately(session, ma
     show_id = _next_id()
     session.add(MazeShow(id=show_id, name="Added After The Copy", tvmaze_updated=1))
     await session.flush()
-    session.add(UserShowWatch(user_id=user.id, show_id=show_id))
-    await session.commit()
+    async with without_catalog_fk(session, "user_show_watch"):
+        session.add(UserShowWatch(user_id=user.id, show_id=show_id))
+        await session.commit()
 
-    assert await _rows_for(session, show_id) == []
-    assert show_id in await unmirrored_user_touched_shows(session)
+        assert await _rows_for(session, show_id) == []
+        assert show_id in await unmirrored_user_touched_shows(session)
 
 
 @pytest.mark.asyncio

@@ -5,6 +5,7 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch
 from tvbf.main import app
 from tvbf.tvmaze.models import Episode, Show
@@ -25,6 +26,7 @@ async def _seed(session, *, show_id: int, name: str = "S", show_status: str = "E
         )
     )
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -76,6 +78,7 @@ async def test_me_watched_status_filter(authed_client, session):
             )
         )
     await session.flush()
+    await mirror_spine(session)
     session.add(
         UserEpisodeWatch(
             user_id=me.id,

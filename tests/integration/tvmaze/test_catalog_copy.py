@@ -11,6 +11,7 @@ from datetime import date
 import pytest
 from sqlalchemy import select, text
 
+from tests.fixtures.spines import without_catalog_fk
 from tvbf.app import models as a
 from tvbf.catalog import models as c
 from tvbf.tvmaze import models as t
@@ -98,43 +99,53 @@ class TestIdsArePreserved:
         """The acceptance criterion, against real `app` rows rather than a
         restatement of the copy's own anti-join.
 
-        This is what NEU-1046 will re-point the foreign key to, and the whole
+        This is what NEU-1046 re-pointed the foreign keys to, and the whole
         reason ids are preserved: the watch row is not rewritten, the constraint
         underneath it moves.
+
+        Both constraints stand down for the block, because the state under test
+        is the one the copy exists to end — user rows written while `catalog` is
+        still empty. That is the production ordering too: `task copy:catalog`
+        ran months before the repoint, on a database whose foreign keys still
+        pointed at `tvmaze`.
         """
         user = await make_user(email="watcher@example.test")
         show = await _show(session, 169)
         await _episode(session, 5000, show.id, 1, number=1)
         await _episode(session, 5001, show.id, 1, number=None)
-        session.add_all(
-            [
-                a.UserShowWatch(user_id=user.id, show_id=show.id),
-                a.UserEpisodeWatch(user_id=user.id, episode_id=5000),
-                # A special, which is where the synthetic numbering has to hold
-                # up: 156 of prod's watch rows point at one.
-                a.UserEpisodeWatch(user_id=user.id, episode_id=5001),
-            ]
-        )
-        await session.flush()
-
-        await copy_to_catalog(session)
-
-        unresolved_episodes = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FROM app.user_episode_watch w "
-                    "WHERE NOT EXISTS (SELECT 1 FROM catalog.episode e WHERE e.id = w.episode_id)"
-                )
+        async with (
+            without_catalog_fk(session, "user_show_watch"),
+            without_catalog_fk(session, "user_episode_watch"),
+        ):
+            session.add_all(
+                [
+                    a.UserShowWatch(user_id=user.id, show_id=show.id),
+                    a.UserEpisodeWatch(user_id=user.id, episode_id=5000),
+                    # A special, which is where the synthetic numbering has to
+                    # hold up: 156 of prod's watch rows point at one.
+                    a.UserEpisodeWatch(user_id=user.id, episode_id=5001),
+                ]
             )
-        ).scalar_one()
-        unresolved_shows = (
-            await session.execute(
-                text(
-                    "SELECT count(*) FROM app.user_show_watch s "
-                    "WHERE NOT EXISTS (SELECT 1 FROM catalog.show c WHERE c.id = s.show_id)"
+            await session.flush()
+
+            await copy_to_catalog(session)
+
+            unresolved_episodes = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM app.user_episode_watch w WHERE NOT EXISTS "
+                        "(SELECT 1 FROM catalog.episode e WHERE e.id = w.episode_id)"
+                    )
                 )
-            )
-        ).scalar_one()
+            ).scalar_one()
+            unresolved_shows = (
+                await session.execute(
+                    text(
+                        "SELECT count(*) FROM app.user_show_watch s WHERE NOT EXISTS "
+                        "(SELECT 1 FROM catalog.show c WHERE c.id = s.show_id)"
+                    )
+                )
+            ).scalar_one()
 
         assert (unresolved_episodes, unresolved_shows) == (0, 0)
 

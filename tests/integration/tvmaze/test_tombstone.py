@@ -5,6 +5,7 @@ from datetime import UTC, datetime
 import pytest
 from sqlalchemy import func, select
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app import models as am
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.tombstone import (
@@ -150,9 +151,12 @@ async def test_tombstoning_never_deletes_a_row(session):
 async def test_a_tracked_shows_user_data_survives_tombstoning(session, make_user):
     """The acceptance criterion: tombstoning must never cost a user their data.
 
-    Would fail if anyone swapped the tombstone for a DELETE — user_show_watch
-    and user_show_rating cascade from tvmaze.show, and user_episode_watch
-    cascades through tvmaze.episode.
+    Would fail if anyone swapped the tombstone for a DELETE. Since NEU-1046 the
+    cascades run from `catalog` rather than `tvmaze`, so a DELETE here would no
+    longer take the watch rows with it directly — but the id-preserving copy
+    means the same show is a `catalog.show` row, and NEU-1050 drops this schema
+    on the assumption nothing here is load-bearing. The mirror below is what
+    makes the assertion about the constraint that now exists.
     """
     user = await make_user(email="tombstone@example.com")
     await _add_show(session, 760)
@@ -161,6 +165,7 @@ async def test_a_tracked_shows_user_data_survives_tombstoning(session, make_user
     await session.flush()
     session.add(m.Episode(id=76000, show_id=760, season_id=7600, season=1, number=1))
     await session.flush()
+    await mirror_spine(session)
     session.add_all(
         [
             am.UserShowWatch(user_id=user.id, show_id=760),

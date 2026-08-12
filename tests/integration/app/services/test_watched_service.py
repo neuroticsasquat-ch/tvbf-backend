@@ -4,6 +4,7 @@ from datetime import UTC, date, datetime, timedelta
 
 import pytest
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
 from tvbf.app.services import my_shows_service
 from tvbf.tvmaze.models import Episode, Show
@@ -30,6 +31,7 @@ async def _seed_show(
         )
         session.add(Episode(id=show_id * 100 + i, show_id=show.id, season=1, number=i, airdate=ad))
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
