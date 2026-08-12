@@ -50,6 +50,13 @@ async def list_genres(session: AsyncSession) -> list[m.Genre]:
 
     Whatever TMDB has named on a mirrored show, which after a full pass is its
     whole published vocabulary and before one is a subset of it.
+
+    Rows are **not** collapsed by name, where `shows_with_all_genres` counts by
+    it. The asymmetry is deliberate: every row here carries its own surrogate
+    id, so collapsing two rows sharing a name would mean publishing one of the
+    two ids arbitrarily. Two identical options in the picker is a visible,
+    harmless duplicate; a name counted twice in the filter silently *drops* the
+    shows carrying both, which is why only that one defends itself.
     """
     result = await session.execute(select(m.Genre).order_by(m.Genre.name))
     return list(result.scalars().all())
@@ -71,6 +78,12 @@ def shows_with_all_genres(names: Sequence[str]) -> Select[tuple[int]]:
     * Repeated values are collapsed first. `?genre=Comedy&genre=Comedy` names
       one genre, so the bar is one; comparing against the raw parameter count
       would make the query unsatisfiable and return nothing at all.
+
+    **Naming no genres is not a wildcard.** An empty `names` selects no shows
+    at all, exactly as `WHERE name IN ()` reads — so a caller filters only when
+    the parameter was supplied, the way `list_shows` guards with
+    `if filters.genres:` today. Pinned by a test rather than left to be
+    rediscovered at the call site.
     """
     wanted = list(dict.fromkeys(names))
     return (

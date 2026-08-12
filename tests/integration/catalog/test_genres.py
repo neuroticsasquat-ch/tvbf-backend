@@ -12,7 +12,8 @@ to prove; it is the reason the empty case below is ordinary rather than exotic.
 
 from tvbf.catalog import genres as q
 from tvbf.catalog import models as m
-from tvbf.tvmaze.schemas import GenreOut
+from tvbf.tvmaze import models as t
+from tvbf.tvmaze.schemas import GenreOut, build_show_detail, build_show_summary
 
 # `GET /genre/tv/list`, read 2026-08-09. The whole published TV vocabulary —
 # the list every value below has to come from, and the seven names shared with
@@ -89,6 +90,19 @@ class TestTheVocabularyIsTmdbs:
 
             assert len(matched) == 1, name
 
+    async def test_naming_no_genres_selects_nothing_rather_than_everything(self, session):
+        """`WHERE name IN ()`, as it reads. The caller filters only when the
+        parameter was supplied — `list_shows` guards with `if filters.genres:`
+        — and this pins that precondition so NEU-1047 does not rediscover it as
+        an empty browse page."""
+        vocabulary = await _seed_vocabulary(session)
+        show = await _show(session, "Tagged", tmdb_id=1)
+        await _tag(session, show, vocabulary["Drama"])
+
+        matched = (await session.execute(q.shows_with_all_genres([]))).scalars().all()
+
+        assert matched == []
+
     async def test_a_tv_maze_only_name_matches_nothing(self, session):
         """`?genre=Anime` returning an empty list is the cutover's cost, not a
         bug — `Anime` disappears into `Animation` and no row carries it."""
@@ -161,18 +175,28 @@ class TestAShowWithNoGenres:
         assert await q.genres_for_show(session, unmatched.id) == []
 
     async def test_it_serialises(self, session):
-        """`build_show_summary` sorts the list it is handed and
-        `build_show_detail` maps it — neither special-cases empty, and the
-        hydrator hands them a list rather than `None`, so there is nothing left
-        for a show with no genres to trip over. The builders are not called
-        here because they read `show.language`, which `catalog.show` does not
-        have: that rename is the audit's D1, and repointing them is NEU-1047's.
+        """Both response builders take what the queries above return and reach
+        a body, with `genres: []` rather than a null or a missing key.
+
+        The show handed to them is a `tvmaze.Show` because they still read
+        `show.language`, which `catalog.show` does not have — that rename is
+        the audit's D1 and repointing the builders is NEU-1047's. What is being
+        pinned here is the genre argument, and it is the same empty list either
+        spine produces.
         """
         unmatched = await _show(session, "Never matched", tmdb_id=None)
         by_show = await q.genres_by_show(session, [unmatched.id])
+        # `tvmaze_updated` is the one required field with no null: a TV Maze
+        # artefact `ShowDetail` still carries, and NEU-1047's to resolve.
+        renderable = t.Show(id=unmatched.id, name="Never matched", tvmaze_updated=0)
 
-        assert sorted(by_show[unmatched.id]) == []
-        assert [g.name for g in await q.genres_for_show(session, unmatched.id)] == []
+        summary = build_show_summary(renderable, by_show[unmatched.id], None, None)
+        detail = build_show_detail(
+            renderable, [], await q.genres_for_show(session, unmatched.id), None, None
+        )
+
+        assert summary.genres == []
+        assert detail.genres == []
 
     async def test_it_is_simply_absent_from_a_filtered_result(self, session):
         vocabulary = await _seed_vocabulary(session)
