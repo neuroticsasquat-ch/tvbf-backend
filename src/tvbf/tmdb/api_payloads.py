@@ -159,12 +159,13 @@ class TMDBJob(_Payload):
     episode_count: int | None = None
 
 
-class TMDBCreditPerson(_Payload):
-    """The person half of a credit, identical across **every** credit TMDB sends.
+class _CreditPersonFields(_Payload):
+    """Everything a credit says about a person *except* who they are.
 
     TMDB returns a person inline on each credit and the ingest makes no
-    per-person request, so the fields here are the whole of what `catalog.person`
-    can ever know — the audit's person inventory (§5) and no more.
+    per-person request, so these plus the identity below are the whole of what
+    `catalog.person` can ever know — the audit's person inventory (§5) and no
+    more.
 
     Measured identical across all four credit grains: `aggregate_credits.cast`,
     `aggregate_credits.crew`, episode `guest_stars` and episode `crew` all send
@@ -172,16 +173,33 @@ class TMDBCreditPerson(_Payload):
     (`scripts/probe_tmdb_credit_shapes.py`,
     `scripts/probe_tmdb_episode_credits_append.py`). Which is why every writer
     can share one `_person_row`.
+
+    Identity sits on the two subclasses rather than here because the grains
+    disagree about whether it is required — see `TMDBEpisodeCredit` (NEU-1128).
+    They are siblings rather than one widening the other: a subclass that
+    loosened `int` to `int | None` would be exactly the substitutability
+    violation it looks like.
     """
 
-    tmdb_person_id: int = Field(alias="id")
-    name: str
     original_name: OptionalStr = None
     gender: int | None = None
     known_for_department: OptionalStr = None
     popularity: float | None = None
     profile_path: OptionalStr = None
     adult: bool = False
+
+
+class TMDBCreditPerson(_CreditPersonFields):
+    """A credit's person where upstream always names one — i.e. show grain.
+
+    `aggregate_credits` has never been measured to omit either field, and the
+    failure mode if it did is not the episode grain's: a show-level cast entry
+    with no person is a payload we have misunderstood, where an episode credit
+    with none is one appearance we cannot store.
+    """
+
+    tmdb_person_id: int = Field(alias="id")
+    name: str
 
 
 class TMDBAggregateEntry(TMDBCreditPerson):
@@ -231,7 +249,37 @@ class TMDBAggregateCredits(_Payload):
     crew: list[TMDBAggregateCrew] = Field(default_factory=list)
 
 
-class TMDBEpisodeGuestStar(TMDBCreditPerson):
+class TMDBEpisodeCreditPerson(_CreditPersonFields):
+    """The person half of an *episode*-grain credit, where it may be absent (NEU-1128).
+
+    `TMDBCreditPerson` requires `id` and `name`, because a person with neither is
+    not a person. At episode grain that strictness is wrong, and measurably so:
+    TMDB sends entries carrying only `department` / `job` / `credit_id`, or only
+    `character` / `credit_id` / `order`, and one of them fails `TMDBEpisode`,
+    which fails `TMDBSeasonDetail`, which fails `TMDBSeries` — **the whole show
+    lost to one row**. Measured 2026-08-12 over the first ~4,000 shows of
+    NEU-1127's backfill: 12 failures, 10 in `guest_stars[]` and 2 in `crew[]`,
+    ~0.4% of the catalog. It is not a pre-existing gap either — *Charmed* parsed
+    on 2026-08-10 and failed on 2026-08-12, because TMDB is user-edited and these
+    accrue.
+
+    Relaxing it here restores a promise the writers already make and could not
+    keep: `_episode_crew_credits` skips an entry it cannot intern and logs it,
+    and `_write_episode_credits` holds an episode that lost *every* entry out of
+    the refresh rather than emptying it. Both run below the parse, so neither
+    could ever see one of these.
+
+    **Show grain stays strict.** `aggregate_credits` has never been measured to
+    do this, and the two failure modes are not comparable: an episode credit is
+    one appearance, where a show-level cast entry with no person is a payload we
+    have misunderstood.
+    """
+
+    tmdb_person_id: int | None = Field(default=None, alias="id")
+    name: str | None = None
+
+
+class TMDBEpisodeGuestStar(TMDBEpisodeCreditPerson):
     """One entry of an episode's `guest_stars[]`.
 
     Flat where `aggregate_credits` nests: a guest star appears in one episode as
@@ -254,7 +302,7 @@ class TMDBEpisodeGuestStar(TMDBCreditPerson):
     credit_order: int | None = Field(default=None, alias="order")
 
 
-class TMDBEpisodeCrewMember(TMDBCreditPerson):
+class TMDBEpisodeCrewMember(TMDBEpisodeCreditPerson):
     """One entry of an episode's `crew[]`.
 
     `department` and `job` sit on the entry itself rather than in a nested
