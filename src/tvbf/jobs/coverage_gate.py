@@ -76,18 +76,21 @@ def _log_verdict(report: GateReport) -> None:
         totals["dropped_without_title_twin"],
     )
 
-    if report.advisory_buckets:
+    for axis, buckets in (("language", report.advisory_languages), ("era", report.advisory_eras)):
+        if not buckets:
+            continue
         # Advisory, and said out loud anyway. NEU-1066 accepted this loss
         # deliberately, so it cannot fail the run — but a bucket that is thin for
         # a *new* reason looks identical here, and the only way to tell is to
         # diff this artifact against the previous run.
         log.warning(
-            "advisory: %d language bucket(s) over %d shows are more than %.0f%% absent — %s. "
+            "advisory: %d %s bucket(s) over %d shows are more than %.0f%% absent — %s. "
             "Accepted by NEU-1066 unless this is worse than the last run; diff the artifact",
-            len(report.advisory_buckets),
+            len(buckets),
+            axis,
             ADVISORY_MIN_BUCKET,
             ADVISORY_ABSENT_PCT,
-            ", ".join(report.advisory_buckets),
+            ", ".join(buckets),
         )
 
     if report.failed:

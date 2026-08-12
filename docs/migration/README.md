@@ -442,7 +442,7 @@ cutover breaks user data; any one failing is a no-go.
 | -- | -- | -- |
 | 1 | `fk_targets_resolve` | Every id in the five columns NEU-1046 repoints resolves against `catalog`. This is the precondition that ticket's `ALTER TABLE` enforces anyway — asked here while a dangling id is still a report line rather than a migration that failed halfway through the window. `import_ne.show_resolution` is checked only when the schema exists, and its absence is reported as such: *"no dangling rows"* and *"did not look"* are the two answers a gate must never conflate |
 | 2 | `user_touched_shows_present` | Every show a user has touched has a `catalog.show` row. Distinct from criterion 1 because `app.activity_event` is polymorphic with **no foreign key at all** — it neither blocks nor cascades, it silently orphans, so no `ALTER TABLE` would ever catch it |
-| 3 | `user_touched_shows_resolved` | Every show a user has touched carries a `tmdb_id`, or a `match_method = 'human'` ruling that TMDB has no counterpart, or is on the enumerated exception list below. This is NEU-1044's acceptance criterion, asked one last time |
+| 3 | `user_touched_shows_resolved` | Every show a user has touched has reached a mapping nobody still has to check — an exact tier (`tvdb_id` / `imdb_id`), a `match_method = 'human'` verdict, or the enumerated exception list below. **A bare `title_year` guess does not count**, even carrying a `tmdb_id`: this is `human_queue`'s own predicate, spelled the same way, because NEU-1044's criterion is that *"tier-3 matches on user-touched shows are surfaced for review, not trusted silently"* and a false positive at show grain attaches a user's watch history to the wrong show. Confirming a guess re-stamps it `'human'`, which is what clears it |
 | 4 | `ingest_present` | At least 150,000 shows carry `tmdb_synced_at`. Same floor and same device as `show_prune`'s `IngestNotRun` guard and the tombstone's plausibility check — under it, every measurement in the artifact is about a half-built catalog |
 
 ### The two accepted exceptions
@@ -482,13 +482,30 @@ loss:
 * **dropped, without a title twin** — nothing shares the title. This is breadth
   TMDB does not appear to hold, and `absent_pct` is its share of the bucket.
 
+**Read the two twin counts as a bracket, never one of them as the answer.** The
+title test is biased both ways and neither cancels the other. Exact folded
+equality cannot see a grain mismatch — "Cunk on Earth" against TMDB's "Cunk on…"
+reads as absent — which over-reports loss. Title equality with nothing else
+agreeing is meanwhile far too generous: the prune measured **6,464** title twins
+against production and only **3,337** that also agreed on first-air year, so
+roughly half a title-only count is probably not the same show. So each bucket
+carries `dropped_with_title_twin` (the optimistic bound on what survived) and
+`dropped_with_title_and_year_twin` (the pessimistic one, using enrichment's own
+±1-year tolerance). `absent_pct` is derived from the generous one; the harsh
+reading is `(dropped - dropped_with_title_and_year_twin) / tvmaze_shows`.
+
 A bucket over 500 shows that is more than 50% absent is flagged `advisory` and
-warned about on stderr. Advisory means advisory — it does not fail the run.
+warned about on stderr, on **both** axes — `advisory_languages` and
+`advisory_eras`. Advisory means advisory: it does not fail the run.
 
 **The artifact is the regression check.** The JSON is deterministic (buckets
 ordered by name, keys sorted), so two runs of an unchanged database are
 byte-identical and `git diff` over a saved copy is what shows a bucket getting
-*worse*. A bucket that is thin today is the accepted cost; a bucket that is
+*worse*. That needs a copy to diff against, so **commit the first production
+run's artifact to `docs/migration/neu-1048-coverage-baseline.json` in the same PR
+that records the run** — the same treatment and the same reason as
+`reconciliation-baseline.json`, which is committed precisely so the comparison
+outlives the container that produced it. A bucket that is thin today is the accepted cost; a bucket that is
 thinner than last run is the regression this exists to catch.
 
 One limit, inherited from `show_prune`: the twin test is exact folded-title
@@ -499,7 +516,7 @@ loss, which is the right direction for a safety check.
 ### Running it
 
 ```bash
-task gate:coverage                       # go/no-go + the artifact on stdout
+task gate:coverage > /tmp/gate.json      # go/no-go on stderr, the artifact on stdout
 
 # production — the run that actually matters
 ssh tom@ssh.neuroticsasquat.ch \

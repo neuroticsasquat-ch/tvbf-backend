@@ -27,6 +27,8 @@ answered in Postgres.
 import uuid
 from datetime import UTC, date, datetime
 
+from sqlalchemy import text as sql_text
+
 from tvbf.app.models import ActivityEvent, User, UserEpisodeWatch, UserShowWatch
 from tvbf.catalog import models as cm
 from tvbf.tmdb.coverage_gate import (
@@ -279,7 +281,10 @@ async def test_import_ne_absence_is_reported_not_counted_as_zero(session):
     report = await build_gate_report(session, min_ingested=_NO_FLOOR)
 
     detail = _criterion(report, "fk_targets_resolve").detail
-    assert detail["import_ne.show_resolution.show_id"] == "(schema absent — not checked)"
+    assert detail["import_ne_schema_present"] is False
+    # None rather than 0, and rather than a sentence: the artifact is diffed, so
+    # a field whose type changes between runs is the one thing a diff cannot read.
+    assert detail["import_ne.show_resolution.show_id"] is None
 
 
 async def test_coverage_partitions_every_tv_maze_show(session):
@@ -371,7 +376,7 @@ async def test_a_small_thin_bucket_is_not_flagged_as_advisory(session):
     report = await build_gate_report(session, min_ingested=_NO_FLOOR)
 
     assert _bucket(report.by_language, "Faroese").absent_pct == 50.0
-    assert report.advisory_buckets == ()
+    assert report.advisory_languages == ()
     assert ADVISORY_MIN_BUCKET > 2
 
 
@@ -386,3 +391,93 @@ async def test_the_artifact_is_deterministic(session):
 
     assert first.to_dict() == second.to_dict()
     assert [b.bucket for b in first.by_language] == sorted(b.bucket for b in first.by_language)
+
+
+async def test_an_unconfirmed_tier_three_guess_is_a_no_go(session):
+    """`title_year` on a user-touched show is a guess nobody has checked.
+
+    NEU-1044's acceptance criterion is that tier-3 matches on user-touched shows
+    are *"surfaced for review, not trusted silently"*, and this gate is the last
+    place that can be asked. A `tmdb_id` alone is not a resolution — confirming
+    one re-stamps it `'human'`, which is what moves it out of the queue and out
+    of here.
+    """
+    show_id = await _copied_show(session, tmdb_id=101, match_method="title_year")
+    session.add(UserShowWatch(user_id=await _user(session), show_id=show_id))
+    await session.commit()
+
+    report = await build_gate_report(session, min_ingested=_NO_FLOOR)
+
+    assert report.verdict == "no-go"
+    criterion = _criterion(report, "user_touched_shows_resolved")
+    assert [row["show_id"] for row in criterion.detail["unresolved"]] == [show_id]
+    assert criterion.detail["unresolved"][0]["tmdb_id"] == 101
+
+
+async def test_a_confirmed_guess_is_resolved(session):
+    """The same row once a person has re-stamped it — the queue's `confirm` verdict."""
+    show_id = await _copied_show(session, tmdb_id=101, match_method="human")
+    session.add(UserShowWatch(user_id=await _user(session), show_id=show_id))
+    await session.commit()
+
+    assert (await build_gate_report(session, min_ingested=_NO_FLOOR)).verdict == "go"
+
+
+async def test_an_exact_tier_match_is_resolved(session):
+    """`/find` is an upstream assertion, not an inference — it needs no review."""
+    show_id = await _copied_show(session, tmdb_id=101, match_method="tvdb_id")
+    session.add(UserShowWatch(user_id=await _user(session), show_id=show_id))
+    await session.commit()
+
+    assert (await build_gate_report(session, min_ingested=_NO_FLOOR)).verdict == "go"
+
+
+async def test_a_title_twin_that_disagrees_on_year_is_counted_apart(session):
+    """The two twin counts bracket the truth; neither is it on its own.
+
+    `show_prune` measured 6,464 title twins against production and only 3,337
+    that also agreed on year, so a title-only count is generous by roughly half.
+    """
+    await _copied_show(session, name="Ghosts", premiered=date(2019, 4, 1), carried=False)
+    ingested_id = await _ingested_show(session, tmdb_id=606, name="Ghosts")
+    await session.execute(
+        sql_text("UPDATE catalog.show SET first_air_date = :d WHERE id = :id"),
+        {"d": date(1998, 1, 1), "id": ingested_id},
+    )
+    await session.commit()
+
+    totals = (await build_gate_report(session, min_ingested=_NO_FLOOR)).to_dict()["coverage"][
+        "totals"
+    ]
+
+    assert totals["dropped_with_title_twin"] == 1
+    assert totals["dropped_with_title_and_year_twin"] == 0
+
+
+async def test_a_title_twin_within_a_year_agrees(session):
+    """±1 is enrichment's tier-3 tolerance, reused rather than re-decided."""
+    await _copied_show(session, name="Ghosts", premiered=date(2019, 4, 1), carried=False)
+    ingested_id = await _ingested_show(session, tmdb_id=606, name="Ghosts")
+    await session.execute(
+        sql_text("UPDATE catalog.show SET first_air_date = :d WHERE id = :id"),
+        {"d": date(2020, 1, 1), "id": ingested_id},
+    )
+    await session.commit()
+
+    totals = (await build_gate_report(session, min_ingested=_NO_FLOOR)).to_dict()["coverage"][
+        "totals"
+    ]
+
+    assert totals["dropped_with_title_and_year_twin"] == 1
+
+
+async def test_both_axes_report_advisories(session):
+    """An era flag computed into the artifact and never surfaced is a number nobody can use."""
+    await _copied_show(session, tmdb_id=101)
+    await session.commit()
+
+    report = await build_gate_report(session, min_ingested=_NO_FLOOR)
+
+    assert report.advisory_languages == ()
+    assert report.advisory_eras == ()
+    assert report.to_dict()["coverage"]["advisory_eras"] == []

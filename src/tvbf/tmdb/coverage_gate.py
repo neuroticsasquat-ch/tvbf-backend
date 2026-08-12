@@ -50,10 +50,16 @@ The title comparison is folded through Postgres via `sql_fold`, the same single
 definition browse search and NEU-1043's matching use, and it is an outer join
 rather than a correlated `EXISTS` for the reason `show_prune` gives: the planner
 hashes both folded sides once instead of folding 228,000 names 26,000 times.
-Its limit is `show_prune`'s limit — exact folded equality cannot see a grain
-mismatch, so "Cunk on Earth" against TMDB's "Cunk on..." counts as absent. That
-biases the measurement toward *over*-reporting loss, which is the right direction
-for a safety check.
+The twin test is biased in **both** directions and neither cancels the other, so
+each bucket carries two numbers rather than one. Exact folded equality cannot see
+a grain mismatch — "Cunk on Earth" against TMDB's "Cunk on..." reads as absent —
+which over-reports loss. Title equality with no other agreement is meanwhile far
+too generous: `show_prune` measured 6,464 title twins against production and only
+3,337 of those also agreed on first-air year, so roughly half of a title-only
+count is probably not the same show at all, which *under*-reports loss. Hence
+`dropped_with_title_twin` and `dropped_with_title_and_year_twin` are both
+reported: the first is the optimistic bound on what survived, the second the
+pessimistic one, and the honest answer is between them.
 
 ## Why it needs `tvmaze` to still be standing
 
@@ -80,6 +86,7 @@ from sqlalchemy.sql.elements import ColumnElement
 
 from tvbf.catalog import models as m
 from tvbf.sql_fold import folded
+from tvbf.tmdb.enrichment import MATCH_HUMAN, MATCH_TITLE_YEAR
 from tvbf.tmdb.human_queue import TOUCHED_SHOWS
 from tvbf.tmdb.show_prune import MIN_INGESTED_SHOWS
 from tvbf.tvmaze.models import Show as MazeShow
@@ -89,15 +96,19 @@ log = logging.getLogger(__name__)
 # The criteria, in the order they are reported. Written down here rather than
 # left implicit in the checks, because "no-go criteria decided in advance" is an
 # acceptance criterion of this ticket and a docstring is where it survives.
-_CRITERIA: tuple[tuple[str, str], ...] = (
-    (
-        "fk_targets_resolve",
-        "Every id in the five columns NEU-1046 repoints resolves against catalog",
+# Keyed by name rather than ordered, so a criterion's description cannot come
+# adrift from the check that reports it — a positional index silently mislabels
+# every criterion after the one somebody reorders.
+_CRITERIA: dict[str, str] = {
+    "fk_targets_resolve": (
+        "Every id in the five columns NEU-1046 repoints resolves against catalog"
     ),
-    ("user_touched_shows_present", "Every show a user has touched has a catalog.show row"),
-    ("user_touched_shows_resolved", "Every show a user has touched has reached a verified mapping"),
-    ("ingest_present", f"At least {MIN_INGESTED_SHOWS:,} shows carry the full ingest's watermark"),
-)
+    "user_touched_shows_present": "Every show a user has touched has a catalog.show row",
+    "user_touched_shows_resolved": (
+        "Every show a user has touched has reached a mapping nobody still has to check"
+    ),
+    "ingest_present": f"At least {MIN_INGESTED_SHOWS:,} shows carry the full ingest's watermark",
+}
 
 # The two production rows that are unresolved *and* accepted, with the ruling
 # that accepted them. Enumerated by hand for the reason `show_prune`'s README
@@ -174,20 +185,29 @@ _UNMIRRORED = text(f"""
      ORDER BY t.show_id
 """)
 
-# A user-touched show carrying no `tmdb_id` and no human ruling. `match_method =
-# 'human'` with a NULL id is a person's verdict that TMDB has no counterpart
-# (NEU-1044) — a resolution, not a gap.
+# A user-touched show nobody has vouched for. **This is `human_queue._QUEUE`'s
+# predicate, deliberately spelled the same way**: unmapped *or* mapped by tier
+# 3's guess, with `match_method = 'human'` excluded last and separately because
+# it is the only value that can carry either shape and still be settled.
+#
+# The `title_year` half is not optional. NEU-1044's acceptance criterion is
+# *"tier-3 matches on user-touched shows are surfaced for review, not trusted
+# silently"*, and a guess that no person has checked is exactly the row this gate
+# exists to stop: a false positive at show grain attaches a user's watch history
+# to the wrong show and nothing downstream catches it. Confirming one re-stamps
+# it `'human'`, which is what moves it out of here.
 _UNRESOLVED = text(f"""
     WITH touched AS ({TOUCHED_SHOWS})
     SELECT s.id,
            s.name,
+           s.tmdb_id,
            s.match_method,
            (SELECT count(*) FROM app.user_episode_watch w
              JOIN tvmaze.episode e ON e.id = w.episode_id
             WHERE e.show_id = s.id) AS episode_watches
       FROM catalog.show s
-     WHERE s.tmdb_id IS NULL
-       AND s.match_method IS DISTINCT FROM 'human'
+     WHERE (s.tmdb_id IS NULL OR s.match_method = '{MATCH_TITLE_YEAR}')
+       AND s.match_method IS DISTINCT FROM '{MATCH_HUMAN}'
        AND EXISTS (SELECT 1 FROM touched t WHERE t.show_id = s.id)
      ORDER BY s.id
 """)
@@ -223,11 +243,18 @@ class Bucket:
     carried_matched: int
     dropped: int
     dropped_with_title_twin: int
+    dropped_with_title_and_year_twin: int
     dropped_without_title_twin: int
 
     @property
     def absent_pct(self) -> float:
-        """Share of the bucket that is gone and has no ingested row by title."""
+        """Share of the bucket that is gone and has no `tmdb_id`-bearing row by title.
+
+        Read against `dropped_with_title_and_year_twin` rather than alone: this
+        takes the *generous* twin, so it is the optimistic bound on how much of
+        the bucket survived. The pessimistic bound is
+        `(dropped - dropped_with_title_and_year_twin) / tvmaze_shows`.
+        """
         if not self.tvmaze_shows:
             return 0.0
         return round(100.0 * self.dropped_without_title_twin / self.tvmaze_shows, 2)
@@ -244,6 +271,7 @@ class Bucket:
             "carried_matched": self.carried_matched,
             "dropped": self.dropped,
             "dropped_with_title_twin": self.dropped_with_title_twin,
+            "dropped_with_title_and_year_twin": self.dropped_with_title_and_year_twin,
             "dropped_without_title_twin": self.dropped_without_title_twin,
             "absent_pct": self.absent_pct,
             "advisory": self.advisory,
@@ -272,8 +300,18 @@ class GateReport:
         return "no-go" if self.failed else "go"
 
     @property
-    def advisory_buckets(self) -> tuple[str, ...]:
+    def advisory_languages(self) -> tuple[str, ...]:
         return tuple(b.bucket for b in self.by_language if b.advisory)
+
+    @property
+    def advisory_eras(self) -> tuple[str, ...]:
+        """Flagged the same way as languages, and surfaced the same way.
+
+        Both axes carry `advisory`, so both are reported and both are warned
+        about — an era flag computed into the artifact and never mentioned would
+        be a number nobody has any reason to trust.
+        """
+        return tuple(b.bucket for b in self.by_era if b.advisory)
 
     def _totals(self) -> dict[str, int]:
         """Catalog-wide coverage, summed from the language buckets.
@@ -287,6 +325,7 @@ class GateReport:
             "carried_matched",
             "dropped",
             "dropped_with_title_twin",
+            "dropped_with_title_and_year_twin",
             "dropped_without_title_twin",
         )
         return {f: sum(getattr(b, f) for b in self.by_language) for f in fields}
@@ -298,7 +337,8 @@ class GateReport:
             "criteria": [c.to_dict() for c in self.criteria],
             "coverage": {
                 "totals": self._totals(),
-                "advisory_languages": list(self.advisory_buckets),
+                "advisory_languages": list(self.advisory_languages),
+                "advisory_eras": list(self.advisory_eras),
                 "by_language": [b.to_dict() for b in self.by_language],
                 "by_era": [b.to_dict() for b in self.by_era],
             },
@@ -348,6 +388,21 @@ def _coverage_stmt(bucket: ColumnElement[str]) -> Select:
             carried.id.is_not(None).label("carried"),
             carried.tmdb_id.is_not(None).label("matched"),
             func.count(ingested.id).label("twins"),
+            # The tighter reading of the same twin. A title-only match is
+            # generous — `show_prune` measured 6,464 of them against production
+            # and only 3,337 also agreed on year — so the two counts bracket the
+            # truth rather than either one being it. ±1 is enrichment's tier-3
+            # tolerance, and a NULL on either side makes the comparison NULL,
+            # which the filter reads as no agreement.
+            func.count(ingested.id)
+            .filter(
+                func.abs(
+                    func.extract("year", ingested.first_air_date)
+                    - func.extract("year", MazeShow.premiered)
+                )
+                <= 1
+            )
+            .label("year_twins"),
         )
         .select_from(MazeShow)
         .outerjoin(carried, carried.id == MazeShow.id)
@@ -376,6 +431,9 @@ def _coverage_stmt(bucket: ColumnElement[str]) -> Select:
             func.count().filter(per_show.c.matched.is_(True)).label("carried_matched"),
             func.count().filter(is_dropped).label("dropped"),
             func.count().filter(and_(is_dropped, per_show.c.twins > 0)).label("with_twin"),
+            func.count()
+            .filter(and_(is_dropped, per_show.c.year_twins > 0))
+            .label("with_year_twin"),
             func.count().filter(and_(is_dropped, per_show.c.twins == 0)).label("without_twin"),
         )
         .group_by(per_show.c.bucket)
@@ -396,6 +454,7 @@ async def _buckets(db: AsyncSession, bucket: ColumnElement[str]) -> tuple[Bucket
             carried_matched=row.carried_matched,
             dropped=row.dropped,
             dropped_with_title_twin=row.with_twin,
+            dropped_with_title_and_year_twin=row.with_year_twin,
             dropped_without_title_twin=row.without_twin,
         )
         for row in rows
@@ -420,16 +479,21 @@ async def _fk_targets_resolve(db: AsyncSession) -> Criterion:
     }
     dangling = sum(detail.values())
 
-    if (await db.execute(_HAS_SHOW_RESOLUTION)).scalar_one():
+    # Two keys rather than one holding either a count or a sentence: the artifact
+    # is diffed against the previous run, and a field whose *type* changes between
+    # runs is the one thing a diff cannot read.
+    checked = bool((await db.execute(_HAS_SHOW_RESOLUTION)).scalar_one())
+    detail["import_ne_schema_present"] = checked
+    if checked:
         resolution = (await db.execute(_SHOW_RESOLUTION_DANGLING)).scalar_one()
         detail["import_ne.show_resolution.show_id"] = resolution
         dangling += resolution
     else:
-        detail["import_ne.show_resolution.show_id"] = "(schema absent — not checked)"
+        detail["import_ne.show_resolution.show_id"] = None
 
     return Criterion(
         name="fk_targets_resolve",
-        description=_CRITERIA[0][1],
+        description=_CRITERIA["fk_targets_resolve"],
         passed=dangling == 0,
         detail=detail,
     )
@@ -440,7 +504,7 @@ async def _user_touched_shows_present(db: AsyncSession) -> Criterion:
     missing = list((await db.execute(_UNMIRRORED)).scalars())
     return Criterion(
         name="user_touched_shows_present",
-        description=_CRITERIA[1][1],
+        description=_CRITERIA["user_touched_shows_present"],
         passed=not missing,
         detail={"missing_show_ids": missing},
     )
@@ -461,6 +525,10 @@ async def _user_touched_shows_resolved(db: AsyncSession) -> Criterion:
         entry: dict[str, Any] = {
             "show_id": row.id,
             "name": row.name,
+            # Both halves of the queue land here and they need different work:
+            # a NULL id is a show nothing mapped, a set one under `title_year` is
+            # a guess waiting for somebody to confirm or reject it.
+            "tmdb_id": row.tmdb_id,
             "match_method": row.match_method,
             "episode_watches": row.episode_watches,
         }
@@ -471,7 +539,7 @@ async def _user_touched_shows_resolved(db: AsyncSession) -> Criterion:
 
     return Criterion(
         name="user_touched_shows_resolved",
-        description=_CRITERIA[2][1],
+        description=_CRITERIA["user_touched_shows_resolved"],
         passed=not unaccepted,
         detail={"unresolved": unaccepted, "accepted_exceptions": accepted},
     )
@@ -487,7 +555,7 @@ async def _ingest_present(db: AsyncSession, floor: int) -> Criterion:
     ingested = (await db.execute(_INGESTED_COUNT)).scalar_one()
     return Criterion(
         name="ingest_present",
-        description=_CRITERIA[3][1],
+        description=_CRITERIA["ingest_present"],
         passed=ingested >= floor,
         detail={"ingested_shows": ingested, "floor": floor},
     )
