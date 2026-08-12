@@ -1,14 +1,46 @@
+"""The browse, search and credits query layer, reading `catalog`.
+
+Ported from `tvmaze/browse_queries.py` at the repoint (NEU-1047). The shapes are
+the originals — the AKA-aware semi-join, the folded-search machinery, the batch
+hydration that keeps `GET /shows` at a fixed query count, the tombstone filter
+scoped to discovery — and each is carried across rather than rewritten. Where a
+query had to change, it is because the target schema forced it:
+
+* **`network` and `web_channel` are one concept now.** `tvmaze.show` carried two
+  scalar FKs; TMDB returns `networks[]` and `catalog` models it as the
+  `show_network` join table (audit §6). So the `?network=` filter becomes a
+  semi-join instead of an `IN` on a column, hydration reads one query instead of
+  two, and a show with several networks resolves to **the alphabetically first**
+  — TMDB sends the array in an order we do not store, so alphabetical is the only
+  choice that is stable across re-ingests rather than across payloads.
+* **Genre queries live in `catalog/genres.py`** (NEU-1064), which owns the
+  vocabulary change and the name-vs-id counting rule that goes with it.
+* **Seasons are deduplicated on read** by `catalog/seasons.py` (NEU-1047), the
+  one payload this repoint allows to differ.
+* **Credits sort by `episode_count`, not by a billing order.** TMDB sends no
+  `order` on a crew entry at all and `aggregate_credits` gives the measure
+  `order` only ever proxied for, so both credit tables lead their index on it.
+
+`GET /shows` still issues four queries for a page of any size: count, page,
+genres-by-show, networks-by-show. It was five before — dropping `web_channel`
+dropped one.
+"""
+
 import unicodedata
+from collections.abc import Sequence
 from uuid import UUID
 
-from sqlalchemy import false, func, literal, or_, select
+from sqlalchemy import Select, false, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.repos import episode_rating_repo, show_rating_repo
+from tvbf.catalog import episodes as episode_rules
+from tvbf.catalog import genres as genre_queries
+from tvbf.catalog import models as m
+from tvbf.catalog import seasons as season_rules
+from tvbf.catalog.schemas import ALLOWED_SORT_KEYS, ShowFilters
 from tvbf.sorting import SQL_LEADING_ARTICLE_PATTERN
 from tvbf.sql_fold import folded
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.schemas import ALLOWED_SORT_KEYS, ShowFilters
 
 # Strip leading articles for natural alphabetical sort: "The Office" → "office".
 _NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTICLE_PATTERN, "")
@@ -16,28 +48,38 @@ _NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTI
 # Most recent already-aired episode airdate per show. Correlated subquery so it can
 # participate in ORDER BY without a join that would multiply rows.
 _LAST_AIRED = (
-    select(func.max(m.Episode.airdate))
+    select(func.max(m.Episode.air_date))
     .where(m.Episode.show_id == m.Show.id)
-    .where(m.Episode.airdate <= func.current_date())
+    .where(m.Episode.air_date <= func.current_date())
     .correlate(m.Show)
     .scalar_subquery()
 )
 
+# `?sort=tvmaze_updated` keeps its name and now means *when we last mirrored this
+# show* — see `schemas._updated_epoch`, which reads the same two columns in the
+# same order so the sort and the serialized field cannot disagree.
+_MIRRORED_AT = func.coalesce(m.Show.tmdb_synced_at, m.Show.ingested_at)
+
 _SORT_EXPRS = {
     "name": _NORMALIZED_NAME.asc(),
     "-name": _NORMALIZED_NAME.desc(),
-    "premiered": m.Show.premiered.asc().nulls_last(),
-    "-premiered": m.Show.premiered.desc().nulls_last(),
-    "tvmaze_updated": m.Show.tvmaze_updated.asc(),
-    "-tvmaze_updated": m.Show.tvmaze_updated.desc(),
+    "premiered": m.Show.first_air_date.asc().nulls_last(),
+    "-premiered": m.Show.first_air_date.desc().nulls_last(),
+    "tvmaze_updated": _MIRRORED_AT.asc(),
+    "-tvmaze_updated": _MIRRORED_AT.desc(),
     "last_aired": _LAST_AIRED.asc().nulls_last(),
     "-last_aired": _LAST_AIRED.desc().nulls_last(),
 }
 
 
+def _shows_on_networks(network_ids: list[int]) -> Select[tuple[int]]:
+    """Show ids carrying *any* of the named networks — the OR semantics `?network=`
+    has always had, expressed as a semi-join now that the FK lives on a join table."""
+    return select(m.ShowNetwork.show_id).where(m.ShowNetwork.network_id.in_(network_ids))
+
+
 async def list_genres(session: AsyncSession) -> list[m.Genre]:
-    result = await session.execute(select(m.Genre).order_by(m.Genre.name))
-    return list(result.scalars().all())
+    return await genre_queries.list_genres(session)
 
 
 async def list_networks(session: AsyncSession) -> list[m.Network]:
@@ -47,56 +89,55 @@ async def list_networks(session: AsyncSession) -> list[m.Network]:
 
 async def get_show_with_seasons(
     session: AsyncSession, show_id: int
-) -> tuple[m.Show, list[m.Season], list[m.Genre], m.Network | None, m.WebChannel | None] | None:
+) -> tuple[m.Show, list[m.Season], list[m.Genre], m.Network | None] | None:
     show = (await session.execute(select(m.Show).where(m.Show.id == show_id))).scalar_one_or_none()
     if show is None:
         return None
 
-    seasons = list(
-        (
-            await session.execute(
-                select(m.Season).where(m.Season.show_id == show_id).order_by(m.Season.number)
-            )
+    seasons = await get_show_seasons(session, show_id)
+    genres = await genre_queries.genres_for_show(session, show_id)
+    network = (await primary_networks(session, [show_id])).get(show_id)
+    return show, seasons, genres, network
+
+
+async def primary_networks(session: AsyncSession, show_ids: Sequence[int]) -> dict[int, m.Network]:
+    """The one network the API exposes per show, of however many each carries.
+
+    Alphabetically first, id breaking ties. TMDB's `networks[]` has an order we
+    do not store, so picking "the first one upstream sent" is not available; a
+    name ordering at least does not change when the array does.
+
+    **One query however many shows are asked for**, which is what keeps
+    `GET /shows` at a fixed count, and one implementation of the rule — a
+    `DISTINCT ON` for the page plus an `ORDER BY ... LIMIT 1` for the detail
+    route would be the same decision written twice, in two languages, free to
+    drift. Shows with no `show_network` row are simply absent from the result.
+    """
+    if not show_ids:
+        return {}
+    rows = (
+        await session.execute(
+            select(m.ShowNetwork.show_id, m.Network)
+            .join(m.Network, m.Network.id == m.ShowNetwork.network_id)
+            .where(m.ShowNetwork.show_id.in_(show_ids))
         )
-        .scalars()
-        .all()
-    )
-
-    genres = list(
-        (
-            await session.execute(
-                select(m.Genre)
-                .join(m.ShowGenre, m.ShowGenre.genre_id == m.Genre.id)
-                .where(m.ShowGenre.show_id == show_id)
-                .order_by(m.Genre.name)
-            )
-        )
-        .scalars()
-        .all()
-    )
-
-    network = None
-    if show.network_id is not None:
-        network = (
-            await session.execute(select(m.Network).where(m.Network.id == show.network_id))
-        ).scalar_one_or_none()
-
-    web_channel = None
-    if show.web_channel_id is not None:
-        web_channel = (
-            await session.execute(
-                select(m.WebChannel).where(m.WebChannel.id == show.web_channel_id)
-            )
-        ).scalar_one_or_none()
-
-    return show, seasons, genres, network, web_channel
+    ).all()
+    best: dict[int, m.Network] = {}
+    for show_id, network in rows:
+        incumbent = best.get(show_id)
+        if incumbent is None or (network.name, network.id) < (incumbent.name, incumbent.id):
+            best[show_id] = network
+    return best
 
 
 async def get_show_seasons(session: AsyncSession, show_id: int) -> list[m.Season]:
+    """A show's seasons, one per season number — see `catalog/seasons.py`."""
     result = await session.execute(
-        select(m.Season).where(m.Season.show_id == show_id).order_by(m.Season.number)
+        select(m.Season)
+        .where(m.Season.show_id == show_id)
+        .order_by(m.Season.season_number, m.Season.id)
     )
-    return list(result.scalars().all())
+    return season_rules.deduped(result.scalars().all())
 
 
 async def show_exists(session: AsyncSession, show_id: int) -> bool:
@@ -119,39 +160,57 @@ async def get_show_episodes(
 ) -> list[m.Episode]:
     stmt = select(m.Episode).where(m.Episode.show_id == show_id)
     if season is not None:
-        stmt = stmt.where(m.Episode.season == season)
-    stmt = stmt.order_by(m.Episode.season, m.Episode.number)
+        stmt = stmt.where(m.Episode.season_number == season)
+    stmt = stmt.order_by(*episode_rules.EPISODE_ORDER)
     result = await session.execute(stmt)
     return list(result.scalars().all())
 
 
-async def list_show_cast(
-    session: AsyncSession, show_id: int
-) -> list[tuple[m.ShowCast, m.Person, m.Character]]:
-    """Cast credits for one show in upstream billing order.
+# Credit ordering. `episode_count` is the measure TV Maze's `sort_order` only ever
+# proxied for, and it is the one ordering show cast and show crew can share — both
+# indexes lead on it. Descending, so the most-present person is billed first;
+# Postgres scans the index backwards for that. The credit id breaks ties, or the
+# order within a show is nondeterministic across requests.
+_CREDIT_COUNT_DESC = func.coalesce(m.ShowCast.episode_count, 0).desc()
+_CREW_COUNT_DESC = func.coalesce(m.ShowCrew.episode_count, 0).desc()
 
-    Covered by ix_show_cast_show_id_sort. Single-show route, so unlike
+
+async def list_show_cast(session: AsyncSession, show_id: int) -> list[tuple[m.Person, m.Character]]:
+    """Cast credits for one show, most-present first.
+
+    Covered by ix_show_cast_show_id_episode_count. Single-show route, so unlike
     `hydrate_show_refs` there is no N+1 to batch away.
+
+    **The join to `character` is inner, which drops a credit whose character TMDB
+    left blank** — measured at 1 of 7,629 sampled roles. `catalog.show_cast`
+    made `character_id` nullable so one blank cannot abort a multi-hour ingest;
+    `CastMemberOut.character` is required, and widening it is a contract change
+    for a row that would render as "person as (nothing)" anyway.
     """
     stmt = (
-        select(m.ShowCast, m.Person, m.Character)
-        .join(m.Person, m.Person.id == m.ShowCast.person_id)
+        select(m.Person, m.Character)
+        .join(m.ShowCast, m.ShowCast.person_id == m.Person.id)
         .join(m.Character, m.Character.id == m.ShowCast.character_id)
         .where(m.ShowCast.show_id == show_id)
-        .order_by(m.ShowCast.sort_order)
+        .order_by(
+            _CREDIT_COUNT_DESC,
+            func.coalesce(m.ShowCast.billing_order, 2**31 - 1).asc(),
+            m.ShowCast.id.asc(),
+        )
     )
     result = await session.execute(stmt)
     return list(result.tuples().all())
 
 
 async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Person, m.CrewRole]]:
-    """Crew credits for one show in upstream order. Covered by ix_show_crew_show_id_sort."""
+    """Crew credits for one show, most-present first. Covered by
+    ix_show_crew_show_id_episode_count."""
     stmt = (
         select(m.Person, m.CrewRole)
         .join(m.ShowCrew, m.ShowCrew.person_id == m.Person.id)
         .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
         .where(m.ShowCrew.show_id == show_id)
-        .order_by(m.ShowCrew.sort_order)
+        .order_by(_CREW_COUNT_DESC, m.CrewRole.job.asc(), m.ShowCrew.id.asc())
     )
     result = await session.execute(stmt)
     return list(result.tuples().all())
@@ -159,40 +218,46 @@ async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Pe
 
 async def list_episode_guest_cast(
     session: AsyncSession, episode_id: int
-) -> list[tuple[m.EpisodeGuestCast, m.Person, m.Character]]:
+) -> list[tuple[m.Person, m.Character]]:
     """Guest-cast credits for one episode in upstream credit order — the
-    episode's own credit sequence, not billing order (which is reserved for show
-    cast, where upstream orders by total appearances).
+    episode's own credit sequence, not billing order.
 
-    Covered by ix_egc_episode_id_sort. The credit id breaks ties: nothing
-    upstream guarantees `sort_order` is distinct within an episode, so the order
-    would otherwise be nondeterministic across requests.
+    Covered by the leading column of uq_egc_episode_person_character. The credit
+    id breaks ties: nothing upstream guarantees `credit_order` is distinct within
+    an episode, so the order would otherwise be nondeterministic across requests.
+    Same inner join to `character` as `list_show_cast`, for the same reason.
     """
     stmt = (
-        select(m.EpisodeGuestCast, m.Person, m.Character)
-        .join(m.Person, m.Person.id == m.EpisodeGuestCast.person_id)
+        select(m.Person, m.Character)
+        .join(m.EpisodeGuestCast, m.EpisodeGuestCast.person_id == m.Person.id)
         .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
         .where(m.EpisodeGuestCast.episode_id == episode_id)
-        .order_by(m.EpisodeGuestCast.sort_order.asc(), m.EpisodeGuestCast.id.asc())
+        .order_by(
+            func.coalesce(m.EpisodeGuestCast.credit_order, 2**31 - 1).asc(),
+            m.EpisodeGuestCast.id.asc(),
+        )
     )
     return list((await session.execute(stmt)).tuples().all())
 
 
 async def list_episode_crew(
     session: AsyncSession, episode_id: int
-) -> list[tuple[m.Person, m.EpisodeCrewRole]]:
-    """Crew credits for one episode in upstream credit order.
+) -> list[tuple[m.Person, m.CrewRole]]:
+    """Crew credits for one episode.
 
-    Covered by ix_episode_crew_episode_id_sort. Same tie-break reasoning as
-    `list_episode_guest_cast`, and it bites harder here: one person holds more
-    than one crew role on 36 of 1,043 sampled episodes (ADR-0003).
+    **Ordered by job name, where the TV Maze version used upstream's credit
+    sequence.** TMDB sends no `order` on a crew entry — 0 of 7,456 sampled — and
+    `catalog.episode_crew` has no `episode_count` either, so there is no upstream
+    signal left to sort on and the alternative is an arbitrary id order. The tie
+    on id still matters: one person holds more than one crew role on 36 of 1,043
+    sampled episodes (ADR-0003).
     """
     stmt = (
-        select(m.Person, m.EpisodeCrewRole)
+        select(m.Person, m.CrewRole)
         .join(m.EpisodeCrew, m.EpisodeCrew.person_id == m.Person.id)
-        .join(m.EpisodeCrewRole, m.EpisodeCrewRole.id == m.EpisodeCrew.role_id)
+        .join(m.CrewRole, m.CrewRole.id == m.EpisodeCrew.role_id)
         .where(m.EpisodeCrew.episode_id == episode_id)
-        .order_by(m.EpisodeCrew.sort_order.asc(), m.EpisodeCrew.id.asc())
+        .order_by(m.CrewRole.job.asc(), m.EpisodeCrew.id.asc())
     )
     return list((await session.execute(stmt)).tuples().all())
 
@@ -210,27 +275,26 @@ async def person_exists(session: AsyncSession, person_id: int) -> bool:
 # A filmography reads most-recent-first, so credited shows are ordered by
 # premiere date descending. Shows with no premiere date (unaired, upcoming) sort
 # last; show id breaks ties so the order is stable across requests.
-_CREDIT_SHOW_ORDER = (m.Show.premiered.desc().nulls_last(), m.Show.id.asc())
+_CREDIT_SHOW_ORDER = (m.Show.first_air_date.desc().nulls_last(), m.Show.id.asc())
 
-# Episode-level credits read the same way, by air date. Episodes with no airdate
+# Episode-level credits read the same way, by air date. Episodes with no air date
 # (unaired, or never dated upstream) sort last; episode id breaks ties.
-_CREDIT_EPISODE_ORDER = (m.Episode.airdate.desc().nulls_last(), m.Episode.id.asc())
+_CREDIT_EPISODE_ORDER = (m.Episode.air_date.desc().nulls_last(), m.Episode.id.asc())
 
 
 async def list_person_cast_credits(
     session: AsyncSession, person_id: int
-) -> list[tuple[m.ShowCast, m.Show, m.Character]]:
+) -> list[tuple[m.Show, m.Character]]:
     """Regular cast credits for one person. Covered by ix_show_cast_person_id."""
     stmt = (
-        select(m.ShowCast, m.Show, m.Character)
-        .join(m.Show, m.Show.id == m.ShowCast.show_id)
+        select(m.Show, m.Character)
+        .join(m.ShowCast, m.ShowCast.show_id == m.Show.id)
         .join(m.Character, m.Character.id == m.ShowCast.character_id)
         .where(m.ShowCast.person_id == person_id)
-        # The credit tables carry no unique constraint by design, so one person
-        # can hold several credits on the same show (two characters, or an
-        # upstream duplicate). Break the tie on the credit itself, or the order
-        # within a show is nondeterministic across requests.
-        .order_by(*_CREDIT_SHOW_ORDER, m.ShowCast.sort_order.asc(), m.ShowCast.id.asc())
+        # `aggregate_credits` nests one row per role, so one person legitimately
+        # holds several credits on the same show. Break the tie on the credit
+        # itself, or the order within a show is nondeterministic across requests.
+        .order_by(*_CREDIT_SHOW_ORDER, _CREDIT_COUNT_DESC, m.ShowCast.id.asc())
     )
     return list((await session.execute(stmt)).tuples().all())
 
@@ -245,26 +309,26 @@ async def list_person_crew_credits(
         .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
         .where(m.ShowCrew.person_id == person_id)
         # Crew is the common multi-credit case — one person is routinely writer
-        # and director on the same show — so role name orders within a show, and
-        # the credit id keeps even identical roles stable.
-        .order_by(*_CREDIT_SHOW_ORDER, m.CrewRole.name.asc(), m.ShowCrew.id.asc())
+        # and director on the same show — so job name orders within a show, and
+        # the credit id keeps even identical jobs stable.
+        .order_by(*_CREDIT_SHOW_ORDER, m.CrewRole.job.asc(), m.ShowCrew.id.asc())
     )
     return list((await session.execute(stmt)).tuples().all())
 
 
 async def list_person_guest_credits(
     session: AsyncSession, person_id: int
-) -> list[tuple[m.EpisodeGuestCast, m.Episode, m.Show, m.Character]]:
+) -> list[tuple[m.Episode, m.Show, m.Character]]:
     """Guest-cast credits for one person, joined through episode → show so each
     entry can render "Show — S2E11" without a second round trip.
 
-    Ordered by air date descending (`_CREDIT_EPISODE_ORDER`): `sort_order` on a
+    Ordered by air date descending (`_CREDIT_EPISODE_ORDER`): `credit_order` on a
     guest credit is credit order within its own episode and says nothing useful
     across episodes. Within one episode the credit id keeps the order stable.
     """
     stmt = (
-        select(m.EpisodeGuestCast, m.Episode, m.Show, m.Character)
-        .join(m.Episode, m.Episode.id == m.EpisodeGuestCast.episode_id)
+        select(m.Episode, m.Show, m.Character)
+        .join(m.EpisodeGuestCast, m.EpisodeGuestCast.episode_id == m.Episode.id)
         .join(m.Show, m.Show.id == m.Episode.show_id)
         .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
         .where(m.EpisodeGuestCast.person_id == person_id)
@@ -275,30 +339,22 @@ async def list_person_guest_credits(
 
 async def list_person_episode_crew_credits(
     session: AsyncSession, person_id: int
-) -> list[tuple[m.Episode, m.Show, m.EpisodeCrewRole]]:
+) -> list[tuple[m.Episode, m.Show, m.CrewRole]]:
     """Episode-crew credits for one person, joined through episode → show so each
     entry can render "Show — S1E3" without a second round trip.
 
-    This is the half of a person's filmography that has no upstream person-side
-    route at all — `/people/{id}?embed[]=guestcrewcredits` is a 400 — so it only
-    exists because credits are fetched per season (ADR-0003).
-
     Ordered by air date descending like `list_person_guest_credits`, nulls last.
-    A person routinely holds both Writer and Director on one episode, and within
-    that episode `sort_order` is the credit sequence — the same order
-    `list_episode_crew` serves, so the two views of one episode agree.
+    A person routinely holds both Writer and Director on one episode; within that
+    episode job name orders them, the same order `list_episode_crew` serves, so
+    the two views of one episode agree.
     """
     stmt = (
-        select(m.Episode, m.Show, m.EpisodeCrewRole)
+        select(m.Episode, m.Show, m.CrewRole)
         .join(m.EpisodeCrew, m.EpisodeCrew.episode_id == m.Episode.id)
         .join(m.Show, m.Show.id == m.Episode.show_id)
-        .join(m.EpisodeCrewRole, m.EpisodeCrewRole.id == m.EpisodeCrew.role_id)
+        .join(m.CrewRole, m.CrewRole.id == m.EpisodeCrew.role_id)
         .where(m.EpisodeCrew.person_id == person_id)
-        .order_by(
-            *_CREDIT_EPISODE_ORDER,
-            m.EpisodeCrew.sort_order.asc(),
-            m.EpisodeCrew.id.asc(),
-        )
+        .order_by(*_CREDIT_EPISODE_ORDER, m.CrewRole.job.asc(), m.EpisodeCrew.id.asc())
     )
     return list((await session.execute(stmt)).tuples().all())
 
@@ -339,25 +395,18 @@ async def list_shows(
             base = base.where(false())
         for token in usable:
             needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
-            aka_subq = select(m.ShowAka.show_id).where(folded(m.ShowAka.name).like(needle))
+            aka_subq = select(m.ShowAka.show_id).where(folded(m.ShowAka.title).like(needle))
             base = base.where(or_(folded(m.Show.name).like(needle), m.Show.id.in_(aka_subq)))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:
-        base = base.where(m.Show.language == filters.language)
+        base = base.where(m.Show.original_language == filters.language)
     if filters.type is not None:
         base = base.where(m.Show.type == filters.type)
     if filters.genres:
-        genre_subq = (
-            select(m.ShowGenre.show_id)
-            .join(m.Genre, m.Genre.id == m.ShowGenre.genre_id)
-            .where(m.Genre.name.in_(filters.genres))
-            .group_by(m.ShowGenre.show_id)
-            .having(func.count(func.distinct(m.Genre.id)) == len(filters.genres))
-        )
-        base = base.where(m.Show.id.in_(genre_subq))
+        base = base.where(m.Show.id.in_(genre_queries.shows_with_all_genres(filters.genres)))
     if filters.network_ids:
-        base = base.where(m.Show.network_id.in_(filters.network_ids))
+        base = base.where(m.Show.id.in_(_shows_on_networks(filters.network_ids)))
 
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
@@ -381,19 +430,19 @@ async def search_people(
 
     Deliberately a separate entity search rather than a third OR branch in
     `list_shows`: a cast member's name is not a name of the show, and folding
-    ~1.3M crew names into the title predicate would make "smith" return most of
-    the catalog. `list_shows` is untouched by this.
+    crew names into the title predicate would make "smith" return most of the
+    catalog. `list_shows` is untouched by this.
 
     Reuses `folded` so the column and each query token normalize under identical
     rules, which matters more for names than for titles — "visnjic" has to reach
     "Goran Višnjić" because nobody types the diacritics. Backed by
-    `ix_person_name_folded_trgm`.
+    `ix_person_name_folded_trgm` on `catalog.person`.
 
     Search-only by design: with no usable token there is nothing to match, so
     this returns an empty page rather than the whole table. There is no
-    browse-all-people surface, and at ~487k rows an unfiltered listing would
-    sort the entire table on every request off the back of an index that only
-    covers the folded name.
+    browse-all-people surface, and an unfiltered listing would sort the entire
+    table on every request off the back of an index that only covers the folded
+    name.
     """
     # Token-AND, same as show search: "zachary levi" matches, "zachary garcia"
     # doesn't. A query that folds to nothing ("--", "") matches nothing — never
@@ -441,10 +490,10 @@ async def hydrate_matched_aka(
     show_ids = [s.id for s in shows]
 
     # Best (shortest) AKA per show that matches every folded token.
-    aka_query = select(m.ShowAka.show_id, m.ShowAka.name).where(m.ShowAka.show_id.in_(show_ids))
+    aka_query = select(m.ShowAka.show_id, m.ShowAka.title).where(m.ShowAka.show_id.in_(show_ids))
     for token in tokens:
         needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
-        aka_query = aka_query.where(folded(m.ShowAka.name).like(needle))
+        aka_query = aka_query.where(folded(m.ShowAka.title).like(needle))
     aka_rows = (await session.execute(aka_query)).all()
     best_by_show: dict[int, str] = {}
     for sid, aname in aka_rows:
@@ -471,44 +520,21 @@ async def hydrate_matched_aka(
 
 async def hydrate_show_refs(
     session: AsyncSession, shows: list[m.Show]
-) -> tuple[dict[int, list[str]], dict[int, m.Network], dict[int, m.WebChannel]]:
+) -> tuple[dict[int, list[str]], dict[int, m.Network]]:
+    """Genre names and the primary network for a page of shows, in two queries.
+
+    One query fewer than the `tvmaze` original, because `web_channel` merged into
+    `network`. Both halves are the same functions the single-show detail route
+    calls, handed a list instead of an id, so neither rule exists twice.
+    """
     if not shows:
-        return {}, {}, {}
+        return {}, {}
 
     show_ids = [s.id for s in shows]
-    net_ids = {s.network_id for s in shows if s.network_id is not None}
-    wc_ids = {s.web_channel_id for s in shows if s.web_channel_id is not None}
-
-    genre_rows = (
-        await session.execute(
-            select(m.ShowGenre.show_id, m.Genre.name)
-            .join(m.Genre, m.Genre.id == m.ShowGenre.genre_id)
-            .where(m.ShowGenre.show_id.in_(show_ids))
-        )
-    ).all()
-    genres_by_show: dict[int, list[str]] = {sid: [] for sid in show_ids}
-    for sid, gname in genre_rows:
-        genres_by_show[sid].append(gname)
-
-    networks_by_id: dict[int, m.Network] = {}
-    if net_ids:
-        for row in (
-            (await session.execute(select(m.Network).where(m.Network.id.in_(net_ids))))
-            .scalars()
-            .all()
-        ):
-            networks_by_id[row.id] = row
-
-    wcs_by_id: dict[int, m.WebChannel] = {}
-    if wc_ids:
-        for row in (
-            (await session.execute(select(m.WebChannel).where(m.WebChannel.id.in_(wc_ids))))
-            .scalars()
-            .all()
-        ):
-            wcs_by_id[row.id] = row
-
-    return genres_by_show, networks_by_id, wcs_by_id
+    return (
+        await genre_queries.genres_by_show(session, show_ids),
+        await primary_networks(session, show_ids),
+    )
 
 
 async def hydrate_my_ratings(

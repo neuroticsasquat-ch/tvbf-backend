@@ -1,4 +1,4 @@
-"""Edge-path tests for tvmaze upsert/ingest/update/browse_queries.
+"""Edge-path tests for tvmaze upsert/ingest/update.
 
 Targets the consecutive-failure abort branches and empty-input early returns
 that aren't naturally exercised by happy-path tests.
@@ -14,7 +14,6 @@ from sqlalchemy import select
 
 from tvbf.rate_budget import RateLimiter
 from tvbf.tvmaze import models as m
-from tvbf.tvmaze.browse_queries import hydrate_show_refs
 from tvbf.tvmaze.client import TVMazeClient
 from tvbf.tvmaze.ingest import run_initial_ingest
 from tvbf.tvmaze.runs import create_run
@@ -44,13 +43,6 @@ async def test_upsert_episodes_returns_early_on_empty_list(session):
     """Covers upsert.py:161 — `if not episodes: return`."""
     # Show with show_id 1 doesn't need to exist; the function returns before any DB op.
     await upsert_episodes(session, show_id=1, episodes=[])
-
-
-@pytest.mark.asyncio
-async def test_hydrate_show_refs_returns_empty_for_empty_shows(session):
-    """Covers browse_queries.py:143 — `if not shows: return ({}, {}, {})`."""
-    g, n, w = await hydrate_show_refs(session, [])
-    assert g == {} and n == {} and w == {}
 
 
 # ---------------------------------------------------------------------------

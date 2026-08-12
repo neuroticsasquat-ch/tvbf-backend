@@ -5,7 +5,8 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
-from tvbf.tvmaze.models import Episode
+from tvbf.catalog.episodes import EPISODE_ORDER
+from tvbf.catalog.models import Episode
 
 
 async def get_by_id(db: AsyncSession, episode_id: int) -> Episode | None:
@@ -18,7 +19,7 @@ async def list_episode_ids_for_season(
     result = await db.execute(
         select(Episode.id).where(
             Episode.show_id == show_id,
-            Episode.season == season_number,
+            Episode.season_number == season_number,
         )
     )
     return list(result.scalars().all())
@@ -27,13 +28,13 @@ async def list_episode_ids_for_season(
 async def aired_count_per_season(db: AsyncSession, show_id: int, today: date) -> dict[int, int]:
     rows = (
         await db.execute(
-            select(Episode.season, func.count(Episode.id))
+            select(Episode.season_number, func.count(Episode.id))
             .where(
                 Episode.show_id == show_id,
-                Episode.airdate.is_not(None),
-                Episode.airdate <= today,
+                Episode.air_date.is_not(None),
+                Episode.air_date <= today,
             )
-            .group_by(Episode.season)
+            .group_by(Episode.season_number)
         )
     ).all()
     return {season: count for season, count in rows}
@@ -43,8 +44,8 @@ async def list_aired_episode_ids_for_show(db: AsyncSession, show_id: int, today:
     result = await db.execute(
         select(Episode.id).where(
             Episode.show_id == show_id,
-            Episode.airdate.is_not(None),
-            Episode.airdate <= today,
+            Episode.air_date.is_not(None),
+            Episode.air_date <= today,
         )
     )
     return list(result.scalars().all())
@@ -76,8 +77,8 @@ async def count_aired_per_show(
             select(Episode.show_id, func.count(Episode.id))
             .where(
                 Episode.show_id.in_(show_ids),
-                Episode.airdate.is_not(None),
-                Episode.airdate <= today,
+                Episode.air_date.is_not(None),
+                Episode.air_date <= today,
             )
             .group_by(Episode.show_id)
         )
@@ -91,11 +92,11 @@ async def latest_aired_per_show(
     """Return the date of the latest aired episode per show_id."""
     rows = (
         await db.execute(
-            select(Episode.show_id, func.max(Episode.airdate))
+            select(Episode.show_id, func.max(Episode.air_date))
             .where(
                 Episode.show_id.in_(show_ids),
-                Episode.airdate.is_not(None),
-                Episode.airdate <= today,
+                Episode.air_date.is_not(None),
+                Episode.air_date <= today,
             )
             .group_by(Episode.show_id)
         )
@@ -117,12 +118,12 @@ async def earliest_aired_unwatched_per_show(
         .join(UserShowWatch, UserShowWatch.show_id == Episode.show_id)
         .where(
             UserShowWatch.user_id == user_id,
-            Episode.airdate.is_not(None),
-            Episode.airdate <= today,
+            Episode.air_date.is_not(None),
+            Episode.air_date <= today,
             Episode.id.notin_(select(watched_subq)),
         )
     )
-    order = (Episode.season.asc(), Episode.number.asc())
+    order = EPISODE_ORDER
     rn = func.row_number().over(partition_by=Episode.show_id, order_by=order).label("rn")
     base_with_rn = base.add_columns(rn).subquery()
 
@@ -146,11 +147,11 @@ async def earliest_future_per_show(
         .join(UserShowWatch, UserShowWatch.show_id == Episode.show_id)
         .where(
             UserShowWatch.user_id == user_id,
-            Episode.airdate.is_not(None),
-            Episode.airdate > today,
+            Episode.air_date.is_not(None),
+            Episode.air_date > today,
         )
     )
-    order = (Episode.airdate.asc(), Episode.season.asc(), Episode.number.asc())
+    order = (Episode.air_date.asc(), *EPISODE_ORDER)
     rn = func.row_number().over(partition_by=Episode.show_id, order_by=order).label("rn")
     base_with_rn = base.add_columns(rn).subquery()
 
@@ -174,7 +175,7 @@ async def next_unwatched(db: AsyncSession, *, user_id: UUID, show_id: int) -> Ep
         select(Episode)
         .where(Episode.show_id == show_id)
         .where(Episode.id.notin_(select(watched_subq)))
-        .order_by(Episode.season.asc(), Episode.number.asc())
+        .order_by(*EPISODE_ORDER)
         .limit(1)
     )
     return (await db.execute(stmt)).scalar_one_or_none()

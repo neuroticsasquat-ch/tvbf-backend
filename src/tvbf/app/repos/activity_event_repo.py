@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import ActivityEvent
-from tvbf.tvmaze.models import Episode
+from tvbf.catalog.models import Episode
 
 
 async def upsert(
@@ -68,7 +68,7 @@ async def delete_episode_events_for_season(
 ) -> int:
     """Delete watched_episode events for this actor whose episode is in the given season."""
     episode_ids_subq = select(Episode.id).where(
-        Episode.show_id == show_id, Episode.season == season_number
+        Episode.show_id == show_id, Episode.season_number == season_number
     )
     result = await session.execute(
         sa_delete(ActivityEvent).where(

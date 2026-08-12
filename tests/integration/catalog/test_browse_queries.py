@@ -1,14 +1,15 @@
 from tests.fixtures.browse.seed import GENRES, seed
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.browse_queries import (
+from tvbf.catalog import models as m
+from tvbf.catalog.browse_queries import (
     get_show_episodes,
     get_show_seasons,
     get_show_with_seasons,
+    hydrate_show_refs,
     list_genres,
     list_networks,
     list_shows,
 )
-from tvbf.tvmaze.schemas import EpisodeOut, ShowFilters
+from tvbf.catalog.schemas import ShowFilters, build_episode_out
 
 
 async def test_list_genres_returns_all_in_name_order(session):
@@ -20,19 +21,19 @@ async def test_list_genres_returns_all_in_name_order(session):
 async def test_list_networks_returns_all_in_name_order(session):
     await seed(session)
     rows = await list_networks(session)
-    assert [n.name for n in rows] == ["Network A", "Network B"]
+    # Three, not two: the former web channel is an ordinary network under TMDB.
+    assert [n.name for n in rows] == ["Network A", "Network B", "Web Channel X"]
 
 
 async def test_get_show_with_seasons_returns_show_and_seasons(session):
     await seed(session)
     result = await get_show_with_seasons(session, 1)
     assert result is not None
-    show, seasons, genres, network, web_channel = result
+    show, seasons, genres, network = result
     assert show.name == "Running Drama"
     assert {g.name for g in genres} == {"Drama", "Crime"}
     assert network is not None and network.name == "Network A"
-    assert web_channel is None
-    assert sorted(s.number for s in seasons) == [1, 2]
+    assert sorted(s.season_number for s in seasons) == [1, 2]
 
 
 async def test_get_show_with_seasons_returns_none_for_unknown_id(session):
@@ -43,7 +44,7 @@ async def test_get_show_with_seasons_returns_none_for_unknown_id(session):
 async def test_get_show_seasons_returns_ordered_list(session):
     await seed(session)
     seasons = await get_show_seasons(session, 1)
-    assert [s.number for s in seasons] == [1, 2]
+    assert [s.season_number for s in seasons] == [1, 2]
 
 
 async def test_get_show_seasons_returns_empty_for_unknown_id(session):
@@ -55,29 +56,37 @@ async def test_get_show_episodes_returns_all_by_default(session):
     await seed(session)
     eps = await get_show_episodes(session, 1, season=None)
     assert len(eps) == 4
-    assert [(e.season, e.number) for e in eps] == [(1, 1), (1, 2), (2, 1), (2, 2)]
+    assert [(e.season_number, e.episode_number) for e in eps] == [(1, 1), (1, 2), (2, 1), (2, 2)]
 
 
 async def test_get_show_episodes_filters_by_season(session):
     await seed(session)
     eps = await get_show_episodes(session, 1, season=2)
     assert len(eps) == 2
-    assert all(e.season == 2 for e in eps)
+    assert all(e.season_number == 2 for e in eps)
 
 
 async def test_get_show_episodes_returns_specials_after_their_season(session):
-    """Specials carry a null `number` (NEU-933). The read path must return them
-    rather than drop or choke on them; Postgres sorts NULLs last on ASC, so a
-    special lands at the end of its own season."""
+    """A TV Maze special carried a null `number` (NEU-933); `catalog.episode`
+    cannot, so NEU-1042's copy numbered it negative within its real season. The
+    read path must still return it *after* the season's real episodes, where the
+    null used to sort — see `catalog/episodes.py`."""
     await seed(session)
-    session.add(m.Episode(id=9001, show_id=1, season=1, number=None, name="Special"))
+    session.add(m.Episode(id=9001, show_id=1, season_number=1, episode_number=-1, name="Special"))
     await session.commit()
 
     eps = await get_show_episodes(session, 1, season=None)
-    assert [(e.season, e.number) for e in eps] == [(1, 1), (1, 2), (1, None), (2, 1), (2, 2)]
+    assert [(e.season_number, e.episode_number) for e in eps] == [
+        (1, 1),
+        (1, 2),
+        (1, -1),
+        (2, 1),
+        (2, 2),
+    ]
 
-    # The public response model tolerates the null number.
-    special = EpisodeOut.model_validate(next(e for e in eps if e.id == 9001))
+    # And the invented number does not reach the payload: `EpisodeOut.number`
+    # was null for these rows before the repoint and stays null after it.
+    special = build_episode_out(next(e for e in eps if e.id == 9001))
     assert special.number is None
 
 
@@ -128,11 +137,11 @@ async def test_list_shows_search_tokens_match_across_punctuation(session):
     """Each whitespace-separated token must appear as a substring of the name.
     'alien earth' must match 'Alien: Earth' even though the colon prevents a
     single-substring match."""
-    from tvbf.tvmaze import models as m
+    from tvbf.catalog import models as m
 
-    session.add(m.Show(id=99001, name="Alien: Earth", tvmaze_updated=1))
-    session.add(m.Show(id=99002, name="Alien Nation", tvmaze_updated=1))
-    session.add(m.Show(id=99003, name="Earthbound", tvmaze_updated=1))
+    session.add(m.Show(id=99001, name="Alien: Earth"))
+    session.add(m.Show(id=99002, name="Alien Nation"))
+    session.add(m.Show(id=99003, name="Earthbound"))
     await session.commit()
 
     rows, _ = await list_shows(
@@ -146,9 +155,9 @@ async def test_list_shows_search_tokens_match_across_punctuation(session):
 
 async def test_list_shows_search_collapses_extra_whitespace(session):
     """Multiple spaces and surrounding whitespace are absorbed by split()."""
-    from tvbf.tvmaze import models as m
+    from tvbf.catalog import models as m
 
-    session.add(m.Show(id=99010, name="The Office", tvmaze_updated=1))
+    session.add(m.Show(id=99010, name="The Office"))
     await session.commit()
 
     rows, _ = await list_shows(
@@ -172,7 +181,7 @@ async def test_list_shows_status_filter(session):
 async def test_list_shows_language_filter(session):
     await seed(session)
     rows, _ = await list_shows(
-        session, ShowFilters(language="Spanish"), sort="name", page=1, per_page=100
+        session, ShowFilters(language="es"), sort="name", page=1, per_page=100
     )
     assert {r.name for r in rows} == {"Spanish Drama"}
 
@@ -264,16 +273,28 @@ async def test_list_shows_sort_last_aired_desc(session):
     Shows with no aired episodes sort last (NULLS LAST)."""
     from datetime import date
 
-    from tvbf.tvmaze import models as m
+    from tvbf.catalog import models as m
 
-    session.add(m.Show(id=88001, name="Old Show", tvmaze_updated=1))
-    session.add(m.Show(id=88002, name="Recent Show", tvmaze_updated=1))
-    session.add(m.Show(id=88003, name="No Episodes Show", tvmaze_updated=1))
+    session.add(m.Show(id=88001, name="Old Show"))
+    session.add(m.Show(id=88002, name="Recent Show"))
+    session.add(m.Show(id=88003, name="No Episodes Show"))
     await session.flush()
-    session.add(m.Episode(id=88001001, show_id=88001, season=1, number=1, airdate=date(2020, 1, 1)))
-    session.add(m.Episode(id=88002001, show_id=88002, season=1, number=1, airdate=date(2024, 6, 1)))
+    session.add(
+        m.Episode(
+            id=88001001, show_id=88001, season_number=1, episode_number=1, air_date=date(2020, 1, 1)
+        )
+    )
+    session.add(
+        m.Episode(
+            id=88002001, show_id=88002, season_number=1, episode_number=1, air_date=date(2024, 6, 1)
+        )
+    )
     # Future episode shouldn't count as "last aired".
-    session.add(m.Episode(id=88002002, show_id=88002, season=1, number=2, airdate=date(2099, 1, 1)))
+    session.add(
+        m.Episode(
+            id=88002002, show_id=88002, season_number=1, episode_number=2, air_date=date(2099, 1, 1)
+        )
+    )
     await session.commit()
 
     rows, _ = await list_shows(
@@ -295,3 +316,63 @@ async def test_list_shows_invalid_sort_raises(session):
         assert "popularity" in str(e)
     else:
         raise AssertionError("expected ValueError")
+
+
+async def test_hydrate_show_refs_returns_empty_maps_for_an_empty_page(session):
+    """The `if not shows` guard: an empty page must not issue queries at all."""
+    assert await hydrate_show_refs(session, []) == ({}, {})
+
+
+# ---------------------------------------------------------------------------
+# Tombstones (ADR-0005). These moved here from the `tvmaze` tombstone module at
+# the repoint: what they pin is a *read-path* rule, and the read path is
+# `catalog` now. The writer that sets `deleted_upstream_at` keeps its own tests
+# on both spines.
+# ---------------------------------------------------------------------------
+
+
+async def _add_show(session, show_id: int, *, deleted: bool = False) -> None:
+    from datetime import UTC, datetime
+
+    session.add(
+        m.Show(
+            id=show_id,
+            tmdb_id=show_id,
+            name=f"Show {show_id}",
+            deleted_upstream_at=datetime.now(UTC) if deleted else None,
+        )
+    )
+    await session.flush()
+
+
+async def test_tombstoned_shows_are_hidden_from_browse_but_reachable_by_id(session):
+    """Decision 3: hidden from discovery, not from someone who already has it."""
+    await _add_show(session, 770)
+    await _add_show(session, 771, deleted=True)
+    await session.commit()
+
+    rows, total = await list_shows(
+        session, ShowFilters(search="Show 77"), sort="name", page=1, per_page=50
+    )
+    ids = {r.id for r in rows}
+    assert 770 in ids
+    assert 771 not in ids, "a tombstoned show must not be discoverable"
+    assert total == len(rows)
+
+    # Still fully serveable by id, so an existing tracker's links keep working.
+    detail = await get_show_with_seasons(session, 771)
+    assert detail is not None
+
+
+async def test_tombstoned_show_detail_route_still_returns_200(session, authed_client):
+    """At the HTTP layer, not just the query layer.
+
+    The query-layer assertion above would keep passing if a filter were added
+    in the router, which is exactly where someone would add one.
+    """
+    await _add_show(session, 780, deleted=True)
+    await session.commit()
+
+    resp = await authed_client.get("/shows/780")
+    assert resp.status_code == 200
+    assert resp.json()["id"] == 780

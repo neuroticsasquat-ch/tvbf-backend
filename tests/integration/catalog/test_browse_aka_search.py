@@ -1,18 +1,18 @@
 import pytest
 from sqlalchemy import insert
 
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.browse_queries import hydrate_matched_aka, list_shows
-from tvbf.tvmaze.schemas import ShowFilters
+from tvbf.catalog import models as m
+from tvbf.catalog.browse_queries import hydrate_matched_aka, list_shows
+from tvbf.catalog.schemas import ShowFilters
 
 
 @pytest.fixture
 async def seeded_shows(session):
     """One Japanese show with English AKAs, one English-titled, one foreign with no AKAs."""
     rows = [
-        m.Show(id=1, name="東京リベンジャーズ", tvmaze_updated=1),
-        m.Show(id=2, name="Severance", tvmaze_updated=1),
-        m.Show(id=3, name="進撃の巨人", tvmaze_updated=1),
+        m.Show(id=1, name="東京リベンジャーズ"),
+        m.Show(id=2, name="Severance"),
+        m.Show(id=3, name="進撃の巨人"),
     ]
     for r in rows:
         session.add(r)
@@ -22,17 +22,13 @@ async def seeded_shows(session):
             [
                 {
                     "show_id": 1,
-                    "name": "Tokyo Revengers",
+                    "title": "Tokyo Revengers",
                     "country_code": "US",
-                    "country_name": "United States",
-                    "language": "en",
                 },
                 {
                     "show_id": 1,
-                    "name": "Tokyo Revengers",
+                    "title": "Tokyo Revengers",
                     "country_code": "GB",
-                    "country_name": "United Kingdom",
-                    "language": "en",
                 },
             ]
         )
@@ -113,14 +109,14 @@ async def test_hydrate_matched_aka_returns_empty_dict_when_no_search(session, se
 
 async def test_hydrate_matched_aka_picks_one_per_show_when_multiple_akas_match(session):
     """When a show has multiple matching AKAs, pick exactly one (deterministic)."""
-    session.add(m.Show(id=42, name="進撃の巨人", tvmaze_updated=1))
+    session.add(m.Show(id=42, name="進撃の巨人"))
     await session.flush()
     await session.execute(
         insert(m.ShowAka).values(
             [
-                {"show_id": 42, "name": "Attack on Titan", "country_code": "US"},
-                {"show_id": 42, "name": "Attack on Titan: Final Season", "country_code": "GB"},
-                {"show_id": 42, "name": "AoT", "country_code": "JP"},
+                {"show_id": 42, "title": "Attack on Titan", "country_code": "US"},
+                {"show_id": 42, "title": "Attack on Titan: Final Season", "country_code": "GB"},
+                {"show_id": 42, "title": "AoT", "country_code": "JP"},
             ]
         )
     )
@@ -137,7 +133,7 @@ async def test_hydrate_matched_aka_picks_one_per_show_when_multiple_akas_match(s
 async def test_hydrate_matched_aka_handles_mixed_page(session, seeded_shows):
     """A page with both name-matchers and AKA-matchers carries matched_aka only on AKA-matchers."""
     # Add another show whose name matches the same token used to find an AKA-matcher.
-    session.add(m.Show(id=99, name="Tokyo Vice", tvmaze_updated=1))
+    session.add(m.Show(id=99, name="Tokyo Vice"))
     await session.commit()
 
     shows, _ = await list_shows(

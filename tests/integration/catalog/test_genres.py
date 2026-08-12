@@ -12,8 +12,7 @@ to prove; it is the reason the empty case below is ordinary rather than exotic.
 
 from tvbf.catalog import genres as q
 from tvbf.catalog import models as m
-from tvbf.tvmaze import models as t
-from tvbf.tvmaze.schemas import GenreOut, build_show_detail, build_show_summary
+from tvbf.catalog.schemas import GenreOut, build_show_detail, build_show_summary
 
 # `GET /genre/tv/list`, read 2026-08-09. The whole published TV vocabulary —
 # the list every value below has to come from, and the seven names shared with
@@ -178,21 +177,17 @@ class TestAShowWithNoGenres:
         """Both response builders take what the queries above return and reach
         a body, with `genres: []` rather than a null or a missing key.
 
-        The show handed to them is a `tvmaze.Show` because they still read
-        `show.language`, which `catalog.show` does not have — that rename is
-        the audit's D1 and repointing the builders is NEU-1047's. What is being
-        pinned here is the genre argument, and it is the same empty list either
-        spine produces.
+        The show is read back out of the session rather than used as
+        constructed: `is_ended` is a generated column, and `ShowDetail.ended`
+        reads it.
         """
         unmatched = await _show(session, "Never matched", tmdb_id=None)
+        await session.refresh(unmatched)
         by_show = await q.genres_by_show(session, [unmatched.id])
-        # `tvmaze_updated` is the one required field with no null: a TV Maze
-        # artefact `ShowDetail` still carries, and NEU-1047's to resolve.
-        renderable = t.Show(id=unmatched.id, name="Never matched", tvmaze_updated=0)
 
-        summary = build_show_summary(renderable, by_show[unmatched.id], None, None)
+        summary = build_show_summary(unmatched, by_show[unmatched.id], None)
         detail = build_show_detail(
-            renderable, [], await q.genres_for_show(session, unmatched.id), None, None
+            unmatched, [], await q.genres_for_show(session, unmatched.id), None
         )
 
         assert summary.genres == []

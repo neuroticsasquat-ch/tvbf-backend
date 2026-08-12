@@ -8,7 +8,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import UserShowWatch
-from tvbf.tvmaze.models import Show
+from tvbf.catalog.models import Show
 
 
 async def add(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:

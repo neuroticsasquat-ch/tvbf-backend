@@ -7,17 +7,16 @@ service-layer execution that coverage can trace.
 
 import pytest
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.errors import NotFound
 from tvbf.app.services import episode_service
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 async def _seed_show(
     session, *, show_id: int, episodes_per_season: dict[int, int] | None = None
 ) -> Show:
     """Seed a show with episodes. By default 3 episodes in season 1."""
-    show = Show(id=show_id, name=f"Show{show_id}", tvmaze_updated=1)
+    show = Show(id=show_id, name=f"Show{show_id}")
     session.add(show)
     await session.flush()
     seasons = episodes_per_season or {1: 3}
@@ -25,9 +24,8 @@ async def _seed_show(
     for season, count in seasons.items():
         for n in range(1, count + 1):
             ep_id += 1
-            session.add(Episode(id=ep_id, show_id=show.id, season=season, number=n))
+            session.add(Episode(id=ep_id, show_id=show.id, season_number=season, episode_number=n))
     await session.flush()
-    await mirror_spine(session)
     return show
 
 

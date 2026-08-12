@@ -11,12 +11,12 @@ from httpx import ASGITransport, AsyncClient
 from tvbf.app.models import ActivityEvent
 from tvbf.app.services import connection_service
 from tvbf.app.services.feed_service import encode_cursor
+from tvbf.catalog.models import Episode, Show
 from tvbf.main import app
-from tvbf.tvmaze.models import Episode, Show
 
 
 async def _seed_show(session, *, show_id: int, episodes_per_season=(2,)) -> Show:
-    show = Show(id=show_id, name=f"Show-{show_id}", tvmaze_updated=1, status="Ended")
+    show = Show(id=show_id, name=f"Show-{show_id}", status="Ended")
     session.add(show)
     await session.flush()
     today = date.today()
@@ -26,10 +26,10 @@ async def _seed_show(session, *, show_id: int, episodes_per_season=(2,)) -> Show
                 Episode(
                     id=show_id * 100 + season_idx * 10 + ep_num,
                     show_id=show.id,
-                    season=season_idx,
-                    number=ep_num,
+                    season_number=season_idx,
+                    episode_number=ep_num,
                     name=f"S{season_idx}E{ep_num}",
-                    airdate=today - timedelta(days=10),
+                    air_date=today - timedelta(days=10),
                 )
             )
     await session.flush()
