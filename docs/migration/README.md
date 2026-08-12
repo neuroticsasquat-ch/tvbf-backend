@@ -32,10 +32,10 @@ pointing at unmapped rows.
 | Full catalog ingest (NEU-1034) | `task ingest:catalog` | after copy + enrichment | ✅ 2026-08-10 → 2026-08-11 — 228,723 shows |
 | Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
 | Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ✅ 2026-08-11 — 26,141 shows deleted over 262 batches, taking 47,443 seasons and 840,169 episodes. `catalog.show` 255,010 → 228,869; 2 unmatched rows kept. Needed the `ix_show_*_episode_to_air_id` indexes first (see below) |
-| User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ unblocked once the repoint deploys — the FK moves to `catalog.show` |
+| User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ unblocked 2026-08-12 — NEU-1046 deployed and the FK now points at `catalog.show` |
 | Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
-| `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ⬜ not deployed — run the pre-flight anti-join below first |
-| Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ⬜ built, not run — 1,908,478 re-pointable, of which 6,948 carry user history; 189 user-touched episodes have no TMDB counterpart and keep their copies. Run `task repoint:episodes:report` first |
+| `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ✅ 2026-08-12 — all five constraints on `catalog`, `ON DELETE` unchanged, verified by `pg_get_constraintdef` |
+| Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
 
 ## Deleting episodes needs two indexes that did not exist
 
@@ -668,6 +668,40 @@ mapped zero of them while spending ~62,000 TMDB requests.
 and absent from `tvmaze.episode`, so the update would be rejected against the old
 constraint. And it has to land before the read paths move, or the duplicated grain
 is visible to users on every show and season page.
+
+### The production run (2026-08-12)
+
+Ran clean, and every figure came out where the pre-flight report said it would.
+
+| | |
+| -- | -- |
+| copied episodes deleted | 1,908,378 over 382 batches, ~7 minutes |
+| watches / ratings / activity events re-pointed | 8,387 / 77 / 364 |
+| blocked by collision | **0** |
+| user-touched episodes now on ingested rows | 6,948 |
+| user rows still on copied episodes | 189 — the no-counterpart residue, kept by design |
+| copied episodes remaining | 782,161 = 781,266 + 889 + 6, exactly the report's three kept buckets |
+| orphaned `app.activity_event` rows | **0** — the polymorphic site with no foreign key, which is the one that would have failed silently |
+| total episode watches | 8,578 before and after |
+
+`reconcile verify --spine catalog` returned **"nothing moved"** against a snapshot
+captured immediately before the pass.
+
+**That snapshot, not the committed baseline, is the instrument — and the reason is
+worth recording.** `docs/migration/reconciliation-baseline.json` was captured
+2026-08-11 and production had since gained 9 episode watches and 9 activity events:
+a real user marked *Arrested Development* 1x16–2x2 watched at 02:01 on 2026-08-12.
+Verifying against it would have failed on a gain that has nothing to do with this
+pass, and the harness fails as loudly on gains as on losses by design. **The
+committed baseline needs re-capturing before NEU-1125 can use it as the cutover
+gate** — that ticket's whole premise is a baseline that matches.
+
+A `--limit 100` smoke run preceded the full pass, per the section below: it deleted
+100, moved `repointable` from 1,908,478 to exactly 1,908,378, and reconciled clean.
+
+**Re-run the report after a large delete only once `ANALYZE` has caught up.** The
+pass leaves ~1.9M dead tuples and the report's whole-table aggregates slow to
+minutes until statistics refresh; `ANALYZE catalog.episode` fixes it.
 
 ### Run the report first
 
