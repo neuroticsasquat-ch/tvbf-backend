@@ -23,6 +23,7 @@ import httpx
 import respx
 from sqlalchemy import func, select
 
+from tests.fixtures.spines import without_catalog_fk
 from tests.fixtures.tmdb.series_factory import (
     make_episode,
     make_season_detail,
@@ -505,10 +506,11 @@ async def test_a_watch_the_copy_never_mirrored_is_reported_loudly(session, make_
     episode_id = _next_id()
     session.add(MazeEpisode(id=episode_id, show_id=show_id, season=2, number=1))
     await session.flush()
-    session.add(UserEpisodeWatch(user_id=user.id, episode_id=episode_id))
-    await session.commit()
+    async with without_catalog_fk(session, "user_episode_watch"):
+        session.add(UserEpisodeWatch(user_id=user.id, episode_id=episode_id))
+        await session.commit()
 
-    report = await build_report(session)
+        report = await build_report(session)
 
     assert {"episode_id": episode_id, "watches": 1} in report.unmirrored_watches
     assert report.totals["unmirrored_watched_episodes"] >= 1

@@ -7,6 +7,7 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import (
     UserEpisodeRating,
     UserEpisodeWatch,
@@ -35,6 +36,7 @@ async def _seed_show(
     )
     session.add(show)
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -58,6 +60,7 @@ async def _seed_episode(
     )
     session.add(ep)
     await session.flush()
+    await mirror_spine(session)
     return ep
 
 

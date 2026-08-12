@@ -13,6 +13,7 @@ from datetime import date
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.tvmaze import models as m
 
 NETWORK_A_ID = 1
@@ -186,4 +187,5 @@ async def seed(session: AsyncSession) -> None:
                     )
                 )
 
+    await mirror_spine(session)
     await session.commit()

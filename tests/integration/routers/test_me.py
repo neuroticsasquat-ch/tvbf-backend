@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import User
 from tvbf.app.schemas import AccountDeleteRequest
 from tvbf.app.services import my_shows_service  # noqa: F401 — used implicitly
@@ -29,6 +30,7 @@ async def _seed_show(session, *, show_id: int, name: str = "S", episodes: int = 
     for i in range(1, episodes + 1):
         session.add(Episode(id=show_id * 100 + i, show_id=show.id, season=1, number=i))
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -42,6 +44,7 @@ async def _seed_show_with_seasons(session, *, show_id: int, seasons: dict[int, i
             ep_id += 1
             session.add(Episode(id=ep_id, show_id=show.id, season=season, number=n))
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -485,6 +488,7 @@ async def test_watch_next_route_accepts_today_param(session, make_user):
         )
     )
     await session.flush()
+    await mirror_spine(session)
     await me_router.add_show_route(show_id=show.id, user=user, db=session)
 
     rows = await me_router.watch_next_route(

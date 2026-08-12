@@ -119,7 +119,7 @@ class UserShowWatch(Base):
     )
     show_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("tvmaze.show.id", ondelete="CASCADE"),
+        ForeignKey("catalog.show.id", ondelete="CASCADE", name="fk_usw_show"),
         nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
@@ -147,7 +147,7 @@ class UserEpisodeWatch(Base):
     )
     episode_id: Mapped[int] = mapped_column(
         Integer,
-        ForeignKey("tvmaze.episode.id", ondelete="CASCADE"),
+        ForeignKey("catalog.episode.id", ondelete="CASCADE", name="fk_uew_episode"),
         nullable=False,
     )
     watched_at: Mapped[datetime] = mapped_column(
@@ -255,7 +255,7 @@ class UserShowRating(Base):
     )
     show_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("tvmaze.show.id", ondelete="CASCADE"),
+        ForeignKey("catalog.show.id", ondelete="CASCADE", name="fk_user_show_rating_show"),
         nullable=False,
     )
     stars: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)
@@ -289,7 +289,11 @@ class UserEpisodeRating(Base):
     )
     episode_id: Mapped[int] = mapped_column(
         BigInteger,
-        ForeignKey("tvmaze.episode.id", ondelete="CASCADE"),
+        ForeignKey(
+            "catalog.episode.id",
+            ondelete="CASCADE",
+            name="fk_user_episode_rating_episode",
+        ),
         nullable=False,
     )
     stars: Mapped[Decimal] = mapped_column(Numeric(2, 1), nullable=False)

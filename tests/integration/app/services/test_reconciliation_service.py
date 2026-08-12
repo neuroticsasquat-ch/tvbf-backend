@@ -6,6 +6,7 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import (
     ActivityEvent,
     UserEpisodeRating,
@@ -22,6 +23,7 @@ async def _seed_show(session, *, show_id: int, name: str = "Recon Show") -> Show
     show = Show(id=show_id, name=name, tvmaze_updated=1)
     session.add(show)
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -29,6 +31,7 @@ async def _seed_episode(session, *, show_id: int, episode_id: int, number: int =
     ep = Episode(id=episode_id, show_id=show_id, season=1, number=number)
     session.add(ep)
     await session.flush()
+    await mirror_spine(session)
     return ep
 
 
@@ -234,19 +237,22 @@ async def test_a_watch_whose_episode_vanished_lands_in_the_null_show_bucket(sess
     await session.commit()
 
     # Drop the episode out from under the watch, leaving the app row orphaned.
-    # The constraint name differs between the migration-built schema and the
-    # `create_all` one this suite uses, so look it up rather than hardcode it.
+    # The constraint references `catalog` since NEU-1046; the episode has to go
+    # from both spines, because the snapshot is taken against `tvmaze` and an
+    # episode still standing there would land the watch in its own show bucket
+    # rather than the null one this test is about.
     fk_name = (
         await session.execute(
             text(
                 "SELECT conname FROM pg_constraint "
                 "WHERE conrelid = 'app.user_episode_watch'::regclass AND contype = 'f' "
-                "AND confrelid = 'tvmaze.episode'::regclass"
+                "AND confrelid = 'catalog.episode'::regclass"
             )
         )
     ).scalar_one()
     await session.execute(text(f"ALTER TABLE app.user_episode_watch DROP CONSTRAINT {fk_name}"))
     await session.execute(text("DELETE FROM tvmaze.episode WHERE id = :e"), {"e": ep.id})
+    await session.execute(text("DELETE FROM catalog.episode WHERE id = :e"), {"e": ep.id})
     await session.commit()
     try:
         snapshot = await rs.build_snapshot(session)
@@ -274,7 +280,7 @@ async def test_a_watch_whose_episode_vanished_lands_in_the_null_show_bucket(sess
         await session.execute(
             text(
                 f"ALTER TABLE app.user_episode_watch ADD CONSTRAINT {fk_name} "
-                "FOREIGN KEY (episode_id) REFERENCES tvmaze.episode(id) ON DELETE CASCADE"
+                "FOREIGN KEY (episode_id) REFERENCES catalog.episode(id) ON DELETE CASCADE"
             )
         )
         await session.commit()

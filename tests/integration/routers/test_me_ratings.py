@@ -2,6 +2,7 @@
 
 import pytest
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.tvmaze.models import Episode, Show
 
 
@@ -9,6 +10,7 @@ async def _seed_show(session, *, show_id: int = 8810001) -> Show:
     show = Show(id=show_id, name="ShowR", tvmaze_updated=1, status="Ended")
     session.add(show)
     await session.flush()
+    await mirror_spine(session)
     return show
 
 
@@ -16,6 +18,7 @@ async def _seed_episode(session, *, show_id: int, episode_id: int) -> Episode:
     ep = Episode(id=episode_id, show_id=show_id, season=1, number=1)
     session.add(ep)
     await session.flush()
+    await mirror_spine(session)
     return ep
 
 

@@ -8,6 +8,7 @@ from uuid import uuid4
 import pytest
 from httpx import ASGITransport, AsyncClient
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import ActivityEvent, UserShowWatch
 from tvbf.app.services import connection_service
 from tvbf.main import app
@@ -30,6 +31,7 @@ async def _seed_show(session, *, show_id: int, episodes: int = 1) -> Show:
             )
         )
     await session.flush()
+    await mirror_spine(session)
     return show
 
 

@@ -7,6 +7,7 @@ service-layer execution that coverage can trace.
 
 import pytest
 
+from tests.fixtures.spines import mirror_spine
 from tvbf.app.errors import NotFound
 from tvbf.app.services import episode_service
 from tvbf.tvmaze.models import Episode, Show
@@ -26,6 +27,7 @@ async def _seed_show(
             ep_id += 1
             session.add(Episode(id=ep_id, show_id=show.id, season=season, number=n))
     await session.flush()
+    await mirror_spine(session)
     return show
 
 

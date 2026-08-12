@@ -10,6 +10,7 @@ from fastapi import HTTPException
 from httpx import ASGITransport
 
 from tests.fixtures.browse.seed import GENRES, seed
+from tests.fixtures.spines import mirror_spine
 from tvbf.main import app
 from tvbf.routers import browse as browse_router
 
@@ -382,6 +383,7 @@ async def test_list_shows_hydrates_my_rating_for_caller(authed_client, session):
     session.add(Show(id=77001, name="RatedShow1", tvmaze_updated=1))
     session.add(Show(id=77002, name="RatedShow2", tvmaze_updated=1))
     await session.flush()
+    await mirror_spine(session)
     await show_rating_repo.upsert(
         session, user_id=authed_client.user.id, show_id=77001, stars=Decimal("4.5")
     )
@@ -402,6 +404,7 @@ async def test_get_show_detail_hydrates_my_rating(authed_client, session):
 
     session.add(Show(id=77003, name="RatedShow3", tvmaze_updated=1))
     await session.flush()
+    await mirror_spine(session)
     await show_rating_repo.upsert(
         session, user_id=authed_client.user.id, show_id=77003, stars=Decimal("3.0")
     )
@@ -422,6 +425,7 @@ async def test_get_episode_hydrates_my_rating(authed_client, session):
     await session.flush()
     session.add(Episode(id=77004001, show_id=77004, season=1, number=1))
     await session.flush()
+    await mirror_spine(session)
     await episode_rating_repo.upsert(
         session, user_id=authed_client.user.id, episode_id=77004001, stars=Decimal("4.0")
     )
@@ -443,6 +447,7 @@ async def test_get_show_episodes_list_hydrates_my_rating(authed_client, session)
     session.add(Episode(id=77005001, show_id=77005, season=1, number=1))
     session.add(Episode(id=77005002, show_id=77005, season=1, number=2))
     await session.flush()
+    await mirror_spine(session)
     await episode_rating_repo.upsert(
         session, user_id=authed_client.user.id, episode_id=77005001, stars=Decimal("2.5")
     )

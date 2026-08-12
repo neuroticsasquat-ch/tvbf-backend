@@ -32,8 +32,9 @@ pointing at unmapped rows.
 | Full catalog ingest (NEU-1034) | `task ingest:catalog` | after copy + enrichment | ✅ 2026-08-10 → 2026-08-11 — 228,723 shows |
 | Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
 | Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ✅ 2026-08-11 — 26,141 shows deleted over 262 batches, taking 47,443 seasons and 840,169 episodes. `catalog.show` 255,010 → 228,869; 2 unmatched rows kept. Needed the `ix_show_*_episode_to_air_id` indexes first (see below) |
-| User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ blocked — the FK still points at `tvmaze.show` |
+| User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ unblocked once the repoint deploys — the FK moves to `catalog.show` |
 | Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
+| `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ⬜ not deployed — run the pre-flight anti-join below first |
 | Episode-grain re-point (NEU-1126) | `task` TBD | **after NEU-1046**, before NEU-1047 | ⬜ not built — 2,690,633 copied episodes still duplicate the ingested ones, and all 7,137 watched-or-rated episodes point at the copies |
 
 ## Deleting episodes needs two indexes that did not exist
@@ -555,3 +556,95 @@ invisible to everything except a gate that asks the database.
 The Russian bucket is the long tail ADR-0007 flagged without measuring, now
 measured. It is NEU-1066's accepted cost rather than a regression — the point of
 committing the artifact is that the *next* run can tell those apart.
+
+## Repointing `app` onto `catalog` (NEU-1046)
+
+The cutover's load-bearing DDL, and the shortest pass in the project: five
+`ALTER TABLE`s, no row rewritten. `app.user_show_watch.show_id`,
+`app.user_show_rating.show_id` and `import_ne.show_resolution.show_id` move from
+`tvmaze.show.id` to `catalog.show.id`; `app.user_episode_watch.episode_id` and
+`app.user_episode_rating.episode_id` move from `tvmaze.episode.id` to
+`catalog.episode.id`. Every `ON DELETE` behaviour is carried across verbatim.
+
+It is **a migration, not a task** — `b6d24f0ac715`, applied by the `alembic
+upgrade head` the container's `CMD` runs on start. There is nothing to trigger
+and nothing to poll; deploying is running it.
+
+### That means a failed assertion keeps the container down
+
+The migration anti-joins each column before touching it and raises with the
+count if anything does not resolve. That is deliberate — the `ALTER TABLE` would
+fail anyway, but naming one row mid-window tells an operator neither the scale
+nor the fix. The cost is that the failure lands on `alembic upgrade head`, and
+`CMD` is `alembic upgrade head && exec uvicorn …`, so the app does not come up.
+
+The window that could produce one is real but narrow: the TV Maze daily keeps
+adding episodes until NEU-1050, and a user can watch one the copy never
+mirrored. **So check immediately before deploying, not only at the go/no-go:**
+
+```bash
+# production — the same anti-join the migration runs, minus the raise
+ssh "$PROD_SSH" 'docker exec -i <pg> psql -U root -d tvbf -tAc "
+  SELECT '\''user_show_watch'\'', count(*) FROM app.user_show_watch w
+    LEFT JOIN catalog.show s ON s.id = w.show_id WHERE s.id IS NULL
+  UNION ALL SELECT '\''user_show_rating'\'', count(*) FROM app.user_show_rating r
+    LEFT JOIN catalog.show s ON s.id = r.show_id WHERE s.id IS NULL
+  UNION ALL SELECT '\''user_episode_watch'\'', count(*) FROM app.user_episode_watch w
+    LEFT JOIN catalog.episode e ON e.id = w.episode_id WHERE e.id IS NULL
+  UNION ALL SELECT '\''user_episode_rating'\'', count(*) FROM app.user_episode_rating r
+    LEFT JOIN catalog.episode e ON e.id = r.episode_id WHERE e.id IS NULL
+  UNION ALL SELECT '\''show_resolution'\'', count(*) FROM import_ne.show_resolution x
+    LEFT JOIN catalog.show s ON s.id = x.show_id
+    WHERE x.show_id IS NOT NULL AND s.id IS NULL;"'
+```
+
+All five zero → deploy. Any of them non-zero → `task copy:catalog` first; it is
+idempotent, it takes 44s, and filling the missing rows is exactly what it does.
+`task gate:coverage` asks the same question as its `fk_targets_resolve`
+criterion, so a fresh **GO** is equally good evidence.
+
+### Verifying afterwards
+
+The acceptance criterion is that the definitions differ in nothing but the
+schema, so read them rather than trusting the migration:
+
+```bash
+docker exec -i <pg> psql -U root -d tvbf -tAc "
+  SELECT n.nspname||'.'||t.relname||' | '||c.conname||' | '||pg_get_constraintdef(c.oid)
+  FROM pg_constraint c
+  JOIN pg_class t ON t.oid = c.conrelid
+  JOIN pg_namespace n ON n.oid = t.relnamespace
+  WHERE c.contype = 'f' AND n.nspname IN ('app','import_ne')
+    AND c.conname IN ('fk_usw_show','fk_user_show_rating_show','fk_uew_episode',
+                      'fk_user_episode_rating_episode','show_resolution_show_id_fkey')
+  ORDER BY 1;"
+```
+
+Expected, and verified against a dev database either side of an
+`upgrade`/`downgrade`/`upgrade` round trip:
+
+```
+app.user_episode_rating | fk_user_episode_rating_episode | FOREIGN KEY (episode_id) REFERENCES catalog.episode(id) ON DELETE CASCADE
+app.user_episode_watch  | fk_uew_episode                 | FOREIGN KEY (episode_id) REFERENCES catalog.episode(id) ON DELETE CASCADE
+app.user_show_rating    | fk_user_show_rating_show       | FOREIGN KEY (show_id) REFERENCES catalog.show(id) ON DELETE CASCADE
+app.user_show_watch     | fk_usw_show                    | FOREIGN KEY (show_id) REFERENCES catalog.show(id) ON DELETE CASCADE
+import_ne.show_resolution | show_resolution_show_id_fkey | FOREIGN KEY (show_id) REFERENCES catalog.show(id)
+```
+
+The reconciliation re-run that proves nobody lost anything is **NEU-1125's**,
+not this migration's — it is the acceptance test for the whole window rather
+than for one `ALTER TABLE`, and it wants to run once the repoint and NEU-1126's
+episode-grain re-point have both landed.
+
+### Reverting
+
+`alembic downgrade -1` puts all five back on `tvmaze`, with the same assertion
+run against that spine first. It is reversible only while `tvmaze` still stands,
+which it does: dropping it is NEU-1050's, deliberately separate and later, and
+that gap is what leaves the old mirror as a recovery path.
+
+### What this unblocks
+
+`neu-1066-user-touched-remediation.sql` was blocked on the FK pointing at
+`tvmaze.show`; it can run once this has. NEU-1126's episode-grain re-point and
+NEU-1047's read-path switch both sit behind it too.
