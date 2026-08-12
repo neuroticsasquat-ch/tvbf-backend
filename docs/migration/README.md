@@ -33,6 +33,7 @@ pointing at unmapped rows.
 | Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
 | Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ✅ 2026-08-11 — 26,141 shows deleted over 262 batches, taking 47,443 seasons and 840,169 episodes. `catalog.show` 255,010 → 228,869; 2 unmatched rows kept. Needed the `ix_show_*_episode_to_air_id` indexes first (see below) |
 | User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ blocked — the FK still points at `tvmaze.show` |
+| Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ⬜ not yet run — writes nothing, so run it as often as it takes to reach a go |
 | Episode-grain re-point (NEU-1126) | `task` TBD | **after NEU-1046**, before NEU-1047 | ⬜ not built — 2,690,633 copied episodes still duplicate the ingested ones, and all 7,137 watched-or-rated episodes point at the copies |
 
 ## Deleting episodes needs two indexes that did not exist
@@ -419,3 +420,93 @@ that no title comparison will ever pair, which is why the two kept rows are
 enumerated above by hand rather than left for the query to find. Read an empty
 `still_doubled` as "no title-identical duplicate remains", not as "the show grain
 is clean".
+
+## Pre-cutover go/no-go (NEU-1048)
+
+The last check before the window opens, and the only one that runs while there
+is still nothing to undo. `task gate:coverage` writes one JSON artifact to
+stdout and **exits 0 on a go, 1 on a no-go, 2 if it could not run** — the third
+kept separate because a crashed gate must never be filed as a considered
+verdict.
+
+It writes nothing. Reading is the whole job, so run it as often as it takes to
+get to a go.
+
+### The no-go criteria
+
+**Fixed before the report was first run**, which is the point of writing them
+down here rather than deciding them once the numbers are in. Each is a way the
+cutover breaks user data; any one failing is a no-go.
+
+| # | Criterion | Why it is a no-go |
+| -- | -- | -- |
+| 1 | `fk_targets_resolve` | Every id in the five columns NEU-1046 repoints resolves against `catalog`. This is the precondition that ticket's `ALTER TABLE` enforces anyway — asked here while a dangling id is still a report line rather than a migration that failed halfway through the window. `import_ne.show_resolution` is checked only when the schema exists, and its absence is reported as such: *"no dangling rows"* and *"did not look"* are the two answers a gate must never conflate |
+| 2 | `user_touched_shows_present` | Every show a user has touched has a `catalog.show` row. Distinct from criterion 1 because `app.activity_event` is polymorphic with **no foreign key at all** — it neither blocks nor cascades, it silently orphans, so no `ALTER TABLE` would ever catch it |
+| 3 | `user_touched_shows_resolved` | Every show a user has touched carries a `tmdb_id`, or a `match_method = 'human'` ruling that TMDB has no counterpart, or is on the enumerated exception list below. This is NEU-1044's acceptance criterion, asked one last time |
+| 4 | `ingest_present` | At least 150,000 shows carry `tmdb_synced_at`. Same floor and same device as `show_prune`'s `IngestNotRun` guard and the tombstone's plausibility check — under it, every measurement in the artifact is about a half-built catalog |
+
+### The two accepted exceptions
+
+`ACCEPTED_UNRESOLVED` exempts catalog ids **87519** (*Discretion*) and **63900**
+(*Cunk on Earth*) from criterion 3. Both are enumerated above under the
+show-grain prune, both are duplicates rather than locally-authored rows, and
+both are resolved by `neu-1066-user-touched-remediation.sql` — which cannot run
+until NEU-1046 has repointed the foreign keys, i.e. until *after* this gate.
+Without the exemption a known, sequenced remediation would read as a fresh
+discovery and the gate could never pass.
+
+The list is an exemption, never an assertion: a row that stops needing exempting
+simply stops appearing, and **a user-touched row that is not on it is a no-go.**
+That is where the teeth are.
+
+### Coverage is measured, not gated
+
+The language and era breakdown answers the one risk ADR-0007 accepted without
+measuring — *"228,611 > 88,971 is a count, not a guarantee TMDB holds our 4,536
+Russian and 3,243 Chinese entries"* — and the answer is now known to be **no**.
+NEU-1066's prune deliberately dropped 26,141 unmatched copied shows, 4,898
+Russian and 2,326 Chinese among them, on the rule that *the catalog is TMDB plus
+the shows users have history on*. So a breadth threshold here would fail by
+construction against a decision the project has already taken and merged, and
+the project spec says as much in one line: *"a catalog comparison … catches a
+long-tail regression before the window. It is a safety check, not a decision
+gate — the decision is made."*
+
+Each bucket splits its TV Maze shows three ways, and only the third is a genuine
+loss:
+
+* **carried** — a `catalog.show` row still stands under the preserved TV Maze id,
+  so `/shows/:id` resolves and every `app` row pointing at it survives NEU-1046.
+* **dropped, with a title twin** — the copy is gone but a `tmdb_id`-bearing row
+  carries the same folded title. The show is in the catalog under a different id.
+* **dropped, without a title twin** — nothing shares the title. This is breadth
+  TMDB does not appear to hold, and `absent_pct` is its share of the bucket.
+
+A bucket over 500 shows that is more than 50% absent is flagged `advisory` and
+warned about on stderr. Advisory means advisory — it does not fail the run.
+
+**The artifact is the regression check.** The JSON is deterministic (buckets
+ordered by name, keys sorted), so two runs of an unchanged database are
+byte-identical and `git diff` over a saved copy is what shows a bucket getting
+*worse*. A bucket that is thin today is the accepted cost; a bucket that is
+thinner than last run is the regression this exists to catch.
+
+One limit, inherited from `show_prune`: the twin test is exact folded-title
+equality, so it cannot see a grain mismatch — "Cunk on Earth" against TMDB's
+"Cunk on…" counts as absent. That biases the measurement toward over-reporting
+loss, which is the right direction for a safety check.
+
+### Running it
+
+```bash
+task gate:coverage                       # go/no-go + the artifact on stdout
+
+# production — the run that actually matters
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.coverage_gate' \
+  > /tmp/gate.json; echo "verdict exit: $?"
+```
+
+Run it **before NEU-1046 and before NEU-1051**. The denominator is `tvmaze.show`
+— the 88,971 rows the migration started from — which is only readable while that
+schema still stands.
