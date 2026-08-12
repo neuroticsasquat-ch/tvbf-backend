@@ -6,17 +6,23 @@ direction** (unmark-show leaving orphan rows, an episode page 404ing a special).
 Explicit-at-each-site fails loudly instead, but only if something notices the
 site that forgot. This file is that something.
 
-`LEDGER` names every public function in `episode_repo` and `episode_watch_repo`
-and the treatment it owes. `test_every_query_has_a_ledger_row` fails the moment
-a thirteenth query is added without one; the behavioural tests below then hold
-each treatment to what it claims, against a fixture show carrying all three
-shapes at once.
+`LEDGER` names every public function in the four modules that read
+`catalog.episode` on a user's behalf — `episode_repo`, `episode_watch_repo`,
+`season_repo` and `activity_event_repo` — and the treatment each owes.
+`test_every_query_has_a_ledger_row` fails the moment one is added without a row;
+the behavioural tests below then hold each treatment to what it claims, against
+a fixture show carrying all three shapes at once.
+
+The last two modules are in scope because the acceptance criterion says *every*
+episode-reading query, not every query in the two obvious repos — and the
+activity-event pair is where the subtlest failure lived: a collapse wider than
+the mark it substitutes for silently deletes a special's feed item.
 """
 
 import inspect
 from datetime import date, datetime, timedelta
 
-from tvbf.app.repos import episode_repo, episode_watch_repo
+from tvbf.app.repos import activity_event_repo, episode_repo, episode_watch_repo, season_repo
 from tvbf.catalog.models import Episode, Show
 
 # --- the ledger -------------------------------------------------------------
@@ -29,6 +35,10 @@ EXCLUDE_COPIED = "exclude copied only"
 
 EXCLUDE_NOTHING = "exclude nothing"
 """Deliberately unfiltered; each one has a reason in its docstring."""
+
+EXCLUDE_SPECIALS_SEASON = "exclude the specials season"
+"""Season-grain: season 0 is dropped whole, because it is not a season a show
+can be waiting for."""
 
 BY_EXPLICIT_IDS = "not episode-scoped"
 """Writers and lookups the caller hands ids to — they filter nothing because
@@ -62,6 +72,14 @@ LEDGER: dict[str, str] = {
     "episode_watch_repo.bulk_unmark": BY_EXPLICIT_IDS,
     "episode_watch_repo.watched_in": BY_EXPLICIT_IDS,
     "episode_watch_repo.user_ids_who_watched_episode": BY_EXPLICIT_IDS,
+    # season_repo
+    "season_repo.unaired_for_shows": EXCLUDE_SPECIALS_SEASON,
+    # activity_event_repo — the collapse must never be wider than the mark it
+    # substitutes for, or a special's feed item vanishes while its watch stands.
+    "activity_event_repo.delete_episode_events_for_season": EXCLUDE_COPIED,
+    "activity_event_repo.delete_episode_and_season_events_for_show": EXCLUDE_BOTH,
+    "activity_event_repo.upsert": BY_EXPLICIT_IDS,
+    "activity_event_repo.delete": BY_EXPLICIT_IDS,
 }
 
 
@@ -79,7 +97,12 @@ def _public_functions(module) -> set[str]:
 def test_every_query_has_a_ledger_row():
     """The tripwire. A query added to either repo with no row here is the
     signal that somebody made a specials decision without recording it."""
-    actual = _public_functions(episode_repo) | _public_functions(episode_watch_repo)
+    actual = set().union(
+        *(
+            _public_functions(m)
+            for m in (episode_repo, episode_watch_repo, season_repo, activity_event_repo)
+        )
+    )
     assert actual == set(LEDGER), {
         "missing from the ledger": sorted(actual - set(LEDGER)),
         "in the ledger but gone from the repos": sorted(set(LEDGER) - actual),

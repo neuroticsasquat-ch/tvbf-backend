@@ -336,6 +336,78 @@ async def test_a_watched_special_still_reads_as_watched_on_the_show_page(session
 
 
 # ---------------------------------------------------------------------------
+# The friend feed keeps a special's event (§5)
+# ---------------------------------------------------------------------------
+
+
+async def _watched_episode_targets(session, user_id) -> set[int]:
+    from sqlalchemy import select
+
+    from tvbf.app.models import ActivityEvent
+
+    rows = (
+        await session.execute(
+            select(ActivityEvent.target_id).where(
+                ActivityEvent.actor_id == user_id,
+                ActivityEvent.verb == "watched_episode",
+            )
+        )
+    ).scalars()
+    return set(rows)
+
+
+async def test_marking_a_season_does_not_delete_a_specials_feed_event(session, make_user):
+    """The collapse must never be wider than the mark it substitutes for.
+
+    Marking a season replaces its per-episode feed items with one
+    `watched_season` event. Since the mark no longer covers the copied special
+    hanging inside that season, collapsing that special's event would delete the
+    feed item while its watch row stands — and the `watched_season` event
+    standing in for it never covered that episode.
+    """
+    user = await make_user()
+    show = await _seed(session, show_id=964_600)
+    copied = next(e for e in await _episodes(session, show.id) if e.episode_number < 0)
+    await episode_service.mark_episode(session, user_id=user.id, episode_id=copied.id)
+    assert await _watched_episode_targets(session, user.id) == {copied.id}
+
+    await episode_service.bulk_mark_season(
+        session, user_id=user.id, show_id=show.id, season_number=1
+    )
+
+    assert await _watched_episode_targets(session, user.id) == {copied.id}
+
+
+async def test_marking_a_show_does_not_delete_a_specials_feed_event(session, make_user):
+    """The same rule one grain up: bulk-marking a show marks no special, so its
+    `watched_show` event cannot stand in for one."""
+    user = await make_user()
+    show = await _seed(session, show_id=964_601)
+    specials = _special_ids(await _episodes(session, show.id))
+    for ep_id in specials:
+        await episode_service.mark_episode(session, user_id=user.id, episode_id=ep_id)
+
+    await episode_service.bulk_mark_show(session, user_id=user.id, show_id=show.id)
+
+    assert await _watched_episode_targets(session, user.id) == set(specials)
+
+
+async def test_marking_the_specials_season_still_collapses_its_own_events(session, make_user):
+    """Season 0 *is* fully marked, so its per-episode events are collapsed into
+    the `watched_season` event exactly as any regular season's are."""
+    user = await make_user()
+    show = await _seed(session, show_id=964_602)
+    native = [e for e in await _episodes(session, show.id) if e.season_number == 0]
+    await episode_service.mark_episode(session, user_id=user.id, episode_id=native[0].id)
+
+    await episode_service.bulk_mark_season(
+        session, user_id=user.id, show_id=show.id, season_number=0
+    )
+
+    assert await _watched_episode_targets(session, user.id) == set()
+
+
+# ---------------------------------------------------------------------------
 # A show with no regular episodes
 # ---------------------------------------------------------------------------
 
