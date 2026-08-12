@@ -669,6 +669,27 @@ and absent from `tvmaze.episode`, so the update would be rejected against the ol
 constraint. And it has to land before the read paths move, or the duplicated grain
 is visible to users on every show and season page.
 
+### This pass makes watch history invisible until NEU-1047 ships
+
+**Read this before running it.** The re-point moves `app.user_episode_watch`
+onto *ingested* episode ids, and every read path in the app still resolves
+episodes through `tvmaze` until NEU-1047 moves them to `catalog`. An ingested id
+does not exist in `tvmaze.episode`, so the join finds nothing and a user's watch
+history renders **empty** — on My Shows, Watch Next, every season and episode
+page.
+
+Nothing is lost: the rows are all there, `reconcile verify` passes, and the
+history reappears the moment the read paths move. But between this pass and
+NEU-1047 the app is visibly broken for anyone using it, which is why the project
+spec scopes this to a window — *"take the app down, repoint `app.*` FKs, bring
+it up"* — and why NEU-1125 says these run "inside the window, before the app is
+handed back to users."
+
+It was run against a live site on 2026-08-12 and both active users lost sight of
+their history until NEU-1047 landed. The sequencing note "must land before
+NEU-1047" is a constraint on *ordering*, not a statement that the gap between
+them is safe to sit in.
+
 ### The production run (2026-08-12)
 
 Ran clean, and every figure came out where the pre-flight report said it would.
