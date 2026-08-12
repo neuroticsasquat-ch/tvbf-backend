@@ -134,9 +134,35 @@ async def mark_series_synced(session: AsyncSession, *, show_id: int) -> None:
     "no row exists": the migration copied ~89k TV Maze shows into `catalog` and
     mapped a `tmdb_id` onto most of them, so row-exists would skip precisely the
     shows users track. See `tvbf.tmdb.ingest`.
+
+    **`credits_synced_at` is stamped here too** (NEU-1127), because every caller
+    of this reaches it through `mirror_series`, which fetches `DEFAULT_APPEND` —
+    carrying `aggregate_credits` — plus the season blocks that carry
+    `guest_stars` / `crew`. A complete pass therefore wrote credits by
+    construction, and the delta stamping it is what stops the backfill re-fetching
+    shows the delta has already covered. The two columns exist separately only
+    because they disagree on history: the 228,841 shows the full ingest mirrored
+    were stamped before the credit writers existed, and no one bit could have
+    said so.
     """
     await session.execute(
-        update(m.Show).where(m.Show.id == show_id).values(tmdb_synced_at=func.now())
+        update(m.Show)
+        .where(m.Show.id == show_id)
+        .values(tmdb_synced_at=func.now(), credits_synced_at=func.now())
+    )
+
+
+async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Stamp the show's credits as written — the credits backfill's watermark.
+
+    Split from `mark_series_synced` because the backfill asserts strictly less
+    than a full pass does: it writes the four credit tables and their three
+    lookups and touches nothing else, so it is in no position to claim the spine
+    is current. Stamping both would retire a show from the *ingest's* work list
+    on the strength of a pass that never wrote a season.
+    """
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(credits_synced_at=func.now())
     )
 
 
@@ -1291,6 +1317,84 @@ async def _write_episode_credits(
     await _replace_episode_rows(session, m.EpisodeCrew, crew_scope, list(crew_rows.values()))
 
 
+def _merged_season_details(
+    series: TMDBSeries, seasons: Sequence[TMDBSeasonDetail] | None
+) -> list[TMDBSeasonDetail]:
+    """The appended `season/N` blocks plus the overflow, one entry per number.
+
+    An explicitly-passed detail wins, so a caller re-fetching one season can hand
+    it over without rebuilding the rest.
+    """
+    by_number: dict[int, TMDBSeasonDetail] = {d.season_number: d for d in series.appended_seasons}
+    for detail in seasons or ():
+        by_number[detail.season_number] = detail
+    return list(by_number.values())
+
+
+async def _mirrored_episode_ids(session: AsyncSession, *, show_id: int) -> dict[int, int]:
+    """`{tmdb_id: surrogate id}` for the show's already-mirrored episodes.
+
+    What `upsert_episodes` returns from its own `RETURNING`, read back instead
+    for the one caller that must not write an episode to learn it. An episode
+    the payload carries and this map does not is simply left out of the credit
+    write — the next delta will mirror the row and bring its credits with it,
+    and inserting one here would be this pass writing the spine.
+    """
+    rows = await session.execute(
+        select(m.Episode.tmdb_id, m.Episode.id).where(
+            m.Episode.show_id == show_id, m.Episode.tmdb_id.is_not(None)
+        )
+    )
+    return {row.tmdb_id: row.id for row in rows if row.tmdb_id is not None}
+
+
+async def write_series_credits(
+    session: AsyncSession,
+    series: TMDBSeries,
+    *,
+    show_id: int,
+    seasons: Sequence[TMDBSeasonDetail] | None = None,
+) -> bool:
+    """Write **only** a payload's credits onto an already-mirrored show (NEU-1127).
+
+    `upsert_series_payload` minus everything that is not a credit. The backfill
+    needs the same four tables and their three lookups filled from the same
+    request, over shows whose spine is already correct and is being read from —
+    so the guarantee it needs is not "this writes the same rows" but "this writes
+    *no others*", and that guarantee belongs here, next to the writers, rather
+    than in a caller reaching past the underscores to assemble it.
+
+    It therefore never upserts a show, season or episode, never prunes a season,
+    and never recomputes `runtime` or the air pointers. The episode surrogate
+    ids the episode-grain writer needs come from a query rather than from a
+    write.
+
+    The caller owns the transaction, and the caller stamps `credits_synced_at` —
+    this function makes no claim about completeness, the same split
+    `mark_series_synced` draws from `upsert_series_payload`.
+
+    Returns whether the payload carried a credit at either grain, which is a
+    fact the writer already has to establish and the caller would otherwise have
+    to re-derive by re-merging the season details — a second merge that could,
+    and briefly did, disagree with this one about a season fetched both ways.
+    """
+    credits = series.aggregate_credits
+    if credits is not None:
+        await _write_credits(session, show_id=show_id, credits=credits)
+    any_credits = credits is not None and bool(credits.cast or credits.crew)
+
+    episodes = [ep for detail in _merged_season_details(series, seasons) for ep in detail.episodes]
+    if not episodes:
+        return any_credits
+    await _write_episode_credits(
+        session,
+        show_id=show_id,
+        episodes=episodes,
+        episode_ids=await _mirrored_episode_ids(session, show_id=show_id),
+    )
+    return any_credits or any(ep.guest_stars or ep.crew for ep in episodes)
+
+
 async def _write_season_networks(
     session: AsyncSession,
     *,
@@ -1357,12 +1461,7 @@ async def upsert_series_payload(
 
     The caller owns the transaction.
     """
-    details_by_number: dict[int, TMDBSeasonDetail] = {
-        d.season_number: d for d in series.appended_seasons
-    }
-    for detail in seasons or ():
-        details_by_number[detail.season_number] = detail
-    details = list(details_by_number.values())
+    details = _merged_season_details(series, seasons)
     episodes = [ep for detail in details for ep in detail.episodes]
 
     show_id = await upsert_show(session, series)

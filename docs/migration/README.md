@@ -36,6 +36,7 @@ pointing at unmapped rows.
 | Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
 | `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ✅ 2026-08-12 — all five constraints on `catalog`, `ON DELETE` unchanged, verified by `pg_get_constraintdef` |
 | Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
+| Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ⬜ not yet run — 228,841 mirrored shows carry no credits at all. ~8.7h, resumable, safe to kill and restart. Run `task backfill:credits:report` first and keep the artifact |
 
 ## Deleting episodes needs two indexes that did not exist
 
@@ -331,6 +332,98 @@ Four things about it are worth knowing before running it in production:
 Re-run the pass after any later ingest or catalog delta: a delta that adds a
 season to a matched show on a number a copied row still holds is a fresh
 duplicate, and there is no watermark to make that a one-shot.
+
+## Credits backfill (NEU-1127)
+
+The third instance of *merged is not run*, and the reason the row above exists.
+
+The full catalog ingest finished on 2026-08-11 and the two credit writers merged
+later the same morning — NEU-1039's `_write_credits` at 04:54 UTC, NEU-1040's
+`_write_episode_credits` at 05:24. `aggregate_credits` had been in
+`DEFAULT_APPEND` since 2026-08-09 and the season blocks have always carried
+`guest_stars` / `crew`, so every payload the ingest fetched *contained* the
+credits. There was nothing to write them to.
+
+Measured against production 2026-08-12:
+
+| `catalog` table | rows |
+| -- | -- |
+| `show_cast` | 0 |
+| `show_crew` | 0 |
+| `episode_guest_cast` | 0 |
+| `episode_crew` | 0 |
+| `person` | 0 |
+| `show` where `tmdb_synced_at IS NOT NULL` | 228,841 |
+
+Since NEU-1047 repointed the read paths, `GET /shows/{id}/cast`, `/crew`,
+`/episodes/{id}/guest-cast` and `/episodes/{id}/crew` return `[]` for every show
+and `/people/{id}/credits` returns four empty arrays for every person. The read
+path is correct — a show ingested after the writers merged serves its credits
+fine. There is simply nothing to read.
+
+### Why re-running the ingest is not the fix
+
+Its work list is `tmdb_synced_at IS NULL` and all 228,841 rows are stamped, so
+the window has shut exactly as it had for NEU-1045. Clearing the stamp and
+re-running the full pass was rejected: same 8.7 hours, but it rewrites 228k shows
+and 6.5M episodes to recover four tables that ride the same request, and every
+one of those writes is a chance to disturb a spine users are now reading from.
+
+The daily delta *does* write credits — `mirror_series` is shared — but it visits
+only shows TMDB reports as changed, so it will never work through the backlog.
+
+### The watermark is a column
+
+`catalog.show.credits_synced_at`, added by migration `c9a3f1e60b47`. The
+alternative work list — *the show carries no `show_cast` row* — needs no
+migration and is self-clearing the way `enrichment.py`'s is, but it cannot
+represent the outcome the acceptance criteria call normal: a show TMDB has no
+credits for looks identical to one nobody has fetched, so every credit-less
+series is re-fetched on every run and the pass never converges.
+
+`mark_series_synced` stamps both columns, so a show the delta has already covered
+never enters the backlog. `mark_credits_synced` stamps only the one, because the
+backfill writes no spine and is in no position to claim the ingest's watermark.
+
+### Running it
+
+```bash
+# The artifact, before and after. Writes nothing, needs no TMDB credential.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.credits_backfill report' \
+  > /tmp/credits-before.json
+
+# A hundred shows first — ~15 seconds, and it proves the credential and the
+# writers against production data before 8.7 hours are committed to.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.credits_backfill backfill --limit 100'
+
+# The pass. Resumable per show, so kill it freely and start it again.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.credits_backfill backfill'
+```
+
+Exit 0 means the pass completed; 1 means it aborted or raised. A show with no
+credits upstream is stamped like any other and counted apart — it is not a
+failure, and it is what stops the next run fetching it again. Shows that failed
+for any other reason are left unstamped, so re-running picks exactly those up.
+
+The report's `user_touched_without_credits` is the spot-check list the
+acceptance criteria ask for, worst first by tracker count. It should be empty
+afterwards but for shows TMDB genuinely has no cast for.
+
+### What it must not do, and how that is enforced
+
+The pass writes the four credit tables and their three lookups (`person`,
+`character`, `crew_role`) and nothing else. That guarantee lives in
+`upsert.write_series_credits` rather than in the job: the caller never assembles
+it out of private writers, so there is one place to read to know it holds. The
+episode surrogate ids the episode-grain writer needs come from a query rather
+than from an `upsert_episodes` the pass deliberately does not perform — which
+also means an episode TMDB has and the mirror does not is skipped, since
+inserting it would make this a spine pass by the back door.
+`test_writes_nothing_outside_the_credit_tables` proves it the way the ticket
+asks: spine row counts and the show's own columns, either side of a run.
+
+A per-show failure rolls back before it is counted, so a stamped show always
+carries a complete credit set and a re-run never has to wonder whether it does.
 
 ## Show-grain prune (NEU-1066)
 

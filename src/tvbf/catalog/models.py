@@ -395,6 +395,26 @@ class Show(Base):
     # NULL therefore means *no full TMDB pass has covered this row yet* — true
     # of a copied row, and true of a locally-authored one forever.
     tmdb_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this show's **credits** were last written from a complete TMDB payload
+    # — the credits backfill's resumability watermark (NEU-1127), stamped
+    # alongside `tmdb_synced_at` by `mark_series_synced` because every caller of
+    # that fetches `DEFAULT_APPEND`, which carries `aggregate_credits`, and the
+    # season blocks that carry `guest_stars` / `crew`.
+    #
+    # A second column rather than a reuse of `tmdb_synced_at` because the two
+    # genuinely disagree on 228,841 production rows: the full ingest ran on
+    # 2026-08-10 and the credit writers merged on 2026-08-11, so every one of
+    # those shows is fully mirrored and carries no cast, crew or guest cast at
+    # all. `tmdb_synced_at IS NOT NULL AND credits_synced_at IS NULL` is exactly
+    # that backlog, and it empties as the backfill works through it.
+    #
+    # NULL therefore means *no pass has written credits onto this row yet*. It
+    # does **not** mean the show has none: a show TMDB has no credits for is
+    # stamped like any other, which is the whole reason this is a column and not
+    # a "has no `show_cast` row" predicate — that predicate cannot tell "we asked
+    # and upstream had none" from "we never asked", so it would re-fetch every
+    # credit-less show on every run and never converge.
+    credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the show stops appearing in the daily id export, i.e. TMDB has
     # deleted it. The row is never removed: `app.user_show_watch` and
     # `app.user_show_rating` cascade from here, so a delete would destroy user
