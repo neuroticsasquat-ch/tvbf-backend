@@ -302,6 +302,16 @@ tasks:
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.show_prune report
 
+  gate:coverage:
+    desc: 'Pre-cutover go/no-go: catalog coverage + the hard criteria, as JSON (exit 1 on no-go; NEU-1048)'
+    # `silent` + `-T` for the same reasons `prune:shows:report` needs them: the
+    # artifact is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it. The verdict goes to stderr, so a
+    # bare run still reads as prose.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.coverage_gate
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
