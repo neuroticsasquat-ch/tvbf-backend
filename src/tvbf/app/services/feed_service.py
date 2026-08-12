@@ -96,7 +96,7 @@ async def _hydrate(db: AsyncSession, rows: list[FeedRow]) -> list[FeedItem]:
                         id=episode_obj.id,
                         name=episode_obj.name,
                         season=episode_obj.season_number,
-                        number=public_number(episode_obj) or 0,
+                        number=public_number(episode_obj),
                     )
                     if episode_obj
                     else None

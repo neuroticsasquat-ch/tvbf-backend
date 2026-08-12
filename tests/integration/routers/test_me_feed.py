@@ -458,3 +458,81 @@ async def test_feed_cursor_round_trip_is_stable(authed_client, make_user, sessio
     r = await authed_client.get("/me/feed", params={"cursor": cur})
     assert r.status_code == 200
     assert r.json()["items"] == []
+
+
+@pytest.mark.asyncio
+async def test_a_copied_special_carries_a_null_episode_number(authed_client, make_user, session):
+    """NEU-1062. A special watch still reaches the feed — once bulk-marking
+    skips specials, every remaining one is a deliberate act, and suppressing it
+    would misreport what somebody did.
+
+    Its `number`, though, was rendered `0` by a `public_number(...) or 0` that
+    predates the ticket: a copied special's number is correctly `None`, and 0 is
+    a number no episode has.
+    """
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sp@example.com", display_name="SP")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970180, episodes_per_season=(1,))
+    special = Episode(
+        id=970_180_99,
+        show_id=show.id,
+        season_number=1,
+        episode_number=-1,
+        name="Christmas Special",
+        air_date=date.today() - timedelta(days=10),
+    )
+    session.add(special)
+    await session.flush()
+    session.add(
+        _make_event(
+            actor_id=friend.id,
+            verb="watched_episode",
+            target_type="episode",
+            target_id=special.id,
+            created_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+    )
+    await session.commit()
+
+    r = await authed_client.get("/me/feed")
+
+    (item,) = [i for i in r.json()["items"] if i["kind"] == "watched_episode"]
+    assert item["episode"]["id"] == special.id
+    assert item["episode"]["season"] == 1
+    assert item["episode"]["number"] is None
+
+
+@pytest.mark.asyncio
+async def test_a_native_special_keeps_its_real_episode_number(authed_client, make_user, session):
+    """Season 0 with a real number is TMDB's own model — nothing was invented,
+    so nothing is nulled."""
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="s0@example.com", display_name="S0")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970181, episodes_per_season=(1,))
+    special = Episode(
+        id=970_181_99,
+        show_id=show.id,
+        season_number=0,
+        episode_number=3,
+        name="Behind the Scenes",
+        air_date=date.today() - timedelta(days=10),
+    )
+    session.add(special)
+    await session.flush()
+    session.add(
+        _make_event(
+            actor_id=friend.id,
+            verb="watched_episode",
+            target_type="episode",
+            target_id=special.id,
+            created_at=datetime.now(UTC) - timedelta(hours=1),
+        )
+    )
+    await session.commit()
+
+    r = await authed_client.get("/me/feed")
+
+    (item,) = [i for i in r.json()["items"] if i["kind"] == "watched_episode"]
+    assert (item["episode"]["season"], item["episode"]["number"]) == (0, 3)

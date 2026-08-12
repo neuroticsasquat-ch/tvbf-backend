@@ -65,6 +65,25 @@ unchanged in shape, so that stays available without another backend pass.
 from collections.abc import Iterable
 
 from tvbf.catalog import models as m
+from tvbf.catalog.episodes import SPECIALS_SEASON_NUMBER, is_specials_season
+
+SEASON_ORDER = (
+    (m.Season.season_number == SPECIALS_SEASON_NUMBER).asc(),
+    m.Season.season_number.asc(),
+    m.Season.id.asc(),
+)
+"""Regular seasons in number order, then Specials (NEU-1062).
+
+The season-grain twin of `catalog/episodes.py`'s `EPISODE_ORDER`, and it defers
+to the same module for what a special is. `deduped` re-sorts in Python, so a
+query ordering alone would not decide what a caller sees — the two have to agree,
+which is why the Python key below is written against the same rule.
+"""
+
+
+def _order_key(show_id: int, season_number: int) -> tuple[int, bool, int]:
+    """`SEASON_ORDER` as a Python sort key, for rows already loaded."""
+    return (show_id, is_specials_season(season_number), season_number)
 
 
 def _preference(season: m.Season) -> tuple[int, int]:
@@ -80,7 +99,7 @@ def _preference(season: m.Season) -> tuple[int, int]:
 
 
 def deduped(seasons: Iterable[m.Season]) -> list[m.Season]:
-    """One season per `(show_id, season_number)`, ordered by show then number.
+    """One season per `(show_id, season_number)`, in `SEASON_ORDER`.
 
     Safe to call with rows spanning several shows: the key includes `show_id`,
     so `/me/upcoming/seasons` can hand it a whole My Shows list at once.
@@ -91,4 +110,4 @@ def deduped(seasons: Iterable[m.Season]) -> list[m.Season]:
         incumbent = best.get(key)
         if incumbent is None or _preference(season) < _preference(incumbent):
             best[key] = season
-    return [best[key] for key in sorted(best)]
+    return [best[key] for key in sorted(best, key=lambda k: _order_key(*k))]

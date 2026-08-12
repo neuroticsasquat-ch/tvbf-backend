@@ -1,12 +1,21 @@
+"""Watch-record reads and writes for the tracking layer.
+
+Like `episode_repo`, every query that reaches progress arithmetic names its own
+specials predicate rather than inheriting one — see `catalog/episodes.py`, and
+`tests/integration/app/repos/test_specials_ledger.py` for the full table
+(NEU-1062).
+"""
+
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import and_, func, select
+from sqlalchemy import and_, func, not_, select
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import UserEpisodeWatch
+from tvbf.catalog.episodes import IS_COPIED_SPECIAL, IS_SPECIAL
 from tvbf.catalog.models import Episode
 
 
@@ -130,6 +139,11 @@ async def watched_in(
 
 
 async def list_episode_ids_for_show(db: AsyncSession, *, user_id: UUID, show_id: int) -> list[int]:
+    """Every watched episode of the show, specials included.
+
+    Backs `GET /me/shows/{id}/episodes/watched`, which the show page uses to
+    render ticks — a watched special must still read as watched.
+    """
     rows = (
         (
             await db.execute(
@@ -150,6 +164,11 @@ async def list_episode_ids_for_show(db: AsyncSession, *, user_id: UUID, show_id:
 async def watched_count_per_season(
     db: AsyncSession, *, user_id: UUID, show_id: int
 ) -> dict[int, int]:
+    """Watched count per season, minus any copied special inside a real season.
+
+    The numerator paired with `episode_repo.aired_count_per_season`, so it strips
+    exactly what that one does: season 0 reports its own contents.
+    """
     rows = (
         await db.execute(
             select(Episode.season_number, func.count(UserEpisodeWatch.episode_id))
@@ -157,6 +176,7 @@ async def watched_count_per_season(
             .where(
                 Episode.show_id == show_id,
                 UserEpisodeWatch.user_id == user_id,
+                not_(IS_COPIED_SPECIAL),
             )
             .group_by(Episode.season_number)
         )
@@ -167,6 +187,11 @@ async def watched_count_per_season(
 async def count_watched_per_show(
     db: AsyncSession, *, user_id: UUID, show_ids: list[int]
 ) -> dict[int, int]:
+    """Watched *regular* episode count per show — a progress bar's numerator.
+
+    Paired with `episode_repo.count_aired_per_show`: both halves of the fraction
+    strip specials, or a user who has watched some would exceed 100%.
+    """
     rows = (
         await db.execute(
             select(Episode.show_id, func.count(UserEpisodeWatch.episode_id))
@@ -174,6 +199,7 @@ async def count_watched_per_show(
             .where(
                 Episode.show_id.in_(show_ids),
                 UserEpisodeWatch.user_id == user_id,
+                not_(IS_SPECIAL),
             )
             .group_by(Episode.show_id)
         )
