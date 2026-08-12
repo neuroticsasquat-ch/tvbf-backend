@@ -33,7 +33,7 @@ pointing at unmapped rows.
 | Season-grain dedupe (NEU-1119) | `task dedupe:seasons` | after ingest; re-run after any delta | ✅ 2026-08-11 — 122,350 deleted, 2,125,419 episodes re-pointed |
 | Show-grain prune (NEU-1066) | `task prune:shows` | after ingest | ✅ 2026-08-11 — 26,141 shows deleted over 262 batches, taking 47,443 seasons and 840,169 episodes. `catalog.show` 255,010 → 228,869; 2 unmatched rows kept. Needed the `ix_show_*_episode_to_air_id` indexes first (see below) |
 | User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ blocked — the FK still points at `tvmaze.show` |
-| Episode-grain re-point | — | after ingest | ⬜ ticket not written — see NEU-1066's findings |
+| Episode-grain re-point (NEU-1126) | `task` TBD | **after NEU-1046**, before NEU-1047 | ⬜ not built — 2,690,633 copied episodes still duplicate the ingested ones, and all 7,137 watched-or-rated episodes point at the copies |
 
 ## Deleting episodes needs two indexes that did not exist
 
