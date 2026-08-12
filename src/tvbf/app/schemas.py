@@ -349,6 +349,10 @@ class FeedItem(BaseModel):
     show: ShowMini | None
     episode: EpisodeMini | None
     season_number: int | None
+    # The season's own name, for the `watched_season` roll-up (NEU-1132). Null on
+    # every other kind (they carry no `season_number`) and null when upstream
+    # never named the season, so the SPA falls back to the number either way.
+    season_name: str | None
     rollup_count: int | None
     stars: float | None
     occurred_at: datetime
