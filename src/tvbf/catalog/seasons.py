@@ -74,10 +74,17 @@ SEASON_ORDER = (
 )
 """Regular seasons in number order, then Specials (NEU-1062).
 
-The season-grain twin of `catalog/episodes.py`'s `EPISODE_ORDER`, and it defers
-to the same module for what a special is. `deduped` re-sorts in Python, so a
-query ordering alone would not decide what a caller sees — the two have to agree,
-which is why the Python key below is written against the same rule.
+The season-grain twin of `catalog/episodes.py`'s `EPISODE_ORDER`, deferring to
+that module for what a special is.
+
+**It is not what decides a caller's ordering.** Every reader of a show's seasons
+goes through `deduped`, which re-sorts in Python by `_order_key` — so this tuple
+only makes the SQL read in the order the rows come back, and `_order_key` is the
+rule that binds. The two are written from the same premise rather than checked
+against each other; change one, change the other. `_order_key` needs no id
+tiebreak of its own because `deduped` emits one row per
+`(show_id, season_number)`, so its output has no ties left to break —
+`_preference` already chose which row survives.
 """
 
 

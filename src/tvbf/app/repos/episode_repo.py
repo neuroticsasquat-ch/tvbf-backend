@@ -42,6 +42,27 @@ async def list_episode_ids_for_season(
     return list(result.scalars().all())
 
 
+async def list_all_episode_ids_for_season(
+    db: AsyncSession, show_id: int, season_number: int
+) -> list[int]:
+    """A season's episodes, specials included — this backs *un*-marking a season.
+
+    The season-grain twin of the show-grain pair above: marking reads the
+    filtered `list_episode_ids_for_season`, un-marking reads this one. The
+    asymmetry is the point. Sharing one filtered query between the two would
+    leave a copied special that was ticked individually unreachable from its own
+    season, which is the same orphaning `list_episode_ids_for_show` exists to
+    prevent one grain up.
+    """
+    result = await db.execute(
+        select(Episode.id).where(
+            Episode.show_id == show_id,
+            Episode.season_number == season_number,
+        )
+    )
+    return list(result.scalars().all())
+
+
 async def aired_count_per_season(db: AsyncSession, show_id: int, today: date) -> dict[int, int]:
     rows = (
         await db.execute(

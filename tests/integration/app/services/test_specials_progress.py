@@ -297,6 +297,31 @@ async def test_unmarking_a_whole_show_still_removes_special_watches(session, mak
     )
 
 
+async def test_unmarking_a_regular_season_still_removes_a_copied_special(session, make_user):
+    """Marking and un-marking a season are deliberately asymmetric.
+
+    Marking season 1 skips the copied special hanging inside it — it counts
+    toward nothing, so ticking it would leave the season short of 100%. But
+    un-marking reads the *unfiltered* list, exactly as un-marking a whole show
+    does: excluding anything from a delete orphans the rows it excluded, and a
+    special ticked by hand would otherwise be unreachable from its own season.
+    """
+    user = await make_user()
+    show = await _seed(session, show_id=964_405)
+    episodes = await _episodes(session, show.id)
+    # Every season-1 episode watched, the copied special included.
+    await _mark(session, user.id, [e.id for e in episodes if e.season_number == 1])
+
+    await episode_service.bulk_unmark_season(
+        session, user_id=user.id, show_id=show.id, season_number=1
+    )
+
+    watched = await episode_service.list_watched_episode_ids(
+        session, user_id=user.id, show_id=show.id
+    )
+    assert watched == []
+
+
 async def test_a_watched_special_still_reads_as_watched_on_the_show_page(session, make_user):
     user = await make_user()
     show = await _seed(session, show_id=964_404)

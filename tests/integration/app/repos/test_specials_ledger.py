@@ -38,6 +38,7 @@ LEDGER: dict[str, str] = {
     # episode_repo
     "episode_repo.get_by_id": EXCLUDE_NOTHING,
     "episode_repo.list_episode_ids_for_season": EXCLUDE_COPIED,
+    "episode_repo.list_all_episode_ids_for_season": EXCLUDE_NOTHING,
     "episode_repo.aired_count_per_season": EXCLUDE_COPIED,
     "episode_repo.list_aired_episode_ids_for_show": EXCLUDE_BOTH,
     "episode_repo.list_episode_ids_for_show": EXCLUDE_NOTHING,
@@ -300,6 +301,11 @@ class TestExcludeNothing:
         # A special's own episode page: filtering here would 404 it.
         assert (await episode_repo.get_by_id(session, COPIED_S1)) is not None
         assert (await episode_repo.get_by_id(session, SPECIAL_S0_E1)) is not None
+
+    async def test_list_all_episode_ids_for_season_backs_unmark_and_keeps_everything(self, session):
+        await _seed(session)
+        ids = await episode_repo.list_all_episode_ids_for_season(session, SHOW_ID, 1)
+        assert sorted(ids) == sorted([REG_S1_E1, REG_S1_E2, COPIED_S1])
 
     async def test_list_episode_ids_for_show_backs_unmark_and_keeps_everything(self, session):
         await _seed(session)
