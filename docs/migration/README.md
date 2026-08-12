@@ -35,7 +35,7 @@ pointing at unmapped rows.
 | User-touched remediation (NEU-1066) | `neu-1066-user-touched-remediation.sql` | **after NEU-1046**, then re-run the prune | ⬜ unblocked once the repoint deploys — the FK moves to `catalog.show` |
 | Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
 | `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ⬜ not deployed — run the pre-flight anti-join below first |
-| Episode-grain re-point (NEU-1126) | `task` TBD | **after NEU-1046**, before NEU-1047 | ⬜ not built — 2,690,633 copied episodes still duplicate the ingested ones, and all 7,137 watched-or-rated episodes point at the copies |
+| Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ⬜ built, not run — 1,908,478 re-pointable, of which 6,948 carry user history; 189 user-touched episodes have no TMDB counterpart and keep their copies. Run `task repoint:episodes:report` first |
 
 ## Deleting episodes needs two indexes that did not exist
 
@@ -648,3 +648,165 @@ that gap is what leaves the old mirror as a recovery path.
 `neu-1066-user-touched-remediation.sql` was blocked on the FK pointing at
 `tvmaze.show`; it can run once this has. NEU-1126's episode-grain re-point and
 NEU-1047's read-path switch both sit behind it too.
+
+## Episode-grain re-point (NEU-1126)
+
+The pass that finally puts user history on TMDB-sourced rows, and **the only one
+in this project that writes to `app`.** `season_dedupe` and `show_prune` both go
+out of their way not to; this one has to, because the user rows are the point.
+
+NEU-1045 built the mapping that would have made this unnecessary and merged a day
+*after* the full ingest started, so its window had already shut — the failure this
+run log exists for. By 2026-08-11 all 7,137 watched-or-rated episodes pointed at
+copied rows carrying TV Maze data, and running `task map:episodes` would have
+mapped zero of them while spending ~62,000 TMDB requests.
+
+### Ordering
+
+**After NEU-1046, before NEU-1047.** The foreign keys have to reference
+`catalog.episode` first: every ingested episode id is far above TV Maze's range
+and absent from `tvmaze.episode`, so the update would be rejected against the old
+constraint. And it has to land before the read paths move, or the duplicated grain
+is visible to users on every show and season page.
+
+### Run the report first
+
+```bash
+# local
+task repoint:episodes:report
+
+# production — writes nothing, needs no credential
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend-container> \
+  python -m tvbf.jobs.episode_repoint report' > /tmp/neu-1126-before.json
+```
+
+Measured against production on 2026-08-12, before the pass:
+
+| | rows |
+| -- | -- |
+| `repointable` | 1,908,478 |
+| `watches_to_move` | 8,387 |
+| `ratings_to_move` | 77 |
+| `activity_to_move` | 364 |
+| `user_touched_repointable` | 6,948 |
+| `user_touched_kept` | 189 |
+| `kept_no_counterpart` | 781,266 |
+| `kept_ambiguous_copies` | 889 |
+| `kept_ambiguous_twins` | 0 |
+| `kept_under_unmatched_show` | 6 |
+
+The two user-facing counts measure different things and both are worth reading:
+**6,948 is distinct episodes**, 8,828 is the rows on them (8,387 watches + 77
+ratings + 364 events), because several users watch the same episode. The 364
+matches the activity-event figure the ticket predicted exactly.
+
+**The ticket predicted the ambiguity backwards, and the measurement is why that
+matters.** It expected keys with more than one *ingested* twin; production has
+none. What it has is 443 keys where two or more *copied* rows share a single twin
+— TV Maze's own duplicate numbering arriving through NEU-1042's copy. That
+direction is the dangerous one: re-pointing both copies onto one twin merges two
+watch records into one, which `(user_id, episode_id)` would either reject or
+silently absorb, and the reconciliation harness would read the missing row as a
+loss. Both directions are refused.
+
+### Running it
+
+```bash
+# a hundred first, then read the report again
+task repoint:episodes -- --limit 100
+
+# the full pass
+task repoint:episodes
+
+# production
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend-container> \
+  python -m tvbf.jobs.episode_repoint repoint'
+```
+
+Idempotent and re-runnable: a row leaves the work list by being deleted. There is
+no persisted cursor, so a re-run starts from the beginning and finds only what is
+genuinely still there. It **refuses to run before the full ingest** — under
+150,000 rows carrying `tmdb_synced_at` it logs `IngestNotRun` and exits 1 rather
+than reporting a clean grain having moved nothing.
+
+### The deletion cost, re-checked
+
+See *Deleting episodes needs two indexes that did not exist* above for the
+original incident. NEU-1066 hit a 60-second-per-show wall deleting episodes,
+because
+`catalog.show.last_episode_to_air_id` and `next_episode_to_air_id` are
+`ON DELETE SET NULL` foreign keys into `catalog.episode` and had no index, so
+every cascaded delete seq-scanned all 255,010 shows. Migration `f85a608ef19e`
+fixed it, and this pass deletes ~1.9M episodes directly — so the plan was checked
+against production rather than assumed, on 2026-08-12:
+
+* `ix_show_last_episode_to_air_id` and `ix_show_next_episode_to_air_id` are both
+  present.
+* The two tables that cascade from `catalog.episode` are covered:
+  `uq_egc_episode_person_character` and `uq_episode_crew_episode_person_role` both
+  **lead on `episode_id`**, which is what the cascade needs (a covering index that
+  led on anything else would not help it).
+* The cascade is **empty in practice**, which is the reassuring half and worth
+  stating: NEU-1042's copy writes only `show`, `season`, `episode` and `show_aka`,
+  so a copied episode carries no `episode_guest_cast` or `episode_crew` rows at
+  all. Only the ingest writes those, and its rows hang off the twin that survives.
+* `EXPLAIN` on the batch `DELETE` is index scans throughout — `episode_pkey` for
+  the batch, `show_pkey` for the guard, `ix_activity_event_target` and
+  `user_episode_watch_pkey` for the reference checks. The only sequential scan is
+  over `app.user_episode_rating`, which has 78 rows and is hashed.
+
+### What it deliberately keeps
+
+* **The 189 user-touched episodes with no TMDB counterpart.** ADR-0008's
+  locally-authored rows; deleting one destroys history nothing can restore.
+* **Copied specials.** NEU-1042 numbered TV Maze's null-numbered specials
+  *negative* within their season, and no ingested row carries a negative
+  `episode_number` — so they find no twin and stay, without needing a special case.
+* **Both sides of an ambiguous key**, in either direction.
+* **A copy whose user rows could not move.** Each of the three write sites has a
+  uniqueness constraint the re-point can collide with, so a user holding rows on
+  *both* the copy and the twin keeps both, counted as `blocked_by_collision`.
+  Production has zero of these; the constraints make the state representable,
+  which is the only reason it is handled.
+
+`still_doubled` comes back with **1,600 keys and none of them carrying user
+data** — the residue this pass cannot reach, which is what the "no show carries
+two rows" criterion actually scores against. A zero in `repointable` says the pass
+has nothing left to do, not that the grain is clean, and the two are easy to
+confuse. The list is ~1,600 JSON objects, so redirect it rather than reading it in
+a terminal.
+
+### Verifying afterwards
+
+```bash
+# `repointable` should be 0; `still_doubled` is the criterion's real scoreboard
+task repoint:episodes:report
+
+# the acceptance test: counts per (user, show) must be identical
+task reconcile:verify -- --baseline - --spine catalog < docs/migration/reconciliation-baseline.json
+```
+
+Re-pointing moves a watch *within* a show, so every per-`(user, show)` count comes
+out unchanged — which is what lets NEU-1125 pass on the far side of this pass, and
+is asserted directly in
+`tests/integration/tmdb/test_episode_repoint.py::test_reconciliation_counts_are_unchanged_by_the_re_point`.
+
+### Reverting
+
+`task copy:catalog` restores the deleted episode rows under their original ids but
+**never touches `app`**, so the revert is a second statement per write site while
+`tvmaze` stands (NEU-1051 has not run) — the same two-statement shape NEU-1119
+needed. The module docstring of `tvbf/tmdb/episode_repoint.py` carries the SQL,
+which re-derives the pairing in reverse and repeats the forward pass's ambiguity
+and collision guards, because it needs them for the same reasons.
+
+Step one works because `copy_to_catalog` restores **seasons before episodes**, so
+the `season_id` a restored episode carries has a parent to point at even though
+NEU-1119 deleted 122,350 of those season rows. That is not a claim to take on
+trust: `test_the_pass_is_reversible_from_tvmaze` in
+`tests/integration/tmdb/test_episode_repoint.py` runs the whole round trip.
+
+The revert is **wider than one run of this pass** — it matches every user row on
+an ingested episode with a copy beneath it, because nothing records which rows a
+given batch moved. That is right for undoing the migration and wrong for undoing
+a batch; `--limit` is what exists for the latter.
