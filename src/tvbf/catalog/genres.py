@@ -30,11 +30,10 @@ every genre would end up stored twice. The rows here are written solely by
 an empty genre list rather than the one TV Maze gave it. Every function below
 treats that as ordinary: it is roughly 26k shows, not an edge case.
 
-The queries are the same four shapes `tvmaze/browse_queries.py` reads today,
-carried across unchanged except where the target schema forced a difference —
-see `shows_with_all_genres`. **Nothing calls this yet, and that is the ticket
-boundary**: every read still goes to `tvmaze`, and NEU-1047 is the pass that
-repoints browse to `catalog`.
+The queries are the same four shapes `tvmaze/browse_queries.py` read, carried
+across unchanged except where the target schema forced a difference — see
+`shows_with_all_genres`. `catalog/browse_queries.py` is the caller: NEU-1064
+owned the vocabulary decision, NEU-1047 threw the switch.
 """
 
 from collections.abc import Sequence

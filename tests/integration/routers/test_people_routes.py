@@ -1,5 +1,20 @@
 """Integration tests for the person detail + credits browse routes (NEU-948),
-including episode-crew credits (NEU-963)."""
+including episode-crew credits (NEU-963).
+
+Reading `catalog` since NEU-1047. Four things about a person changed with the
+source and every one is a decision recorded in `catalog/models.py` or
+`catalog/schemas.py`:
+
+* **`country_code`, `country_name`, `birthday` and `deathday` are permanently
+  null.** TMDB returns none of them on a credit — they live behind a per-person
+  request the credits ingest deliberately does not make (audit §5).
+* **`gender` is an integer upstream** and is translated back to the words TV
+  Maze sent, because the SPA renders the value verbatim.
+* **Images are composed from a path**, so `image_medium` / `image_original` are
+  `w185` / `original` URLs off `TMDB_IMAGE_BASE_URL` rather than stored strings.
+* **A character belongs to one show and carries no image**, so a guest role that
+  recurs across three shows is three interned rows.
+"""
 
 from datetime import date
 
@@ -9,14 +24,19 @@ from httpx import ASGITransport
 from sqlalchemy import select
 
 from tests.fixtures.browse.seed import seed
+from tvbf.catalog import models as m
+from tvbf.config import get_settings
 from tvbf.main import app
-from tvbf.tvmaze import models as m
 
 # Seeded people. `EVERY_KIND` holds all four credit kinds, `CREW_ONLY` one,
 # `BARE` none — the three shapes the route has to keep distinct.
 EVERY_KIND = 40
 CREW_ONLY = 41
 BARE = 42
+
+_IMG = get_settings().tmdb_image_base_url.rstrip("/")
+GORAN_MEDIUM = f"{_IMG}/w185/goran.jpg"
+GORAN_ORIGINAL = f"{_IMG}/original/goran.jpg"
 
 
 @pytest.fixture
@@ -37,66 +57,62 @@ async def seeded_people(client, session):
         [
             m.Person(
                 id=EVERY_KIND,
+                tmdb_id=EVERY_KIND,
                 name="Goran Višnjić",
-                country_code="HR",
-                country_name="Croatia",
-                birthday=date(1972, 9, 9),
-                gender="Male",
-                image_medium="http://img/goran-m.jpg",
-                image_original="http://img/goran-o.jpg",
-                tvmaze_updated=1,
+                # TMDB's integer enum: 2 is male. The API translates it back.
+                gender=2,
+                profile_path="/goran.jpg",
             ),
-            m.Person(id=CREW_ONLY, name="Crew Only", tvmaze_updated=1),
-            m.Person(id=BARE, name="No Credits", tvmaze_updated=1),
-            m.Character(id=50, name="Hero", image_medium="http://img/hero.jpg"),
-            m.Character(id=51, name="Villain"),
-            m.Character(id=52, name="Guest Of The Week"),
-            m.CrewRole(id=60, name="Executive Producer"),
-            m.CrewRole(id=61, name="Creator"),
-            m.EpisodeCrewRole(id=65, name="Writer"),
-            m.EpisodeCrewRole(id=66, name="Director"),
+            m.Person(id=CREW_ONLY, tmdb_id=CREW_ONLY, name="Crew Only"),
+            m.Person(id=BARE, tmdb_id=BARE, name="No Credits"),
+            m.Character(id=50, show_id=1, name="Hero"),
+            m.Character(id=51, show_id=3, name="Villain"),
+            # One guest role across three shows is three rows: `catalog.character`
+            # is interned per show because TMDB models a character as free text.
+            m.Character(id=52, show_id=3, name="Guest Of The Week"),
+            m.Character(id=53, show_id=1, name="Guest Of The Week"),
+            m.Character(id=54, show_id=2, name="Guest Of The Week"),
+            m.CrewRole(id=60, department="Production", job="Executive Producer"),
+            m.CrewRole(id=61, department="Writing", job="Creator"),
+            # One `(department, job)` vocabulary at both grains, where `tvmaze`
+            # kept two disjoint lookups.
+            m.CrewRole(id=65, department="Writing", job="Writer"),
+            m.CrewRole(id=66, department="Directing", job="Director"),
         ]
     )
     # Guest credits order by air date, so give the target episodes real dates.
     # Episode 3011 is left null to prove nulls sort last, not first.
     for ep_id, airdate in ((1011, date(2021, 5, 1)), (2011, date(2022, 7, 4))):
         ep = (await session.execute(select(m.Episode).where(m.Episode.id == ep_id))).scalar_one()
-        ep.airdate = airdate
+        ep.air_date = airdate
     await session.flush()
     session.add_all(
         [
             # Show 3 premiered 2019, show 1 premiered 2020 — inserted oldest first.
-            m.ShowCast(show_id=3, person_id=EVERY_KIND, character_id=51, sort_order=0),
-            m.ShowCast(
-                show_id=1,
-                person_id=EVERY_KIND,
-                character_id=50,
-                sort_order=4,
-                is_self=True,
-                is_voice=True,
-            ),
+            m.ShowCast(show_id=3, person_id=EVERY_KIND, character_id=51, episode_count=9),
+            m.ShowCast(show_id=1, person_id=EVERY_KIND, character_id=50, episode_count=1),
             # Two crew credits on one show — routine (writer *and* director), and
             # the credit tables carry no unique constraint, so the route has to
             # order them deterministically rather than lean on insertion order.
-            m.ShowCrew(show_id=2, person_id=EVERY_KIND, role_id=60, sort_order=0),
-            m.ShowCrew(show_id=2, person_id=EVERY_KIND, role_id=61, sort_order=1),
-            m.ShowCrew(show_id=2, person_id=CREW_ONLY, role_id=61, sort_order=1),
+            m.ShowCrew(show_id=2, person_id=EVERY_KIND, role_id=60, episode_count=2),
+            m.ShowCrew(show_id=2, person_id=EVERY_KIND, role_id=61, episode_count=1),
+            m.ShowCrew(show_id=2, person_id=CREW_ONLY, role_id=61, episode_count=1),
             # Episode 3011 has no airdate; 1011 aired 2021, 2011 aired 2022.
             m.EpisodeGuestCast(
-                episode_id=3011, person_id=EVERY_KIND, character_id=52, sort_order=0
+                episode_id=3011, person_id=EVERY_KIND, character_id=52, credit_order=0
             ),
             m.EpisodeGuestCast(
-                episode_id=1011, person_id=EVERY_KIND, character_id=52, sort_order=0
+                episode_id=1011, person_id=EVERY_KIND, character_id=53, credit_order=0
             ),
             m.EpisodeGuestCast(
-                episode_id=2011, person_id=EVERY_KIND, character_id=52, sort_order=1
+                episode_id=2011, person_id=EVERY_KIND, character_id=54, credit_order=1
             ),
-            # Writer *and* director on episode 2011: sort_order sequences the
-            # pair, matching what /episodes/2011/crew serves.
-            m.EpisodeCrew(episode_id=2011, person_id=EVERY_KIND, role_id=65, sort_order=0),
-            m.EpisodeCrew(episode_id=2011, person_id=EVERY_KIND, role_id=66, sort_order=1),
-            m.EpisodeCrew(episode_id=3011, person_id=EVERY_KIND, role_id=66, sort_order=0),
-            m.EpisodeCrew(episode_id=1011, person_id=EVERY_KIND, role_id=66, sort_order=0),
+            # Writer *and* director on episode 2011: job name sequences the pair,
+            # matching what /episodes/2011/crew serves.
+            m.EpisodeCrew(episode_id=2011, person_id=EVERY_KIND, role_id=65),
+            m.EpisodeCrew(episode_id=2011, person_id=EVERY_KIND, role_id=66),
+            m.EpisodeCrew(episode_id=3011, person_id=EVERY_KIND, role_id=66),
+            m.EpisodeCrew(episode_id=1011, person_id=EVERY_KIND, role_id=66),
         ]
     )
     await session.commit()
@@ -114,13 +130,13 @@ async def test_person_detail_shape(seeded_people):
     assert r.json() == {
         "id": EVERY_KIND,
         "name": "Goran Višnjić",
-        "country_code": "HR",
-        "country_name": "Croatia",
-        "birthday": "1972-09-09",
+        "country_code": None,
+        "country_name": None,
+        "birthday": None,
         "deathday": None,
         "gender": "Male",
-        "image_medium": "http://img/goran-m.jpg",
-        "image_original": "http://img/goran-o.jpg",
+        "image_medium": GORAN_MEDIUM,
+        "image_original": GORAN_ORIGINAL,
     }
 
 
@@ -161,10 +177,12 @@ async def test_cast_credit_entry_shape(seeded_people):
     body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
     assert body["cast"][0] == {
         "show": {"id": 1, "name": "Running Drama", "image_medium": None, "premiered": "2020-01-01"},
-        "character": {"id": 50, "name": "Hero", "image_medium": "http://img/hero.jpg"},
-        "self": True,
-        "voice": True,
+        "character": {"id": 50, "name": "Hero", "image_medium": None},
+        "self": False,
+        "voice": False,
     }
+    # `self`, `voice` and a character image have no TMDB counterpart, so they are
+    # false/null on every entry rather than only on this one.
     assert body["cast"][1]["self"] is False and body["cast"][1]["voice"] is False
 
 
@@ -200,7 +218,7 @@ async def test_guest_credit_carries_resolvable_show_context(seeded_people):
             "number": 1,
             "airdate": "2022-07-04",
         },
-        "character": {"id": 52, "name": "Guest Of The Week", "image_medium": None},
+        "character": {"id": 54, "name": "Guest Of The Week", "image_medium": None},
         "self": False,
         "voice": False,
     }
@@ -208,7 +226,7 @@ async def test_guest_credit_carries_resolvable_show_context(seeded_people):
 
 async def test_episode_crew_credit_carries_resolvable_show_context(seeded_people):
     body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
-    # Enough to render "Ended Drama — S1E1 · Writer" without a second round
+    # Enough to render "Ended Drama — S1E1 · Director" without a second round
     # trip. This credit has no person-side upstream route at all (ADR-0003).
     assert body["episode_crew"][0] == {
         "show": {"id": 2, "name": "Ended Drama", "image_medium": None, "premiered": "2012-01-01"},
@@ -219,17 +237,17 @@ async def test_episode_crew_credit_carries_resolvable_show_context(seeded_people
             "number": 1,
             "airdate": "2022-07-04",
         },
-        "role": "Writer",
+        "role": "Director",
     }
 
 
-async def test_two_episode_crew_roles_on_one_episode_keep_credit_order(seeded_people):
-    # Writer is sort_order 0, Director 1. Within one episode the person view has
-    # to serve the same sequence /episodes/{id}/crew does, or the two views of
-    # the same episode disagree.
+async def test_two_episode_crew_roles_on_one_episode_keep_job_order(seeded_people):
+    # Within one episode the person view has to serve the same sequence
+    # /episodes/{id}/crew does, or the two views of the same episode disagree.
+    # That sequence is job name now: TMDB sends no order on a crew entry.
     body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
     on_2011 = [c["role"] for c in body["episode_crew"] if c["episode"]["id"] == 2011]
-    assert on_2011 == ["Writer", "Director"]
+    assert on_2011 == ["Director", "Writer"]
 
 
 async def test_single_category_person_gets_empty_arrays_not_missing_keys(seeded_people):
@@ -282,13 +300,13 @@ async def test_search_items_carry_full_person_detail(seeded_people):
     assert r.json()["items"][0] == {
         "id": EVERY_KIND,
         "name": "Goran Višnjić",
-        "country_code": "HR",
-        "country_name": "Croatia",
-        "birthday": "1972-09-09",
+        "country_code": None,
+        "country_name": None,
+        "birthday": None,
         "deathday": None,
         "gender": "Male",
-        "image_medium": "http://img/goran-m.jpg",
-        "image_original": "http://img/goran-o.jpg",
+        "image_medium": GORAN_MEDIUM,
+        "image_original": GORAN_ORIGINAL,
     }
 
 

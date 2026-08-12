@@ -5,14 +5,13 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch
+from tvbf.catalog.models import Episode, Show
 from tvbf.main import app
-from tvbf.tvmaze.models import Episode, Show
 
 
 async def _seed(session, *, show_id: int, name: str = "S", show_status: str = "Ended"):
-    show = Show(id=show_id, name=name, tvmaze_updated=1, status=show_status)
+    show = Show(id=show_id, name=name, status=show_status)
     session.add(show)
     await session.flush()
     today = date.today()
@@ -20,13 +19,12 @@ async def _seed(session, *, show_id: int, name: str = "S", show_status: str = "E
         Episode(
             id=show_id * 100 + 1,
             show_id=show.id,
-            season=1,
-            number=1,
-            airdate=today - timedelta(days=1),
+            season_number=1,
+            episode_number=1,
+            air_date=today - timedelta(days=1),
         )
     )
     await session.flush()
-    await mirror_spine(session)
     return show
 
 
@@ -63,7 +61,7 @@ async def test_me_watched_returns_payload(authed_client, session):
 async def test_me_watched_status_filter(authed_client, session):
     me = authed_client.user  # type: ignore[attr-defined]
     finished_show = await _seed(session, show_id=940201, name="Finished")
-    progress_show = Show(id=940202, name="WIP", tvmaze_updated=1, status="Ended")
+    progress_show = Show(id=940202, name="WIP", status="Ended")
     session.add(progress_show)
     await session.flush()
     today = date.today()
@@ -72,13 +70,12 @@ async def test_me_watched_status_filter(authed_client, session):
             Episode(
                 id=940202 * 100 + i,
                 show_id=progress_show.id,
-                season=1,
-                number=i,
-                airdate=today - timedelta(days=2 - i + 1),
+                season_number=1,
+                episode_number=i,
+                air_date=today - timedelta(days=2 - i + 1),
             )
         )
     await session.flush()
-    await mirror_spine(session)
     session.add(
         UserEpisodeWatch(
             user_id=me.id,

@@ -5,18 +5,18 @@ from sqlalchemy import select
 
 from tvbf.app.models import ActivityEvent
 from tvbf.app.repos import activity_event_repo
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 async def _seed_show(session, *, show_id: int = 8810001) -> Show:
-    show = Show(id=show_id, name="A", tvmaze_updated=1, status="Ended")
+    show = Show(id=show_id, name="A", status="Ended")
     session.add(show)
     await session.flush()
     return show
 
 
 async def _seed_episode(session, *, episode_id: int, show_id: int, season: int) -> Episode:
-    ep = Episode(id=episode_id, show_id=show_id, season=season, number=1)
+    ep = Episode(id=episode_id, show_id=show_id, season_number=season, episode_number=1)
     session.add(ep)
     await session.flush()
     return ep

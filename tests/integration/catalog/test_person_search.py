@@ -1,16 +1,16 @@
 """Query-level tests for person search (NEU-950).
 
 Person search reuses the folded-match machinery show search already uses, so
-these mirror `test_search_normalization.py` — pointed at `tvmaze.person`.
+these mirror `test_search_normalization.py` — pointed at `catalog.person`.
 """
 
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.browse_queries import list_shows, search_people
-from tvbf.tvmaze.schemas import ShowFilters
+from tvbf.catalog import models as m
+from tvbf.catalog.browse_queries import list_shows, search_people
+from tvbf.catalog.schemas import ShowFilters
 
 
 async def _add_people(session, *names: tuple[int, str]) -> None:
-    session.add_all([m.Person(id=pid, name=name, tvmaze_updated=1) for pid, name in names])
+    session.add_all([m.Person(id=pid, tmdb_id=pid, name=name) for pid, name in names])
     await session.commit()
 
 
@@ -107,8 +107,8 @@ async def test_show_search_is_unaffected_by_person_names(session):
     """Regression guard for the design decision in NEU-947: person names are a
     separate entity search, never a third OR branch in show search. If someone
     later folds `person.name` into `list_shows`, this fails."""
-    session.add(m.Show(id=80100, name="Chuck", tvmaze_updated=1))
-    session.add(m.Show(id=80101, name="Zachary's Diary", tvmaze_updated=1))
+    session.add(m.Show(id=80100, name="Chuck"))
+    session.add(m.Show(id=80101, name="Zachary's Diary"))
     await session.commit()
     await _add_people(session, (80102, "Zachary Levi"))
 

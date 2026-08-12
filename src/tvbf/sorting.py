@@ -1,4 +1,4 @@
-"""Shared sorting helpers used by both the `app/` and `tvmaze/` layers."""
+"""Shared sorting helpers used by both the `app/` and `catalog/` layers."""
 
 import re
 
@@ -15,6 +15,6 @@ def show_name_sort_key(name: str) -> str:
     return _LEADING_ARTICLE_RE.sub("", name).lower()
 
 
-# SQL fragment for the same normalization. Used by tvmaze/browse_queries when
+# SQL fragment for the same normalization. Used by catalog/browse_queries when
 # ordering /shows results so the database matches the Python sort.
 SQL_LEADING_ARTICLE_PATTERN = r"^(the|a|an) +"

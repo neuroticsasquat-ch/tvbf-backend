@@ -201,39 +201,3 @@ async def test_a_tracked_shows_user_data_survives_tombstoning(session, make_user
             .where(am.UserShowRating.user_id == user.id)
         )
     ).scalar_one() == 1
-
-
-async def test_tombstoned_shows_are_hidden_from_browse_but_reachable_by_id(session):
-    """Decision 3: hidden from discovery, not from someone who already has it."""
-    from tvbf.tvmaze.browse_queries import get_show_with_seasons, list_shows
-    from tvbf.tvmaze.schemas import ShowFilters
-
-    await _add_show(session, 770)
-    await _add_show(session, 771, deleted=True)
-    await session.commit()
-
-    rows, total = await list_shows(
-        session, ShowFilters(search="Show 77"), sort="name", page=1, per_page=50
-    )
-    ids = {r.id for r in rows}
-    assert 770 in ids
-    assert 771 not in ids, "a tombstoned show must not be discoverable"
-    assert total == len(rows)
-
-    # Still fully serveable by id, so an existing tracker's links keep working.
-    detail = await get_show_with_seasons(session, 771)
-    assert detail is not None
-
-
-async def test_tombstoned_show_detail_route_still_returns_200(session, authed_client):
-    """At the HTTP layer, not just the query layer.
-
-    The query-layer assertion above would keep passing if a filter were added
-    in the router, which is exactly where someone would add one.
-    """
-    await _add_show(session, 780, deleted=True)
-    await session.commit()
-
-    resp = await authed_client.get("/shows/780")
-    assert resp.status_code == 200
-    assert resp.json()["id"] == 780

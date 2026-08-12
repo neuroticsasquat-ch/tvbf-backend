@@ -8,10 +8,9 @@ from datetime import UTC, datetime
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
+from tvbf.catalog import models as tv
 from tvbf.main import app
-from tvbf.tvmaze import models as tv
 
 
 async def _seed_show(
@@ -26,16 +25,15 @@ async def _seed_show(
             id=show_id,
             name=name,
             type="Scripted",
-            status="Running",
-            language="English",
-            tvmaze_updated=1_700_000_000 + show_id,
+            status="Returning Series",
+            original_language="en",
         )
     )
     await session.flush()
     seasons = {s for _, s, _ in episodes}
     for s in seasons:
         season_id = show_id * 100 + s
-        session.add(tv.Season(id=season_id, show_id=show_id, number=s, episode_order=2))
+        session.add(tv.Season(id=season_id, show_id=show_id, season_number=s, episode_count=2))
     await session.flush()
     for episode_id, season, number in episodes:
         session.add(
@@ -43,13 +41,12 @@ async def _seed_show(
                 id=episode_id,
                 show_id=show_id,
                 season_id=show_id * 100 + season,
-                season=season,
-                number=number,
+                season_number=season,
+                episode_number=number,
                 name=f"{name} S{season}E{number}",
             )
         )
     await session.flush()
-    await mirror_spine(session)
 
 
 @pytest.mark.asyncio

@@ -27,42 +27,36 @@ from tvbf.app.schemas import (
     WatchNextSort,
 )
 from tvbf.app.services import activity_service
+from tvbf.catalog.browse_queries import hydrate_show_refs
+from tvbf.catalog.models import Episode, Network, Season, Show
+from tvbf.catalog.schemas import (
+    ShowSummary,
+    build_episode_out,
+    build_network_ref,
+    build_show_summary,
+)
 from tvbf.sorting import show_name_sort_key
-from tvbf.tvmaze.browse_queries import hydrate_show_refs
-from tvbf.tvmaze.models import Season, Show
-from tvbf.tvmaze.schemas import EpisodeOut, NetworkRef, ShowSummary, build_show_summary
-
-
-def _episode_to_out(ep: object, *, watched: bool | None = None) -> EpisodeOut:
-    out = EpisodeOut.model_validate(ep, from_attributes=True)
-    if watched is not None:
-        out = out.model_copy(update={"watched": watched})
-    return out
 
 
 def build_show_summary_from_refs(
     show: Show,
     *,
     genres_by_show: Mapping[int, list[str]],
-    networks_by_id: Mapping[int, object],
-    wcs_by_id: Mapping[int, object],
+    networks_by_show: Mapping[int, Network],
 ) -> ShowSummary:
-    """Resolve genre/network/web-channel refs against pre-loaded lookup maps and
-    build a ShowSummary. Pure: no DB calls, no side effects."""
-    genre_names = genres_by_show.get(show.id, [])
-    network_row = networks_by_id.get(show.network_id) if show.network_id else None
-    wc_row = wcs_by_id.get(show.web_channel_id) if show.web_channel_id else None
-    network_ref = (
-        NetworkRef(id=network_row.id, name=network_row.name)  # type: ignore[attr-defined]
-        if network_row
-        else None
+    """Resolve genre and network refs against pre-loaded lookup maps and build a
+    ShowSummary. Pure: no DB calls, no side effects.
+
+    One lookup map where there were two — TMDB merged web channel into network
+    (audit §6) — and it is keyed by **show** rather than by network id, because a
+    show now reaches its networks through a join table and `hydrate_show_refs`
+    has already applied the one-network rule.
+    """
+    return build_show_summary(
+        show,
+        genres_by_show.get(show.id, []),
+        build_network_ref(networks_by_show.get(show.id)),
     )
-    wc_ref = (
-        NetworkRef(id=wc_row.id, name=wc_row.name)  # type: ignore[attr-defined]
-        if wc_row
-        else None
-    )
-    return build_show_summary(show, genre_names, network_ref, wc_ref)
 
 
 # ---------------------------------------------------------------------------
@@ -234,7 +228,7 @@ async def list_my_shows(
     show_ids = [show.id for show in shows]
     added_at_by_show = {show.id: added for show, added in pairs}
 
-    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    genres_by_show, networks_by_show = await hydrate_show_refs(db, shows)
     total_counts = await episode_repo.count_per_show(db, show_ids)
     watched_counts = await episode_watch_repo.count_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
@@ -249,12 +243,12 @@ async def list_my_shows(
         db, user_id=user_id, show_ids=show_ids
     )
 
-    next_eps_by_show: dict[int, object] = {}
+    next_eps_by_show: dict[int, Episode] = {}
     for show in shows:
         next_ep = await episode_repo.next_unwatched(db, user_id=user_id, show_id=show.id)
         if next_ep is not None:
             next_eps_by_show[show.id] = next_ep
-    next_ep_ids = {ep.id for ep in next_eps_by_show.values()}  # type: ignore[attr-defined]
+    next_ep_ids = {ep.id for ep in next_eps_by_show.values()}
     watched_next_ids = await episode_watch_repo.watched_in(
         db, user_id=user_id, episode_ids=next_ep_ids
     )
@@ -269,8 +263,7 @@ async def list_my_shows(
                 show=build_show_summary_from_refs(
                     show,
                     genres_by_show=genres_by_show,
-                    networks_by_id=networks_by_id,
-                    wcs_by_id=wcs_by_id,
+                    networks_by_show=networks_by_show,
                 ),
                 watched_episode_count=watched_counts.get(show.id, 0),
                 total_episode_count=total,
@@ -280,10 +273,7 @@ async def list_my_shows(
                 last_watched_at=last_watched.get(show.id),
                 first_watched_at=first_watched.get(show.id),
                 next_episode=(
-                    _episode_to_out(
-                        next_ep,
-                        watched=next_ep.id in watched_next_ids,  # type: ignore[attr-defined]
-                    )
+                    build_episode_out(next_ep, watched=next_ep.id in watched_next_ids)
                     if next_ep is not None
                     else None
                 ),
@@ -324,7 +314,7 @@ async def list_watch_next(
     }
 
     shows = list(shows_by_id.values())
-    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    genres_by_show, networks_by_show = await hydrate_show_refs(db, shows)
     last_watched = await episode_watch_repo.latest_watched_per_show(
         db, user_id=user_id, show_ids=show_ids
     )
@@ -349,10 +339,9 @@ async def list_watch_next(
                 show=build_show_summary_from_refs(
                     show,
                     genres_by_show=genres_by_show,
-                    networks_by_id=networks_by_id,
-                    wcs_by_id=wcs_by_id,
+                    networks_by_show=networks_by_show,
                 ),
-                episode=_episode_to_out(ep, watched=ep.id in watched_ep_ids),
+                episode=build_episode_out(ep, watched=ep.id in watched_ep_ids),
                 last_watched_at=last_watched.get(ep.show_id),
                 last_aired=last_aired.get(ep.show_id),
                 watched_episode_count=watched_counts.get(ep.show_id, 0),
@@ -448,7 +437,7 @@ async def list_upcoming(
             shows_by_id[sid] = show
 
     shows = list(shows_by_id.values())
-    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    genres_by_show, networks_by_show = await hydrate_show_refs(db, shows)
     aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
     total_counts = await episode_repo.count_per_show(db, show_ids)
     watched_counts = await episode_watch_repo.count_watched_per_show(
@@ -472,10 +461,9 @@ async def list_upcoming(
                 show=build_show_summary_from_refs(
                     show,
                     genres_by_show=genres_by_show,
-                    networks_by_id=networks_by_id,
-                    wcs_by_id=wcs_by_id,
+                    networks_by_show=networks_by_show,
                 ),
-                episode=_episode_to_out(ep, watched=ep.id in watched_ep_ids),
+                episode=build_episode_out(ep, watched=ep.id in watched_ep_ids),
                 watched_episode_count=watched_counts.get(ep.show_id, 0),
                 aired_episode_count=aired_counts.get(ep.show_id, 0),
                 upcoming_episode_count=(
@@ -517,12 +505,12 @@ async def list_upcoming_seasons(
     next_by_show: dict[int, Season] = {}
     for season in seasons:
         existing = next_by_show.get(season.show_id)
-        if existing is None or season.number < existing.number:
+        if existing is None or season.season_number < existing.season_number:
             next_by_show[season.show_id] = season
     seasons = list(next_by_show.values())
 
     shows = list(shows_by_id.values())
-    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    genres_by_show, networks_by_show = await hydrate_show_refs(db, shows)
 
     entries: list[UpcomingSeasonEntry] = []
     for season in seasons:
@@ -534,12 +522,11 @@ async def list_upcoming_seasons(
                 show=build_show_summary_from_refs(
                     show,
                     genres_by_show=genres_by_show,
-                    networks_by_id=networks_by_id,
-                    wcs_by_id=wcs_by_id,
+                    networks_by_show=networks_by_show,
                 ),
-                season_number=season.number,
+                season_number=season.season_number,
                 season_name=season.name,
-                premiere_date=season.premiere_date,
+                premiere_date=season.air_date,
                 added_at=added_at_by_show.get(season.show_id),
             )
         )
@@ -569,7 +556,7 @@ async def list_upcoming_shows(
     if not unaired_shows:
         return []
 
-    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, unaired_shows)
+    genres_by_show, networks_by_show = await hydrate_show_refs(db, unaired_shows)
     added_at_by_show = {show.id: added for show, added in pairs}
 
     entries: list[UpcomingShowEntry] = [
@@ -577,10 +564,9 @@ async def list_upcoming_shows(
             show=build_show_summary_from_refs(
                 show,
                 genres_by_show=genres_by_show,
-                networks_by_id=networks_by_id,
-                wcs_by_id=wcs_by_id,
+                networks_by_show=networks_by_show,
             ),
-            premiere_date=show.premiered,
+            premiere_date=show.first_air_date,
             added_at=added_at_by_show.get(show.id),
         )
         for show in unaired_shows
@@ -648,7 +634,7 @@ async def list_watched(
         return []
     show_ids = [s.id for s in shows]
 
-    genres_by_show, networks_by_id, wcs_by_id = await hydrate_show_refs(db, shows)
+    genres_by_show, networks_by_show = await hydrate_show_refs(db, shows)
     total_counts = await episode_repo.count_per_show(db, show_ids)
     aired_counts = await episode_repo.count_aired_per_show(db, show_ids, today_d)
     watched_counts = await episode_watch_repo.count_watched_per_show(
@@ -670,7 +656,7 @@ async def list_watched(
         if watched == 0:
             continue
         aired = aired_counts.get(show.id, 0)
-        is_ended = (show.status or "") == "Ended"
+        is_ended = show.is_ended
         row_status: str
         if aired > 0 and watched >= aired and is_ended:
             row_status = "finished"
@@ -685,8 +671,7 @@ async def list_watched(
                 show=build_show_summary_from_refs(
                     show,
                     genres_by_show=genres_by_show,
-                    networks_by_id=networks_by_id,
-                    wcs_by_id=wcs_by_id,
+                    networks_by_show=networks_by_show,
                 ),
                 watched_episode_count=watched,
                 aired_episode_count=aired,

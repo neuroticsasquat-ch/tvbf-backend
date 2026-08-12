@@ -4,16 +4,14 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User
-from tvbf.deps import get_current_user, get_session
-from tvbf.tvmaze import browse_queries
-from tvbf.tvmaze.schemas import (
+from tvbf.catalog import browse_queries
+from tvbf.catalog.schemas import (
     ALLOWED_SORT_KEYS,
     CastMemberOut,
     CrewMemberOut,
     EpisodeOut,
     GenreOut,
     NetworkOut,
-    NetworkRef,
     PersonCreditsOut,
     PersonListPage,
     PersonOut,
@@ -24,10 +22,16 @@ from tvbf.tvmaze.schemas import (
     ShowSummary,
     build_cast_member,
     build_crew_member,
+    build_episode_out,
+    build_network_out,
+    build_network_ref,
     build_person_credits,
+    build_person_out,
+    build_season_out,
     build_show_detail,
     build_show_summary,
 )
+from tvbf.deps import get_current_user, get_session
 
 
 def _set_browse_cache(response: Response) -> None:
@@ -51,8 +55,10 @@ async def list_genres(session: AsyncSession = Depends(get_session)) -> list:
 
 
 @router.get("/networks", response_model=list[NetworkOut])
-async def list_networks(session: AsyncSession = Depends(get_session)) -> list:
-    return await browse_queries.list_networks(session)
+async def list_networks(session: AsyncSession = Depends(get_session)) -> list[NetworkOut]:
+    # One list where there were two: TMDB draws no broadcaster/streamer
+    # distinction, so `catalog.network` absorbed `tvmaze.web_channel` (audit §6).
+    return [build_network_out(n) for n in await browse_queries.list_networks(session)]
 
 
 # These payloads carry per-user fields (my_rating, ...) that mutate via PUT
@@ -92,28 +98,22 @@ async def list_shows_route(
     rows, total = await browse_queries.list_shows(
         session, filters, sort=sort, page=page, per_page=per_page
     )
-    genres_by_show, networks_by_id, wcs_by_id = await browse_queries.hydrate_show_refs(
-        session, rows
-    )
+    genres_by_show, networks_by_show = await browse_queries.hydrate_show_refs(session, rows)
     matched_aka_by_show = await browse_queries.hydrate_matched_aka(session, rows, search)
     my_ratings = await browse_queries.hydrate_my_ratings(
         session, viewer_id=user.id, show_ids=[s.id for s in rows]
     )
 
-    items: list[ShowSummary] = []
-    for show in rows:
-        net = networks_by_id.get(show.network_id) if show.network_id is not None else None
-        wc = wcs_by_id.get(show.web_channel_id) if show.web_channel_id is not None else None
-        items.append(
-            build_show_summary(
-                show,
-                genre_names=genres_by_show.get(show.id, []),
-                network=NetworkRef(id=net.id, name=net.name) if net else None,
-                web_channel=NetworkRef(id=wc.id, name=wc.name) if wc else None,
-                matched_aka=matched_aka_by_show.get(show.id),
-                my_rating=my_ratings.get(show.id),
-            )
+    items: list[ShowSummary] = [
+        build_show_summary(
+            show,
+            genre_names=genres_by_show.get(show.id, []),
+            network=build_network_ref(networks_by_show.get(show.id)),
+            matched_aka=matched_aka_by_show.get(show.id),
+            my_rating=my_ratings.get(show.id),
         )
+        for show in rows
+    ]
 
     return ShowListPage(
         items=items,
@@ -135,18 +135,11 @@ async def get_show(
     result = await browse_queries.get_show_with_seasons(session, show_id)
     if result is None:
         raise HTTPException(status_code=404, detail="show not found")
-    show, seasons, genres, network, web_channel = result
+    show, seasons, genres, network = result
     my_ratings = await browse_queries.hydrate_my_ratings(
         session, viewer_id=user.id, show_ids=[show.id]
     )
-    return build_show_detail(
-        show,
-        seasons,
-        genres,
-        network,
-        web_channel,
-        my_rating=my_ratings.get(show.id),
-    )
+    return build_show_detail(show, seasons, genres, network, my_rating=my_ratings.get(show.id))
 
 
 @router.get("/shows/{show_id}/seasons", response_model=list[SeasonOut])
@@ -154,11 +147,11 @@ async def get_show_seasons_route(
     show_id: int,
     response: Response,
     session: AsyncSession = Depends(get_session),
-) -> list:
+) -> list[SeasonOut]:
     response.headers["Cache-Control"] = _SHOW_EP_CACHE
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
-    return await browse_queries.get_show_seasons(session, show_id)
+    return [build_season_out(s) for s in await browse_queries.get_show_seasons(session, show_id)]
 
 
 # Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded
@@ -176,8 +169,8 @@ async def get_show_cast_route(
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return [
-        build_cast_member(credit, person, character)
-        for credit, person, character in await browse_queries.list_show_cast(session, show_id)
+        build_cast_member(person, character)
+        for person, character in await browse_queries.list_show_cast(session, show_id)
     ]
 
 
@@ -209,7 +202,7 @@ async def search_people_route(
 ) -> PersonListPage:
     rows, total = await browse_queries.search_people(session, search, page=page, per_page=per_page)
     return PersonListPage(
-        items=[PersonOut.model_validate(person) for person in rows],
+        items=[build_person_out(person) for person in rows],
         page=page,
         per_page=per_page,
         total=total,
@@ -225,7 +218,7 @@ async def get_person_route(
     person = await browse_queries.get_person(session, person_id)
     if person is None:
         raise HTTPException(status_code=404, detail="person not found")
-    return PersonOut.model_validate(person)
+    return build_person_out(person)
 
 
 # Filmography is split off from the detail route for the same reason show cast
@@ -264,8 +257,7 @@ async def get_episode_route(
     my_ratings = await browse_queries.hydrate_my_episode_ratings(
         session, viewer_id=user.id, episode_ids=[ep.id]
     )
-    out = EpisodeOut.model_validate(ep)
-    return out.model_copy(update={"my_rating": my_ratings.get(ep.id)})
+    return build_episode_out(ep, my_rating=my_ratings.get(ep.id))
 
 
 # Guest cast is the episode-level counterpart of /shows/{id}/cast and shares its
@@ -282,10 +274,8 @@ async def get_episode_guest_cast_route(
     if not await browse_queries.episode_exists(session, episode_id):
         raise HTTPException(status_code=404, detail="episode not found")
     return [
-        build_cast_member(credit, person, character)
-        for credit, person, character in await browse_queries.list_episode_guest_cast(
-            session, episode_id
-        )
+        build_cast_member(person, character)
+        for person, character in await browse_queries.list_episode_guest_cast(session, episode_id)
     ]
 
 
@@ -314,7 +304,7 @@ async def get_show_episodes_route(
     session: AsyncSession = Depends(get_session),
     user: User = Depends(get_current_user),
     season: int | None = None,
-) -> list:
+) -> list[EpisodeOut]:
     response.headers["Cache-Control"] = _SHOW_EP_CACHE
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
@@ -322,7 +312,4 @@ async def get_show_episodes_route(
     my_ratings = await browse_queries.hydrate_my_episode_ratings(
         session, viewer_id=user.id, episode_ids=[e.id for e in eps]
     )
-    return [
-        EpisodeOut.model_validate(ep).model_copy(update={"my_rating": my_ratings.get(ep.id)})
-        for ep in eps
-    ]
+    return [build_episode_out(ep, my_rating=my_ratings.get(ep.id)) for ep in eps]

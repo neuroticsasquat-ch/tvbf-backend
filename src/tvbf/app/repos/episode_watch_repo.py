@@ -7,7 +7,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import UserEpisodeWatch
-from tvbf.tvmaze.models import Episode
+from tvbf.catalog.models import Episode
 
 
 async def mark(
@@ -152,13 +152,13 @@ async def watched_count_per_season(
 ) -> dict[int, int]:
     rows = (
         await db.execute(
-            select(Episode.season, func.count(UserEpisodeWatch.episode_id))
+            select(Episode.season_number, func.count(UserEpisodeWatch.episode_id))
             .join(UserEpisodeWatch, UserEpisodeWatch.episode_id == Episode.id)
             .where(
                 Episode.show_id == show_id,
                 UserEpisodeWatch.user_id == user_id,
             )
-            .group_by(Episode.season)
+            .group_by(Episode.season_number)
         )
     ).all()
     return {season: count for season, count in rows}

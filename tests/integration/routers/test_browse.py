@@ -10,7 +10,6 @@ from fastapi import HTTPException
 from httpx import ASGITransport
 
 from tests.fixtures.browse.seed import GENRES, seed
-from tests.fixtures.spines import mirror_spine
 from tvbf.main import app
 from tvbf.routers import browse as browse_router
 
@@ -51,7 +50,9 @@ async def test_get_networks_returns_flat_sorted_list(client):
     r = await client.get("/networks")
     assert r.status_code == 200
     body = r.json()
-    assert [n["name"] for n in body] == ["Network A", "Network B"]
+    # Three, not two: TMDB draws no broadcaster/streamer distinction, so the
+    # former web channel is an ordinary network now (audit §6).
+    assert [n["name"] for n in body] == ["Network A", "Network B", "Web Channel X"]
     assert body[0]["country_code"] == "US"
     assert body[1]["country_code"] == "GB"
 
@@ -146,13 +147,13 @@ async def test_get_shows_search_includes_matched_aka_when_only_aka_matches(authe
     """Search response surfaces the matched AKA when the show name didn't match."""
     from sqlalchemy import insert
 
-    from tvbf.tvmaze import models as m
+    from tvbf.catalog import models as m
 
-    session.add(m.Show(id=501, name="東京リベンジャーズ", tvmaze_updated=1))
+    session.add(m.Show(id=501, tmdb_id=501, name="東京リベンジャーズ"))
     await session.flush()
     await session.execute(
         insert(m.ShowAka).values(
-            [{"show_id": 501, "name": "Tokyo Revengers", "country_code": "US"}]
+            [{"show_id": 501, "title": "Tokyo Revengers", "country_code": "US"}]
         )
     )
     await session.commit()
@@ -378,12 +379,11 @@ async def test_list_shows_hydrates_my_rating_for_caller(authed_client, session):
     from decimal import Decimal
 
     from tvbf.app.repos import show_rating_repo
-    from tvbf.tvmaze.models import Show
+    from tvbf.catalog.models import Show
 
-    session.add(Show(id=77001, name="RatedShow1", tvmaze_updated=1))
-    session.add(Show(id=77002, name="RatedShow2", tvmaze_updated=1))
+    session.add(Show(id=77001, name="RatedShow1"))
+    session.add(Show(id=77002, name="RatedShow2"))
     await session.flush()
-    await mirror_spine(session)
     await show_rating_repo.upsert(
         session, user_id=authed_client.user.id, show_id=77001, stars=Decimal("4.5")
     )
@@ -400,11 +400,10 @@ async def test_get_show_detail_hydrates_my_rating(authed_client, session):
     from decimal import Decimal
 
     from tvbf.app.repos import show_rating_repo
-    from tvbf.tvmaze.models import Show
+    from tvbf.catalog.models import Show
 
-    session.add(Show(id=77003, name="RatedShow3", tvmaze_updated=1))
+    session.add(Show(id=77003, name="RatedShow3"))
     await session.flush()
-    await mirror_spine(session)
     await show_rating_repo.upsert(
         session, user_id=authed_client.user.id, show_id=77003, stars=Decimal("3.0")
     )
@@ -419,13 +418,12 @@ async def test_get_episode_hydrates_my_rating(authed_client, session):
     from decimal import Decimal
 
     from tvbf.app.repos import episode_rating_repo
-    from tvbf.tvmaze.models import Episode, Show
+    from tvbf.catalog.models import Episode, Show
 
-    session.add(Show(id=77004, name="ShowWithRatedEp", tvmaze_updated=1))
+    session.add(Show(id=77004, name="ShowWithRatedEp"))
     await session.flush()
-    session.add(Episode(id=77004001, show_id=77004, season=1, number=1))
+    session.add(Episode(id=77004001, show_id=77004, season_number=1, episode_number=1))
     await session.flush()
-    await mirror_spine(session)
     await episode_rating_repo.upsert(
         session, user_id=authed_client.user.id, episode_id=77004001, stars=Decimal("4.0")
     )
@@ -440,14 +438,13 @@ async def test_get_show_episodes_list_hydrates_my_rating(authed_client, session)
     from decimal import Decimal
 
     from tvbf.app.repos import episode_rating_repo
-    from tvbf.tvmaze.models import Episode, Show
+    from tvbf.catalog.models import Episode, Show
 
-    session.add(Show(id=77005, name="ShowEpsList", tvmaze_updated=1))
+    session.add(Show(id=77005, name="ShowEpsList"))
     await session.flush()
-    session.add(Episode(id=77005001, show_id=77005, season=1, number=1))
-    session.add(Episode(id=77005002, show_id=77005, season=1, number=2))
+    session.add(Episode(id=77005001, show_id=77005, season_number=1, episode_number=1))
+    session.add(Episode(id=77005002, show_id=77005, season_number=1, episode_number=2))
     await session.flush()
-    await mirror_spine(session)
     await episode_rating_repo.upsert(
         session, user_id=authed_client.user.id, episode_id=77005001, stars=Decimal("2.5")
     )
@@ -458,3 +455,55 @@ async def test_get_show_episodes_list_hydrates_my_rating(authed_client, session)
     by_id = {e["id"]: e for e in r.json()}
     assert by_id[77005001]["my_rating"] == 2.5
     assert by_id[77005002]["my_rating"] is None
+
+
+# ---------------------------------------------------------------------------
+# Query count (NEU-1047 acceptance criterion)
+# ---------------------------------------------------------------------------
+
+
+async def test_get_shows_issues_a_fixed_number_of_queries_whatever_the_page_size(
+    authed_client, session
+):
+    """`GET /shows` must not issue a query per row.
+
+    The catalog layer spends four: count, page, genres-by-show,
+    networks-by-show. It spent five against `tvmaze` — `web_channel` was its own
+    `IN` query and TMDB merged the concept into `network` (audit §6).
+
+    Counted by whether the statement touches `catalog`, so the session lookup and
+    the viewer's own ratings — `app` tables, one query each and neither scaling
+    with the page — stay out of the number the criterion is about. **The
+    invariant is that nothing moves with the page size**, which is what the batch
+    hydration in `hydrate_show_refs` buys and what an accidental per-row `.get()`
+    would break; that half is asserted over every statement, catalog or not.
+    """
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    await seed(session)
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    # The route runs on the app's own engine (`get_session`), not on the test
+    # session's — listening on the wrong one silently counts zero.
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        one = await authed_client.get("/shows?per_page=1")
+        for_one = list(statements)
+        statements.clear()
+        ten = await authed_client.get("/shows?per_page=100")
+        for_ten = list(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    catalog_queries = [s for s in for_one if "catalog." in s]
+
+    assert len(one.json()["items"]) == 1
+    assert len(ten.json()["items"]) == 10
+    assert len(for_one) == len(for_ten)
+    assert len(catalog_queries) == 4, catalog_queries

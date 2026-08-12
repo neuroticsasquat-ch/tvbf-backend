@@ -19,8 +19,9 @@ from tvbf.app.repos import activity_repo, user_repo
 from tvbf.app.repos.activity_repo import FeedRow
 from tvbf.app.schemas import EpisodeMini, FeedItem, FeedPage, ShowMini, UserBrief
 from tvbf.app.services import connection_service
+from tvbf.catalog.episodes import public_number
+from tvbf.catalog.models import Episode, Show
 from tvbf.config import get_settings
-from tvbf.tvmaze.models import Episode, Show
 
 
 def encode_cursor(occurred_at: datetime, sort_id: UUID) -> str:
@@ -94,8 +95,8 @@ async def _hydrate(db: AsyncSession, rows: list[FeedRow]) -> list[FeedItem]:
                     EpisodeMini(
                         id=episode_obj.id,
                         name=episode_obj.name,
-                        season=episode_obj.season,
-                        number=episode_obj.number or 0,
+                        season=episode_obj.season_number,
+                        number=public_number(episode_obj) or 0,
                     )
                     if episode_obj
                     else None

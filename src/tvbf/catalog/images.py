@@ -36,11 +36,11 @@ absent path to `None` rather than to a URL that would 404, and the SPA already
 guards each of these fields (`?? FALLBACK_POSTER`, or a `? :` around the
 `<img>`), so a null renders the placeholder it always did.
 
-**Nothing calls this yet, and that is the ticket boundary.** Every read still
-goes to `tvmaze`, whose rows carry finished URLs; NEU-1047 is the pass that
-repoints the browse, search, `/me` and credits routes to `catalog`, and it is
-the caller. This ticket owns the decision and the mechanism; that one owns the
-switch.
+**The caller is `catalog/schemas.py`**, which composes every `image_medium` /
+`image_original` in the API from a path. NEU-1063 owned the decision and the
+mechanism; NEU-1047 threw the switch, and made `CharacterRef.image_medium`
+permanently null in the process — TMDB models a character as free text, so
+`catalog.character` has no image column to compose from.
 """
 
 from dataclasses import dataclass

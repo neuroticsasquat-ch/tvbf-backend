@@ -9,15 +9,14 @@ from datetime import UTC, date, datetime, timedelta
 import pytest
 from httpx import ASGITransport, AsyncClient
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
 from tvbf.app.services import connection_service
+from tvbf.catalog.models import Episode, Show
 from tvbf.main import app
-from tvbf.tvmaze.models import Episode, Show
 
 
 async def _seed_show(session, *, show_id: int, episodes: int = 1):
-    show = Show(id=show_id, name="S", tvmaze_updated=1, status="Ended")
+    show = Show(id=show_id, name="S", status="Ended")
     session.add(show)
     await session.flush()
     today = date.today()
@@ -26,13 +25,12 @@ async def _seed_show(session, *, show_id: int, episodes: int = 1):
             Episode(
                 id=show_id * 100 + i,
                 show_id=show.id,
-                season=1,
-                number=i,
-                airdate=today - timedelta(days=episodes - i + 1),
+                season_number=1,
+                episode_number=i,
+                air_date=today - timedelta(days=episodes - i + 1),
             )
         )
     await session.flush()
-    await mirror_spine(session)
     return show
 
 

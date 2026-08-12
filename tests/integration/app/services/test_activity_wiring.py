@@ -7,14 +7,13 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import ActivityEvent
 from tvbf.app.services import episode_service, my_shows_service, rating_service
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 async def _seed_show(session, *, show_id: int, episodes_per_season=(2,)) -> Show:
-    show = Show(id=show_id, name="A", tvmaze_updated=1, status="Ended")
+    show = Show(id=show_id, name="A", status="Ended")
     session.add(show)
     await session.flush()
     today = date.today()
@@ -24,13 +23,12 @@ async def _seed_show(session, *, show_id: int, episodes_per_season=(2,)) -> Show
                 Episode(
                     id=show_id * 100 + season_idx * 10 + ep_num,
                     show_id=show.id,
-                    season=season_idx,
-                    number=ep_num,
-                    airdate=today - timedelta(days=10),
+                    season_number=season_idx,
+                    episode_number=ep_num,
+                    air_date=today - timedelta(days=10),
                 )
             )
     await session.flush()
-    await mirror_spine(session)
     return show
 
 
