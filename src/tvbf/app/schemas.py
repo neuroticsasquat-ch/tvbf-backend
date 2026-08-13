@@ -339,7 +339,10 @@ class EpisodeMini(BaseModel):
     id: int
     name: str | None
     season: int
-    number: int
+    # `None` for a copied special, which has no real episode number.
+    # `EpisodeOut.number` has always been nullable for the same reason; this one
+    # rendered `0` instead until NEU-1062, which is a number no episode has.
+    number: int | None
 
 
 class FeedItem(BaseModel):
