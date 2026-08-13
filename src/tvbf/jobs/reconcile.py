@@ -18,6 +18,12 @@ discrepancy is printed with the user and the show it belonged to.
 
 `--spine catalog` points the episode→show joins at the new schema, which is how
 the same baseline is re-checked after cutover.
+
+**Merging this is not running it.** The post-repoint acceptance test (NEU-1125)
+is a production run whose verdict gates NEU-1050 and NEU-1051, and a non-zero
+exit adjudicated by hand is worth exactly as much as the argument written down
+beside it — so every run is recorded in `docs/migration/README.md`, alongside the
+query that tells a benign gain from a loss.
 """
 
 import argparse

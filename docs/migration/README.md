@@ -36,6 +36,7 @@ pointing at unmapped rows.
 | Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
 | `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ✅ 2026-08-12 — all five constraints on `catalog`, `ON DELETE` unchanged, verified by `pg_get_constraintdef` |
 | Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
+| Post-repoint acceptance test (NEU-1125) | `task reconcile:verify -- --spine catalog` | **after NEU-1046 + NEU-1047**, gates NEU-1050 and NEU-1051 | ✅ 2026-08-13 — **GO**. Exit 1 with eight discrepancies, every one of them a *gain* traceable to one user's app use after the baseline was taken (11 watches, 2 ratings, 13 events); no `LOST` line, and the null-show bucket empty on both sides. Close-of-window state committed as `neu-1125-post-repoint-snapshot.json` |
 | Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ⬜ not yet run — 228,841 mirrored shows carry no credits at all. ~8.7h, resumable, safe to kill and restart. Run `task backfill:credits:report` first and keep the artifact |
 
 ## Deleting episodes needs two indexes that did not exist
@@ -958,3 +959,131 @@ The revert is **wider than one run of this pass** — it matches every user row 
 an ingested episode with a copy beneath it, because nothing records which rows a
 given batch moved. That is right for undoing the migration and wrong for undoing
 a batch; `--limit` is what exists for the latter.
+
+## Post-repoint acceptance test (NEU-1125)
+
+The project spec's acceptance test — *"a migration that cannot produce that proof
+does not ship."* The NEU-1030 harness, re-run against the **committed** baseline
+with `--spine catalog`, after NEU-1046 moved the foreign keys and NEU-1047 moved
+the reads. It proves nothing was lost while the window was open, and it is what
+NEU-1050's code removal and NEU-1051's `DROP SCHEMA` are gated on. Nothing gets
+deleted on the strength of a check that ran before the thing being verified had
+happened.
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline - --spine catalog' \
+  < docs/migration/reconciliation-baseline.json
+```
+
+### The production run (2026-08-13)
+
+**Exit 1 — eight discrepancies, all of them gains, no loss anywhere. Verdict:
+GO.** Recorded here in full, because a non-zero exit adjudicated by hand is worth
+exactly as much as the argument written down beside it.
+
+| | |
+| -- | -- |
+| baseline | `docs/migration/reconciliation-baseline.json`, captured 2026-08-09 and re-captured 2026-08-11 after the prune |
+| spine | `catalog` |
+| deployed image | `1e7e51339af5a20d8c3716d2a1628b6acc74e8e1` (NEU-1047 live) |
+| run at | 2026-08-13 22:15 UTC |
+| exit code | 1 |
+
+```
+GAINED 1 episode_ratings  — Ted Lasso (44458)            (baseline 1,  current 2)
+GAINED 1 episode_watches  — Ted Lasso (44458)            (baseline 35, current 36)
+GAINED 2 activity_events  — Ted Lasso (44458)            (baseline 3,  current 5)
+GAINED 1 episode_ratings  — Lucky (81228)                (baseline 5,  current 6)
+GAINED 1 episode_watches  — Lucky (81228)                (baseline 5,  current 6)
+GAINED 2 activity_events  — Lucky (81228)                (baseline 10, current 12)
+GAINED 9 episode_watches  — Arrested Development (321)   (baseline 15, current 24)
+GAINED 9 activity_events  — Arrested Development (321)   (baseline 17, current 26)
+```
+
+**Every line reads GAINED, and that is the proof.** `compare` reports both
+directions, so a harness that found a loss would have said so; eight gains and no
+`LOST` line is the no-data-lost statement the ticket asks for, stated by the
+instrument rather than inferred from totals.
+
+**The gains are one user's ordinary app use after the baseline was taken**, not
+something that ran during the window. Each row carries a timestamp later than the
+2026-08-11 re-capture, and each pairs with the activity event the write path
+emits alongside it — nine `watched_episode` events for nine watches on 2026-08-12
+02:01 UTC (a binge marked over 21 seconds), and a `rated_episode` + a
+`watched_episode` for each of the two rate-then-mark pairs on 2026-08-13 01:37
+and 02:20 UTC. 11 watches, 2 ratings, 13 events: the eight lines add up to
+exactly those rows and to nothing else.
+
+`tracked_shows` (621) and `show_ratings` (97) are **unchanged**, and the
+`show_id: null` bucket is **empty on both sides** — no watch, rating or event
+lost the episode row that resolves it to a show. That second one is the check the
+LEFT joins exist for, and it is the one a totals comparison would miss.
+
+### Adjudicating a gain, without reinventing the query
+
+A gain is only benign if the rows behind it are newer than the baseline. The
+harness counts and does not date, so that question is answered against the live
+database — the query is here so the next person does not write it from scratch at
+2am with a window open:
+
+```sql
+select 'episode_watch' as kind, e.show_id, count(*),
+       min(w.watched_at), max(w.watched_at)
+  from app.user_episode_watch w
+  join catalog.episode e on e.id = w.episode_id
+ where e.show_id in (<the shows the harness named>)
+   and w.watched_at > timestamptz '<baseline capture>'
+ group by 1, 2
+union all
+select 'event:' || a.verb, a.target_id, count(*), min(a.created_at), max(a.created_at)
+  from app.activity_event a
+ where a.created_at > timestamptz '<baseline capture>'
+ group by 1, 2;
+```
+
+A gain whose rows predate the baseline is **not** benign and blocks the window:
+it means something wrote history, which is a different failure from a user
+watching television.
+
+### Why the baseline is not re-captured to make this exit 0
+
+It would be one command and it would destroy the proof. The committed baseline is
+the only record of the pre-cutover state; replacing it with a post-cutover capture
+turns the acceptance test into a tautology — a snapshot compared against itself
+always passes, including after a loss. The harness's own docstring settles the
+adjacent temptation for the same reason: no flag lets gains pass, because *"a
+harness that warns is a harness that gets ignored during a migration window."*
+
+The cost is that a live application drifts away from a fixed baseline, so every
+future re-run also exits 1 and also has to be read. That is the intended trade —
+the run is cheap and the reading is the point.
+
+## `neu-1125-post-repoint-snapshot.json`
+
+The close-of-window state, captured on `--spine catalog` immediately after the run
+above:
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.reconcile capture --spine catalog' \
+  > docs/migration/neu-1125-post-repoint-snapshot.json
+```
+
+| | baseline (`tvmaze`, 2026-08-11) | this snapshot (`catalog`, 2026-08-13) |
+| -- | -- | -- |
+| users | 5 | 5 |
+| tracked shows | 621 | 621 |
+| episode watches | 8,569 | 8,580 |
+| show ratings | 97 | 97 |
+| episode ratings | 78 | 80 |
+| activity events | 802 | 815 |
+
+**It does not replace the baseline and must not be used as one** — NEU-1125 is the
+comparison against the pre-cutover file, and that is the comparison that means
+something. What this artifact is for is the *next* question: a re-run after
+NEU-1050 or NEU-1051 diffs against this, so a loss caused by retiring code or
+dropping the schema shows up against the state the window actually closed in
+rather than against a state three passes older. Same format, same determinism, and
+it holds user ids rather than emails, which is why it can be committed at all.
+
