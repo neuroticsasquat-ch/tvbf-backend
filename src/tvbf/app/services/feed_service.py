@@ -11,7 +11,7 @@ import binascii
 from datetime import datetime
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import select, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import InvalidCursor
@@ -19,8 +19,9 @@ from tvbf.app.repos import activity_repo, user_repo
 from tvbf.app.repos.activity_repo import FeedRow
 from tvbf.app.schemas import EpisodeMini, FeedItem, FeedPage, ShowMini, UserBrief
 from tvbf.app.services import connection_service
+from tvbf.catalog import seasons as season_rules
 from tvbf.catalog.episodes import public_number
-from tvbf.catalog.models import Episode, Show
+from tvbf.catalog.models import Episode, Season, Show
 from tvbf.config import get_settings
 
 
@@ -74,9 +75,16 @@ async def _hydrate(db: AsyncSession, rows: list[FeedRow]) -> list[FeedItem]:
     show_ids: set[int] = {r.show_id for r in rows if r.show_id is not None}
     episode_ids: set[int] = {r.episode_id for r in rows if r.episode_id is not None}
 
+    season_keys: set[tuple[int, int]] = {
+        (r.show_id, r.season_number)
+        for r in rows
+        if r.show_id is not None and r.season_number is not None
+    }
+
     users = await user_repo.get_many_by_ids(db, actor_ids)
     shows = await _shows_by_id(db, show_ids)
     episodes = await _episodes_by_id(db, episode_ids)
+    season_names = await _season_names_by_key(db, season_keys)
 
     items: list[FeedItem] = []
     for r in rows:
@@ -102,6 +110,11 @@ async def _hydrate(db: AsyncSession, rows: list[FeedRow]) -> list[FeedItem]:
                     else None
                 ),
                 season_number=r.season_number,
+                season_name=(
+                    season_names.get((r.show_id, r.season_number))
+                    if r.show_id is not None and r.season_number is not None
+                    else None
+                ),
                 rollup_count=r.rollup_count,
                 stars=r.stars,
                 occurred_at=r.occurred_at,
@@ -122,3 +135,40 @@ async def _episodes_by_id(db: AsyncSession, ids: set[int]) -> dict[int, Episode]
         return {}
     rows = (await db.execute(select(Episode).where(Episode.id.in_(ids)))).scalars().all()
     return {e.id: e for e in rows}
+
+
+async def _season_names_by_key(
+    db: AsyncSession, keys: set[tuple[int, int]]
+) -> dict[tuple[int, int], str | None]:
+    """Season names for the `(show_id, season_number)` pairs a feed page names.
+
+    One batch query for the whole page, the same shape as `_shows_by_id` and
+    `_episodes_by_id` — a per-item lookup would make the feed's query count scale
+    with the page size.
+
+    The pairs are matched as tuples rather than by widening to
+    `show_id IN (...) AND season_number IN (...)`, which would drag in every
+    other show's row at those numbers and make the dedupe below decide between
+    rows no item asked about.
+
+    **`catalog.season` deliberately carries no `UNIQUE (show_id, season_number)`**
+    (NEU-1119 kept 18,339 copied seasons TMDB has no counterpart for, and 33
+    pairs are still doubled outright), so a pair can return two rows in whichever
+    order Postgres likes. `season_rules.deduped` is the one decision about which
+    of them a read path shows — the same function `browse_queries.get_show_seasons`
+    and `season_repo.unaired_for_shows` call. A missing pair and a season upstream
+    never named both map to `None`, because the SPA falls back to the number for
+    each.
+    """
+    if not keys:
+        return {}
+    rows = (
+        (
+            await db.execute(
+                select(Season).where(tuple_(Season.show_id, Season.season_number).in_(list(keys)))
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return {(s.show_id, s.season_number): s.name for s in season_rules.deduped(rows)}

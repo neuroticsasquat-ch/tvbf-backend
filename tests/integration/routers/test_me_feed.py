@@ -11,7 +11,7 @@ from httpx import ASGITransport, AsyncClient
 from tvbf.app.models import ActivityEvent
 from tvbf.app.services import connection_service
 from tvbf.app.services.feed_service import encode_cursor
-from tvbf.catalog.models import Episode, Show
+from tvbf.catalog.models import Episode, Season, Show
 from tvbf.main import app
 
 
@@ -536,3 +536,269 @@ async def test_a_native_special_keeps_its_real_episode_number(authed_client, mak
 
     (item,) = [i for i in r.json()["items"] if i["kind"] == "watched_episode"]
     assert (item["episode"]["season"], item["episode"]["number"]) == (0, 3)
+
+
+# ---------------------------------------------------------------------------
+# season_name (NEU-1132)
+# ---------------------------------------------------------------------------
+
+
+async def _seed_season(
+    session,
+    *,
+    season_id: int,
+    show_id: int,
+    number: int,
+    name: str | None,
+    tmdb_id: int | None = None,
+) -> Season:
+    season = Season(id=season_id, show_id=show_id, season_number=number, name=name, tmdb_id=tmdb_id)
+    session.add(season)
+    await session.flush()
+    return season
+
+
+@pytest.mark.asyncio
+async def test_watched_season_carries_the_season_name(authed_client, make_user, session):
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sn@example.com", display_name="SN")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970200, episodes_per_season=(1,))
+    await _seed_season(session, season_id=970200, show_id=show.id, number=1, name="Season One")
+    session.add(
+        _make_event(
+            actor_id=friend.id,
+            verb="watched_season",
+            target_type="show",
+            target_id=show.id,
+            season_number=1,
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.commit()
+
+    items = (await authed_client.get("/me/feed")).json()["items"]
+    assert len(items) == 1
+    assert items[0]["season_number"] == 1
+    assert items[0]["season_name"] == "Season One"
+
+
+@pytest.mark.asyncio
+async def test_season_name_is_null_when_upstream_never_named_the_season(
+    authed_client, make_user, session
+):
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sn2@example.com", display_name="SN2")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970210, episodes_per_season=(1,))
+    await _seed_season(session, season_id=970210, show_id=show.id, number=1, name=None)
+    session.add(
+        _make_event(
+            actor_id=friend.id,
+            verb="watched_season",
+            target_type="show",
+            target_id=show.id,
+            season_number=1,
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.commit()
+
+    items = (await authed_client.get("/me/feed")).json()["items"]
+    assert items[0]["season_name"] is None
+
+
+@pytest.mark.asyncio
+async def test_season_name_is_null_for_kinds_that_carry_no_season_number(
+    authed_client, make_user, session
+):
+    """Every kind but `watched_season` has a null `season_number`, so it must
+    read null here too — even when the show *does* carry named seasons."""
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sn3@example.com", display_name="SN3")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970220, episodes_per_season=(1,))
+    await _seed_season(session, season_id=970220, show_id=show.id, number=1, name="Season One")
+    base = datetime.now(UTC) - timedelta(hours=1)
+    session.add_all(
+        [
+            _make_event(
+                actor_id=friend.id,
+                verb="added_show",
+                target_type="show",
+                target_id=show.id,
+                created_at=base,
+            ),
+            _make_event(
+                actor_id=friend.id,
+                verb="watched_show",
+                target_type="show",
+                target_id=show.id,
+                created_at=base + timedelta(minutes=1),
+            ),
+            _make_event(
+                actor_id=friend.id,
+                verb="rated_episode",
+                target_type="episode",
+                target_id=show.id * 100 + 11,
+                payload={"stars": 5.0},
+                created_at=base + timedelta(minutes=2),
+            ),
+        ]
+    )
+    await session.commit()
+
+    items = (await authed_client.get("/me/feed")).json()["items"]
+    assert len(items) == 3
+    assert all(i["season_number"] is None for i in items)
+    assert all(i["season_name"] is None for i in items)
+
+
+@pytest.mark.asyncio
+async def test_doubled_season_number_resolves_through_the_read_path_rule(
+    authed_client, make_user, session
+):
+    """A show carrying two rows for one season number must resolve through
+    `season_rules.deduped` — the ingested row wins over the copy.
+
+    Two shows carry the doubled pair with the ids in opposite orders, so no
+    ordering-based pick — first row, last row, lowest id — satisfies both. Only
+    "prefer the row carrying a `tmdb_id`" does. This is the NEU-1119 residue at
+    the season users actually see mislabelled: specials, season 0.
+    """
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sn4@example.com", display_name="SN4")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970230, episodes_per_season=(1,))
+    # The NEU-1042 copy: no tmdb_id, lower id.
+    await _seed_season(session, season_id=970230, show_id=show.id, number=0, name="Season 0")
+    # The ingested row TMDB named.
+    await _seed_season(
+        session, season_id=970231, show_id=show.id, number=0, name="Specials", tmdb_id=9702310
+    )
+    # A second show with the ids the other way round: ingested low, copy high.
+    other = await _seed_show(session, show_id=970232, episodes_per_season=(1,))
+    await _seed_season(
+        session, season_id=970233, show_id=other.id, number=0, name="Specials", tmdb_id=9702330
+    )
+    await _seed_season(session, season_id=970234, show_id=other.id, number=0, name="Season 0")
+    now = datetime.now(UTC)
+    session.add_all(
+        [
+            _make_event(
+                actor_id=friend.id,
+                verb="watched_season",
+                target_type="show",
+                target_id=show.id,
+                season_number=0,
+                created_at=now - timedelta(minutes=1),
+            ),
+            _make_event(
+                actor_id=friend.id,
+                verb="watched_season",
+                target_type="show",
+                target_id=other.id,
+                season_number=0,
+                created_at=now,
+            ),
+        ]
+    )
+    await session.commit()
+
+    items = (await authed_client.get("/me/feed")).json()["items"]
+    assert len(items) == 2
+    assert {i["season_number"] for i in items} == {0}
+    assert {i["show"]["id"]: i["season_name"] for i in items} == {
+        show.id: "Specials",
+        other.id: "Specials",
+    }
+
+
+@pytest.mark.asyncio
+async def test_feed_issues_a_fixed_number_of_queries_whatever_the_page_size(
+    authed_client, make_user, session
+):
+    """`season_name` costs one batch query, not one per item (NEU-1132).
+
+    Asserted as "nothing moves with the page size" rather than a fixed count, the
+    same invariant `test_get_shows_issues_a_fixed_number_of_queries...` pins one
+    subsystem over: a per-item `.get()` is what would break it.
+    """
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sn5@example.com", display_name="SN5")
+    await _accept_pair(session, me, friend)
+    base = datetime.now(UTC) - timedelta(hours=2)
+    for i in range(5):
+        show_id = 970240 + i
+        show = await _seed_show(session, show_id=show_id, episodes_per_season=(1,))
+        await _seed_season(
+            session, season_id=show_id, show_id=show.id, number=1, name=f"Season {i}"
+        )
+        session.add(
+            _make_event(
+                actor_id=friend.id,
+                verb="watched_season",
+                target_type="show",
+                target_id=show.id,
+                season_number=1,
+                created_at=base + timedelta(minutes=i),
+            )
+        )
+    await session.commit()
+
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    # The route runs on the app's own engine (`get_session`), not the test
+    # session's — listening on the wrong one silently counts zero.
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        one = await authed_client.get("/me/feed", params={"limit": 1})
+        for_one = list(statements)
+        statements.clear()
+        many = await authed_client.get("/me/feed", params={"limit": 50})
+        for_many = list(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert len(one.json()["items"]) == 1
+    assert len(many.json()["items"]) == 5
+    assert len(for_one) == len(for_many), (for_one, for_many)
+    season_queries = [s for s in for_many if "catalog.season" in s]
+    assert len(season_queries) == 1, season_queries
+
+
+@pytest.mark.asyncio
+async def test_season_name_is_null_when_no_season_row_is_mirrored(
+    authed_client, make_user, session
+):
+    """A `watched_season` event whose season has no `catalog.season` row at all
+    reads null rather than failing — the same shape a null name gets, because the
+    SPA falls back to the number for both."""
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="sn6@example.com", display_name="SN6")
+    await _accept_pair(session, me, friend)
+    show = await _seed_show(session, show_id=970250, episodes_per_season=(1,))
+    session.add(
+        _make_event(
+            actor_id=friend.id,
+            verb="watched_season",
+            target_type="show",
+            target_id=show.id,
+            season_number=1,
+            created_at=datetime.now(UTC),
+        )
+    )
+    await session.commit()
+
+    items = (await authed_client.get("/me/feed")).json()["items"]
+    assert len(items) == 1
+    assert items[0]["season_number"] == 1
+    assert items[0]["season_name"] is None
