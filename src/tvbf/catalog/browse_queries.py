@@ -133,9 +133,7 @@ async def primary_networks(session: AsyncSession, show_ids: Sequence[int]) -> di
 async def get_show_seasons(session: AsyncSession, show_id: int) -> list[m.Season]:
     """A show's seasons, one per season number — see `catalog/seasons.py`."""
     result = await session.execute(
-        select(m.Season)
-        .where(m.Season.show_id == show_id)
-        .order_by(m.Season.season_number, m.Season.id)
+        select(m.Season).where(m.Season.show_id == show_id).order_by(*season_rules.SEASON_ORDER)
     )
     return season_rules.deduped(result.scalars().all())
 

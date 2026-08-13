@@ -76,7 +76,10 @@ async def bulk_mark_season(
 async def bulk_unmark_season(
     db: AsyncSession, *, user_id: UUID, show_id: int, season_number: int
 ) -> None:
-    ep_ids = await episode_repo.list_episode_ids_for_season(db, show_id, season_number)
+    """Un-marking reads the *unfiltered* season list, where marking reads the
+    filtered one — so a copied special ticked by hand is still reachable from
+    the season it hangs inside (NEU-1062)."""
+    ep_ids = await episode_repo.list_all_episode_ids_for_season(db, show_id, season_number)
     if ep_ids:
         await episode_watch_repo.bulk_unmark(db, user_id=user_id, episode_ids=ep_ids)
     await activity_service.cancel(

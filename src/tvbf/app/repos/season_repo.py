@@ -4,6 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import seasons as season_rules
+from tvbf.catalog.episodes import is_specials_season
 from tvbf.catalog.models import Episode, Season
 
 
@@ -29,12 +30,22 @@ async def unaired_for_shows(db: AsyncSession, show_ids: list[int], today: date) 
     surviving row for *its own* episodes reports an already-aired season as
     episode-less. The episode's denormalised `season_number` is the same grain
     `episode_repo.aired_count_per_season` already groups by.
+
+    The specials season is dropped outright (NEU-1062): a season 0 whose specials
+    have not aired is not what a show is waiting for, and every show TMDB has
+    announced a special for would otherwise read as having a season on the way.
+    The drop happens **after** the dedupe, leaving that rule's ordering exactly
+    where it was.
     """
     if not show_ids:
         return []
-    canonical = season_rules.deduped(
-        (await db.execute(select(Season).where(Season.show_id.in_(show_ids)))).scalars().all()
-    )
+    canonical = [
+        s
+        for s in season_rules.deduped(
+            (await db.execute(select(Season).where(Season.show_id.in_(show_ids)))).scalars().all()
+        )
+        if not is_specials_season(s.season_number)
+    ]
     if not canonical:
         return []
 
