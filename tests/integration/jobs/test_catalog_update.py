@@ -1,9 +1,10 @@
 """The catalog-delta CLI entrypoint (`python -m tvbf.jobs.catalog_update`).
 
-Same contract as the TV Maze daily and pinned separately on purpose: the two
-are different scheduled tasks feeding different deadmen, and the whole reason
-the catalog delta has its own check is that a shared one would let either task
-keep it alive while the other quietly stopped running.
+Same contract as the TV Maze daily this outlived (NEU-1050), and since that
+one's tests went with it, this file is now the only cover for the shape both
+shared — `tvbf.jobs.scheduled`. The exit code is what Coolify reads and the
+deadman pings are what catch a task that never runs at all, so both are pinned
+here, including the two paths only the daily's file used to reach.
 """
 
 import httpx
@@ -112,9 +113,13 @@ async def test_a_live_catalog_run_is_left_alone_and_reports_no_outcome(session, 
 
 
 @respx.mock
-async def test_a_live_tv_maze_daily_does_not_block_the_catalog_delta(session, worker):
-    """Different kinds, different guards — and after cutover the TV Maze daily
-    is gone, so the catalog delta must never have depended on it."""
+async def test_a_live_run_of_another_kind_does_not_block_the_catalog_delta(session, worker):
+    """Different kinds, different guards.
+
+    The stand-in here is an `update` row, the kind the retired TV Maze daily
+    wrote: those rows still stand in `ingest_run`, and one left `running` by a
+    process that died must never wedge the delta that replaced it.
+    """
     worker("succeeded")
     await create_run(session, kind="update")
     await session.commit()
@@ -123,6 +128,46 @@ async def test_a_live_tv_maze_daily_does_not_block_the_catalog_delta(session, wo
 
     kinds = sorted((await session.execute(select(m.IngestRun.kind))).scalars().all())
     assert kinds == ["catalog_update", "update"]
+
+
+@respx.mock
+async def test_an_unset_healthcheck_url_attempts_no_request(session, worker):
+    """Local runs and tests must never call out. respx would raise on any
+    unmocked request, so reaching the end at all is the assertion."""
+    worker("succeeded")
+
+    assert await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=None)) is True
+    assert not respx.calls
+
+
+@respx.mock
+async def test_a_cancelled_run_also_exits_nonzero(session, worker):
+    """`succeeded` is the only outcome that means the delta ran. A run the
+    startup cleanup cancelled did not, and Coolify has to hear about it."""
+    worker("cancelled")
+    respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
+    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+
+    assert (
+        await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
+        is False
+    )
+    assert fail.called
+
+
+@respx.mock
+async def test_a_ping_that_fails_is_swallowed(session, worker, caplog):
+    """A ping that cannot get out is itself what the deadman alerts on, so it
+    must not change the job's own outcome."""
+    worker("succeeded")
+    respx.post(f"{HEALTHCHECK}/start").mock(side_effect=httpx.ConnectError("no route"))
+    respx.post(HEALTHCHECK).mock(side_effect=httpx.ConnectError("no route"))
+
+    assert (
+        await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
+        is True
+    )
+    assert "healthcheck ping" in caplog.text
 
 
 def test_main_maps_the_outcome_to_an_exit_code(monkeypatch):

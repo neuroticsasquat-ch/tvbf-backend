@@ -9,16 +9,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.tvmaze import models as m
 
 # Run kinds that share one `last_update_cursor` lineage. Each ingest axis has
-# its own: the initial ingest sets the cursor and the daily delta advances it,
-# so the two kinds must be read together. Axes must NOT see each other's.
+# its own, and axes must NOT see each other's — unscoped, one delta resumes
+# from another's watermark and silently skips work (see
+# `get_last_successful_cursor`). The TV Maze axes (`initial`/`update` and
+# `person_update`) went with their orchestrators in NEU-1050; their rows stand
+# in `ingest_run` and no code reads their cursors any more.
 #
-# The person lineage is a single kind since NEU-962 retired the initial pass,
-# and stays a named lineage rather than an inlined literal because the scoping
-# is the point: unscoped, the person delta would resume from the show axis's
-# cursor and silently skip work (see `get_last_successful_cursor`).
-SHOW_CURSOR_KINDS: tuple[str, ...] = ("initial", "update")
-PERSON_CURSOR_KINDS: tuple[str, ...] = ("person_update",)
-
 # The TMDB catalog delta's lineage (NEU-1035). A single kind, because the full
 # catalog pass deliberately hands nothing forward: TMDB's delta is a date range
 # rather than a per-show epoch, so `catalog_initial` has no cursor to write and
@@ -69,23 +65,22 @@ async def finalize_run(
     await session.execute(update(m.IngestRun).where(m.IngestRun.id == run_id).values(**values))
 
 
-async def get_last_successful_cursor(
-    session: AsyncSession, *, kinds: Sequence[str] = SHOW_CURSOR_KINDS
-) -> int | None:
+async def get_last_successful_cursor(session: AsyncSession, *, kinds: Sequence[str]) -> int | None:
     """Latest `last_update_cursor` across a cursor lineage.
 
     Scoped to a lineage on purpose. `ingest_run.last_update_cursor` is one
     column shared by every run kind, so an unscoped query returns whichever
     run finished most recently regardless of what produced it. Once a second
     axis stores a watermark there too, each delta would resume from the
-    other's position — and since every cursor is a TV Maze epoch, nothing
+    other's position — and since a cursor is a bare integer either way, nothing
     errors: work is just silently skipped.
 
-    Scoped by lineage rather than by a single kind because the initial ingest
-    hands its cursor to the first daily delta (see `ingest.py`, which
-    finalizes an `initial` run with `last_update_cursor`). Narrowing to
-    `kind == "update"` would break that handoff and make the first delta after
-    an ingest re-fetch the whole catalog.
+    `kinds` has no default. A lineage is a caller's to name, and a default
+    would make the one call that forgot to name one read the wrong axis's
+    watermark without saying so — the failure this scoping exists to prevent.
+    A lineage may be several kinds: the retired TV Maze pair read `initial` and
+    `update` together, because the initial ingest handed its cursor to the
+    first daily delta.
     """
     result = await session.execute(
         select(m.IngestRun.last_update_cursor)

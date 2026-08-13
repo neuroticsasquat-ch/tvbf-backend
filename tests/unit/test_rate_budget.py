@@ -11,7 +11,7 @@ import pytest
 from tvbf.rate_budget import (
     BUCKETS,
     TMDB_BUCKET,
-    TVMAZE_BUCKET,
+    Bucket,
     Budget,
     DatabaseRateLimiter,
     RateLimiter,
@@ -20,7 +20,27 @@ from tvbf.rate_budget import (
 )
 
 LOGGER = "tvbf.rate_budget"
-TVMAZE_BUDGET = Budget(18, 10.0)
+TMDB_BUDGET = Budget(20, 1.0, lease=25)
+OTHER = "other"
+OTHER_BUDGET = Budget(18, 10.0)
+
+
+@pytest.fixture
+def second_source(monkeypatch):
+    """Register a second upstream for the duration of one test.
+
+    TMDB has been the only registered source since NEU-1050 retired TV Maze, but
+    every per-source property here — a bucket of its own, a limiter of its own,
+    no divergence warning across sources — is about what happens when there are
+    two. A registry of one cannot assert any of them, and the next upstream to
+    be added is exactly when they have to still hold.
+    """
+    monkeypatch.setitem(
+        BUCKETS, OTHER, Bucket(table="catalog.rate_budget", key_column="source", key=OTHER)
+    )
+    reset_rate_limiters()
+    yield OTHER
+    reset_rate_limiters()
 
 
 async def test_rate_limiter_enforces_rate():
@@ -50,7 +70,12 @@ async def test_rate_limiter_acquires_n_slots_at_once():
 
 def test_every_registered_source_names_a_distinct_bucket():
     """Two sources sharing a row would silently merge their ceilings."""
-    assert BUCKETS == {"tvmaze": TVMAZE_BUCKET, "tmdb": TMDB_BUCKET}
+    assert BUCKETS == {"tmdb": TMDB_BUCKET}
+    rows = {(b.table, b.key) for b in BUCKETS.values()}
+    assert len(rows) == len(BUCKETS)
+
+
+def test_a_registered_source_still_names_a_distinct_bucket(second_source):
     rows = {(b.table, b.key) for b in BUCKETS.values()}
     assert len(rows) == len(BUCKETS)
 
@@ -59,14 +84,12 @@ def test_an_unregistered_source_raises():
     """Fail closed. A typo that silently got its own unshared bucket is exactly
     the overshoot the registry exists to prevent."""
     with pytest.raises(KeyError):
-        get_rate_limiter("tvmze", TVMAZE_BUDGET)
+        get_rate_limiter("tmbd", TMDB_BUDGET)
 
 
 def test_get_rate_limiter_returns_one_instance_per_budget():
-    assert get_rate_limiter("tvmaze", TVMAZE_BUDGET) is get_rate_limiter("tvmaze", TVMAZE_BUDGET)
-    assert get_rate_limiter("tvmaze", TVMAZE_BUDGET) is not get_rate_limiter(
-        "tvmaze", Budget(9, 10.0)
-    )
+    assert get_rate_limiter("tmdb", TMDB_BUDGET) is get_rate_limiter("tmdb", TMDB_BUDGET)
+    assert get_rate_limiter("tmdb", TMDB_BUDGET) is not get_rate_limiter("tmdb", Budget(9, 10.0))
 
 
 def test_one_budget_written_three_ways_is_one_limiter():
@@ -86,9 +109,9 @@ def test_one_budget_written_three_ways_is_one_limiter():
     assert len(limiters) == 1
 
 
-def test_each_source_gets_its_own_limiter():
-    assert get_rate_limiter("tvmaze", TVMAZE_BUDGET) is not get_rate_limiter(
-        "tmdb", Budget(18, 10.0)
+def test_each_source_gets_its_own_limiter(second_source):
+    assert get_rate_limiter(second_source, OTHER_BUDGET) is not get_rate_limiter(
+        "tmdb", OTHER_BUDGET
     )
 
 
@@ -100,15 +123,15 @@ def test_a_second_distinct_budget_for_one_source_warns(caplog):
     signal anyone gets.
     """
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        get_rate_limiter("tvmaze", TVMAZE_BUDGET)
-        get_rate_limiter("tvmaze", Budget(9, 10.0))
+        get_rate_limiter("tmdb", OTHER_BUDGET)
+        get_rate_limiter("tmdb", Budget(9, 10.0))
 
     warnings = [r for r in caplog.records if r.name == LOGGER]
     assert len(warnings) == 1
     message = warnings[0].getMessage()
     # The source and both budgets are named: the one just asked for, and the
     # one already held.
-    assert "tvmaze" in message
+    assert "tmdb" in message
     assert "9 per 10.0s" in message
     assert "Budget(calls=18, window_seconds=10.0, lease=1)" in message
 
@@ -122,20 +145,20 @@ def test_a_lease_that_differs_alone_still_warns(caplog):
     assert len([r for r in caplog.records if r.name == LOGGER]) == 1
 
 
-def test_two_sources_on_different_budgets_stay_quiet(caplog):
-    """Divergence is per source. TMDB's ceiling has nothing to do with TV
-    Maze's, and warning about the difference would train the warning away."""
+def test_two_sources_on_different_budgets_stay_quiet(caplog, second_source):
+    """Divergence is per source. One upstream's ceiling has nothing to do with
+    another's, and warning about the difference would train the warning away."""
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        get_rate_limiter("tvmaze", TVMAZE_BUDGET)
-        get_rate_limiter("tmdb", Budget(20, 1.0, lease=25))
+        get_rate_limiter(second_source, OTHER_BUDGET)
+        get_rate_limiter("tmdb", TMDB_BUDGET)
 
     assert [r for r in caplog.records if r.name == LOGGER] == []
 
 
 def test_one_budget_asked_for_repeatedly_stays_quiet(caplog):
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        first = get_rate_limiter("tvmaze", TVMAZE_BUDGET)
-        second = get_rate_limiter("tvmaze", TVMAZE_BUDGET)
+        first = get_rate_limiter("tmdb", TMDB_BUDGET)
+        second = get_rate_limiter("tmdb", TMDB_BUDGET)
 
     assert first is second
     assert [r for r in caplog.records if r.name == LOGGER] == []
@@ -144,11 +167,11 @@ def test_one_budget_asked_for_repeatedly_stays_quiet(caplog):
 def test_reset_rate_limiters_clears_the_seen_budgets(caplog):
     """Without clearing `_seen_budgets`, the warning would fire on whichever
     test happened to ask for a different budget next."""
-    get_rate_limiter("tvmaze", TVMAZE_BUDGET)
+    get_rate_limiter("tmdb", OTHER_BUDGET)
     reset_rate_limiters()
 
     with caplog.at_level(logging.WARNING, logger=LOGGER):
-        get_rate_limiter("tvmaze", Budget(9, 10.0))
+        get_rate_limiter("tmdb", Budget(9, 10.0))
 
     assert [r for r in caplog.records if r.name == LOGGER] == []
     assert get_rate_limiter.cache_info().currsize == 1

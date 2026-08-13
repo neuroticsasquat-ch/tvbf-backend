@@ -1193,8 +1193,8 @@ class RateBudget(Base):
     """One upstream's request budget, as a token bucket every process shares.
 
     An upstream's cap applies to us as a whole. An in-process limiter could
-    express that only while every job ran inside the app; the daily now runs as
-    its own process (`tvbf.jobs.daily_update`), so the budget has to live
+    express that only while every job ran inside the app; a delta now runs as
+    its own process (`tvbf.jobs.catalog_update`), so the budget has to live
     somewhere both can see (ADR-0006).
 
     A row per source, unlike `tvmaze.rate_budget`'s single check-constrained

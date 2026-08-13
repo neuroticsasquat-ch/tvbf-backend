@@ -2,7 +2,7 @@
 
 FastAPI service backing TV Binge Friend. Four subsystems today:
 
-- **TV Maze ingestion** — mirrors the TV Maze catalog (shows, seasons, episodes, networks, genres, AKAs) into a local Postgres instance via an initial bulk ingest, a daily delta update, and a separate AKA backfill.
+- **TMDB ingestion** — mirrors the TMDB catalog (shows, seasons, episodes, networks, genres, alternative titles, credits) into the local `catalog` schema via a full pass, a daily delta and a credits backfill. The TV Maze ingest it replaced was retired in NEU-1050; the `tvmaze` schema still holds its data until NEU-1051 drops it.
 - **Browse API** — gated read endpoints over the mirrored catalog: search (name + AKA), filter, sort, paginate, detail.
 - **User service** — invite-gated signup, password login, session cookies, account self-service.
 - **Watchlist** — per-user show membership, episode-watched tracking, derived "watch next" / "upcoming" feeds.
@@ -128,26 +128,28 @@ Guarded by `Authorization: Bearer $ADMIN_TOKEN` (default `dev-secret-change-me` 
 
 | Endpoint | Purpose |
 |---|---|
-| `POST /admin/ingest` | kicks off initial bulk ingest as an in-process async task; returns `202 + run_id` |
-| `GET /admin/ingest/{run_id}` | poll progress |
-| `POST /admin/update` | run one daily-delta cycle (in-process async) |
-| `POST /admin/backfill-akas` | backfill `show_aka` rows for shows where `akas_synced_at IS NULL`; returns `202 + run_id` |
-| `GET /admin/backfill-akas/{run_id}` | poll AKA backfill progress |
+| `POST /admin/catalog-ingest` | kicks off the full TMDB catalog pass as an in-process async task; returns `202 + run_id` |
+| `GET /admin/catalog-ingest/{run_id}` | poll that pass's progress |
+| `POST /admin/catalog-update` | run one TMDB delta by hand (in-process async) |
+| `GET /admin/ingest/{run_id}` | status of a run of **any** kind — how a run with no status route of its own is polled |
 | `POST /admin/invites` | create an invite code |
 | `GET /admin/invites` | list every invite (consumed and unconsumed) |
 
-Convenience wrappers: `task ingest`, `task ingest:status -- <uuid>`, `task update`, `task akas:backfill`, `task akas:backfill:status -- <uuid>`.
+Convenience wrappers: `task ingest:catalog`, `task ingest:catalog:status -- <uuid>`, `task update:catalog`, `task ingest:status -- <uuid>`.
 
-A full initial ingest is ~80k shows. At the configured rate limit (~18 requests / 10 s) plus per-show upsert overhead, wall-clock time is ~12–16 hours. AKA backfill takes the same order of time. Both runs are **resumable**: re-triggering only fetches shows not yet present (or shows whose `akas_synced_at` is NULL). The startup lifespan hook cancels any `running` run whose `last_progress_at` exceeds `INGEST_STALE_RUN_MINUTES` (default 15).
+A full catalog pass is ~229k series and takes ~8.7 hours: the loop is sequential, so latency binds at ~7.6 req/s and the 20 req/s budget never does. It is **resumable** — `catalog.show.tmdb_synced_at` is its watermark, so re-triggering only fetches what a previous attempt did not finish. The startup lifespan hook cancels any `running` run whose `last_progress_at` exceeds `INGEST_STALE_RUN_MINUTES` (default 15).
+
+The daily delta runs as a Coolify scheduled task, `python -m tvbf.jobs.catalog_update`, whose exit code *is* the result; `HEALTHCHECK_CATALOG_URL` points at a healthchecks.io deadman for the case Coolify cannot see, which is the task never running at all.
 
 Invite codes never expire — they consume on first use. Revoke an unredeemed invite by deleting its row.
 
 ## Database
 
-One Postgres database, two schemas:
+One Postgres database, three schemas that matter here:
 
-- `tvmaze` — catalog mirror (owned entirely by this service). Tables: `show`, `season`, `episode`, `genre`, `network`, `web_channel`, `show_genre`, `show_aka`, `ingest_run`.
-- `app` — user accounts, sessions, watch tracking, invites. Tables: `user`, `session`, `user_show_watch`, `user_episode_watch`, `login_attempt`, `invite`. Cross-schema FKs from `app.user_show_watch.show_id` and `app.user_episode_watch.episode_id` reference `tvmaze` with full referential integrity.
+- `catalog` — the source-neutral catalog mirror, filled from TMDB and read by every browse, search, `/me` and credits route.
+- `tvmaze` — the retired TV Maze mirror. Nothing in the running app reads it any more; it stands, with `ingest_run` and the request-budget row, until NEU-1051 drops it.
+- `app` — user accounts, sessions, watch tracking, invites. Cross-schema FKs from `app.user_show_watch.show_id` and `app.user_episode_watch.episode_id` reference `catalog` with full referential integrity.
 
 The test suite uses a separate `tvbf_test` database in the same Postgres instance; the conftest `session` fixture creates schemas and tables at session scope and truncates between tests.
 
@@ -161,7 +163,9 @@ All config flows through environment variables (read by `src/tvbf/config.py`). F
 | `ADMIN_TOKEN` | `dev-secret-change-me` | bearer token for `/admin/*` |
 | `CORS_ALLOWED_ORIGINS` | `https://app.tvbf.localhost` | comma-separated allowlist |
 | `COOKIE_DOMAIN` | `.tvbf.localhost` | session-cookie scope |
-| `TVMAZE_RATE_LIMIT_REQUESTS` / `TVMAZE_RATE_LIMIT_WINDOW_SECONDS` | `18` / `10` | token-bucket rate limit |
+| `TMDB_READ_ACCESS_TOKEN` | unset | TMDB API Read Access Token (the long JWT), sent as `Authorization: Bearer` |
+| `TMDB_RATE_LIMIT_REQUESTS` / `TMDB_RATE_LIMIT_WINDOW_SECONDS` | `20` / `1` | token-bucket rate limit |
+| `HEALTHCHECK_CATALOG_URL` | unset | healthchecks.io deadman for the scheduled TMDB delta |
 | `INGEST_CONSECUTIVE_FAILURE_THRESHOLD` | `10` | abort a run after N consecutive per-show failures |
 | `INGEST_STALE_RUN_MINUTES` | `15` | startup cleanup threshold |
 | `LOG_LEVEL` | `INFO` | Python root logger level |

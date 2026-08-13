@@ -1,6 +1,6 @@
 """CLI-level tests for `python -m tvbf.jobs.reconcile` (NEU-1030).
 
-These exercise `run()` rather than `main()`, matching `test_daily_update.py`:
+These exercise `run()` rather than `main()`:
 `main` is a three-line wrapper whose `asyncio.run` would rebuild the event loop
 under the shared engine's pooled connections. What matters here is the **exit
 code**, because that is the contract the cutover gate reads.
