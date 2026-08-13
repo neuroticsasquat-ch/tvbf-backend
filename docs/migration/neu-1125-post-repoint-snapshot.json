@@ -1,0 +1,5161 @@
+{
+  "artifact_version": 1,
+  "spine": "catalog",
+  "totals": {
+    "activity_events": 815,
+    "episode_ratings": 80,
+    "episode_watches": 8580,
+    "show_ratings": 97,
+    "tracked_shows": 621,
+    "users": 5
+  },
+  "users": [
+    {
+      "shows": [
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 76004,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        }
+      ],
+      "totals": {
+        "activity_events": 1,
+        "episode_ratings": 0,
+        "episode_watches": 0,
+        "show_ratings": 0,
+        "tracked_shows": 1
+      },
+      "user_id": "24019ff5-e9f7-4cc1-aa0e-8b83be68a148"
+    },
+    {
+      "shows": [],
+      "totals": {
+        "activity_events": 0,
+        "episode_ratings": 0,
+        "episode_watches": 0,
+        "show_ratings": 0,
+        "tracked_shows": 0
+      },
+      "user_id": "aa0d2f75-793e-436a-bc0d-a990afa1bfa5"
+    },
+    {
+      "shows": [
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 32,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 75,
+          "show_id": 157,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 62,
+          "show_id": 169,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 174,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 60,
+          "show_id": 179,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 16,
+          "episode_ratings": 0,
+          "episode_watches": 102,
+          "show_id": 319,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 26,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 321,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 35,
+          "episode_ratings": 0,
+          "episode_watches": 1097,
+          "show_id": 361,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 86,
+          "show_id": 527,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 7,
+          "episode_ratings": 0,
+          "episode_watches": 65,
+          "show_id": 618,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 39,
+          "show_id": 1369,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 1825,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 9,
+          "episode_ratings": 0,
+          "episode_watches": 118,
+          "show_id": 5262,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 29,
+          "show_id": 7480,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 7522,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 22,
+          "episode_ratings": 10,
+          "episode_watches": 44,
+          "show_id": 13417,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 1,
+          "episode_watches": 34,
+          "show_id": 15299,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 25,
+          "show_id": 22904,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 39,
+          "show_id": 23470,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 15,
+          "show_id": 27436,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 8,
+          "episode_ratings": 0,
+          "episode_watches": 51,
+          "show_id": 30960,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 34432,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 11,
+          "show_id": 34522,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 36947,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37336,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37649,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 13,
+          "episode_ratings": 6,
+          "episode_watches": 26,
+          "show_id": 38052,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 41414,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 40,
+          "show_id": 42062,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 13,
+          "episode_ratings": 6,
+          "episode_watches": 12,
+          "show_id": 43450,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 5,
+          "episode_ratings": 2,
+          "episode_watches": 36,
+          "show_id": 44458,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 44776,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 19,
+          "show_id": 44933,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 45039,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 32,
+          "show_id": 45501,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 46656,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 47859,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 48830,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 5,
+          "episode_ratings": 0,
+          "episode_watches": 4,
+          "show_id": 48945,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 14,
+          "show_id": 49313,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 50036,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 21,
+          "show_id": 51394,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 52336,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 52352,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 53277,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 53541,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 8,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 54128,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 1,
+          "episode_watches": 39,
+          "show_id": 54198,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 54285,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 5,
+          "show_id": 54914,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 56198,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 56512,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 34,
+          "show_id": 58323,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 58948,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 5,
+          "show_id": 58950,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 61315,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62569,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 7,
+          "episode_ratings": 1,
+          "episode_watches": 9,
+          "show_id": 63234,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63268,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64950,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 67725,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 17,
+          "episode_ratings": 8,
+          "episode_watches": 8,
+          "show_id": 68237,
+          "show_ratings": 1,
+          "tracked_shows": 0
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68242,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 34,
+          "episode_ratings": 16,
+          "episode_watches": 16,
+          "show_id": 73889,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 1,
+          "episode_watches": 8,
+          "show_id": 74442,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 74443,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 75030,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 75852,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 77003,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 20,
+          "show_id": 77060,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 78570,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 79185,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 15,
+          "episode_ratings": 7,
+          "episode_watches": 10,
+          "show_id": 79390,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 7,
+          "show_id": 80725,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 5,
+          "show_id": 81130,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 12,
+          "episode_ratings": 6,
+          "episode_watches": 6,
+          "show_id": 81228,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 21,
+          "episode_ratings": 10,
+          "episode_watches": 10,
+          "show_id": 82915,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 84641,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 86175,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 86738,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 11,
+          "episode_ratings": 5,
+          "episode_watches": 5,
+          "show_id": 87753,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 89109,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        }
+      ],
+      "totals": {
+        "activity_events": 356,
+        "episode_ratings": 80,
+        "episode_watches": 2775,
+        "show_ratings": 38,
+        "tracked_shows": 67
+      },
+      "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a"
+    },
+    {
+      "shows": [
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 14,
+          "show_id": 5,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 38,
+          "show_id": 7,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 8,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 84,
+          "show_id": 28,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 32,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 48,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 157,
+          "show_id": 49,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 20,
+          "show_id": 51,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 58,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 61,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 69,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 117,
+          "show_id": 75,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 23,
+          "show_id": 101,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 112,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 120,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 150,
+          "show_id": 123,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 127,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 128,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 138,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 63,
+          "show_id": 139,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 3,
+          "show_id": 142,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 143,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 149,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 150,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 156,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 17,
+          "episode_ratings": 0,
+          "episode_watches": 52,
+          "show_id": 157,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 158,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 167,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 63,
+          "show_id": 169,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 91,
+          "show_id": 170,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 208,
+          "show_id": 171,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 172,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 137,
+          "show_id": 174,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 175,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 7,
+          "episode_ratings": 0,
+          "episode_watches": 60,
+          "show_id": 179,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 180,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 221,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 255,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 269,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 286,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 77,
+          "show_id": 295,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 305,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 312,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 110,
+          "show_id": 318,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 20,
+          "episode_ratings": 0,
+          "episode_watches": 102,
+          "show_id": 319,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 320,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 11,
+          "episode_ratings": 0,
+          "episode_watches": 53,
+          "show_id": 321,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 347,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 356,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 41,
+          "episode_ratings": 0,
+          "episode_watches": 76,
+          "show_id": 361,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 367,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 376,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 383,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 385,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 430,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 240,
+          "show_id": 431,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 465,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 501,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 515,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 526,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 532,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 141,
+          "show_id": 537,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 547,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 21,
+          "show_id": 549,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 557,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 574,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 637,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 666,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 96,
+          "show_id": 676,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 679,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 712,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 748,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 753,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 771,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 776,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1085,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 26,
+          "show_id": 1137,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1258,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 40,
+          "show_id": 1271,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1294,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1365,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 21,
+          "show_id": 1366,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1367,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 52,
+          "show_id": 1368,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 14,
+          "show_id": 1370,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1402,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1442,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1595,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 1775,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1804,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 1825,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1828,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1859,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 1864,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 47,
+          "show_id": 1871,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2028,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2052,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2473,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2474,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2477,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2612,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2686,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2750,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2761,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 2790,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 42,
+          "show_id": 2993,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 3004,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3075,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 14,
+          "show_id": 3080,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3099,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3142,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3252,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3386,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3481,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 3594,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 3934,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 3964,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 4154,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 4343,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 8,
+          "episode_ratings": 0,
+          "episode_watches": 118,
+          "show_id": 5262,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 5905,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 5967,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 6131,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 6393,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 6456,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 6508,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 6514,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 6585,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 6763,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 7098,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 7522,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 8161,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 8167,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 8702,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 8817,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 8870,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 9085,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 9827,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 10363,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 10801,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 32,
+          "show_id": 11538,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 11553,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 13162,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 13323,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 45,
+          "show_id": 13417,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 13595,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 13634,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 14302,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 4,
+          "show_id": 14657,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 15324,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 16149,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 17181,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 17312,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 17715,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 11,
+          "show_id": 17861,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 17869,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 18100,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 18784,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 19355,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 43,
+          "show_id": 19807,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 20345,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 20412,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 20895,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 5,
+          "episode_ratings": 0,
+          "episode_watches": 25,
+          "show_id": 22904,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 5,
+          "episode_ratings": 0,
+          "episode_watches": 39,
+          "show_id": 23470,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 25084,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 25245,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 11,
+          "episode_ratings": 0,
+          "episode_watches": 76,
+          "show_id": 25268,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 25499,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 25777,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 26082,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 26868,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 27435,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 15,
+          "show_id": 27436,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 27865,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 28039,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 28120,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 28449,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 28717,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 28826,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 28857,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 28866,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 3,
+          "show_id": 29575,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 29838,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 30386,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 30609,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 30702,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 30770,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 15,
+          "show_id": 30834,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 30890,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 8,
+          "episode_ratings": 0,
+          "episode_watches": 51,
+          "show_id": 30960,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 31365,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 31439,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 31732,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 31831,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 31855,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 31899,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 32263,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 32490,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 33320,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 34162,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34346,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34363,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 34432,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34482,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34522,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34526,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34685,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34784,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 34817,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 34857,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 35236,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 35322,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 35732,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 35846,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 36563,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 29,
+          "show_id": 36672,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 36795,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 11,
+          "show_id": 36947,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37002,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37114,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37120,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37387,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37390,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37649,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37780,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37798,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37854,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37926,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 37965,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38023,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38024,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 9,
+          "episode_ratings": 0,
+          "episode_watches": 26,
+          "show_id": 38052,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38058,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38090,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 38317,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 38412,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38541,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38952,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 38958,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 39065,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 39333,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 21,
+          "show_id": 39604,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 39749,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 39987,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 40020,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 40357,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 7,
+          "show_id": 40546,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 40864,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 7,
+          "show_id": 40899,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 41120,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 41210,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 41414,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 41524,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 41529,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 40,
+          "show_id": 41531,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 41632,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 41701,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42020,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 5,
+          "episode_ratings": 0,
+          "episode_watches": 40,
+          "show_id": 42062,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42294,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42361,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42366,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42668,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42843,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 42845,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 42847,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 42930,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 42966,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 42986,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43051,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43172,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43317,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 43450,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43559,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43590,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 3,
+          "show_id": 43687,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 43729,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43881,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 43971,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 44042,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 44080,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 5,
+          "episode_ratings": 0,
+          "episode_watches": 35,
+          "show_id": 44458,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 40,
+          "show_id": 44592,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 44776,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 44909,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 11,
+          "show_id": 44933,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 45039,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 45187,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 32,
+          "show_id": 45501,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 45688,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 45840,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 45978,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46073,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46094,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46238,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46301,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46315,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 3,
+          "show_id": 46334,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46357,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46382,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46562,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46660,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46662,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46674,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 46972,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 47411,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 47477,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 47550,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 47584,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 48241,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 48362,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 48830,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 48888,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 48917,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 49128,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 49145,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 14,
+          "show_id": 49313,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 49945,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 50701,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 51274,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 21,
+          "show_id": 51394,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 51424,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 51550,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 51726,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52190,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52193,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52291,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52322,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52367,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52445,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 52732,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 34,
+          "show_id": 52904,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 53182,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 53269,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 53271,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 53277,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 53444,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 53484,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 53541,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 53647,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 53686,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 53841,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 53902,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 53957,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 54016,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 54061,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 54128,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 7,
+          "episode_ratings": 0,
+          "episode_watches": 39,
+          "show_id": 54198,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 54285,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 54792,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 54827,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 54828,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 3,
+          "show_id": 54914,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 55219,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 55350,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 55627,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 55725,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 56116,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 56198,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 56325,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 56409,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 56512,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 56721,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 56778,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 56855,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 57103,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 57400,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 57680,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 57990,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 58174,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 34,
+          "show_id": 58323,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 58465,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 58709,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 59243,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 59246,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 59359,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 59746,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 5,
+          "show_id": 59973,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60155,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60196,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 60213,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60281,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60282,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60310,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60398,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60414,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60502,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60514,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 60522,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 60527,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60549,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60614,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 60737,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 60888,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61045,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61093,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61233,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61235,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 61315,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61439,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61479,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61489,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 61490,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61735,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 61873,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62029,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62289,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62291,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62323,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62357,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62378,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62385,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62463,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 62569,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 62602,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63077,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63156,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63267,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63268,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63369,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63438,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63466,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63498,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63596,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63754,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 63900,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64086,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64087,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64454,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64835,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64860,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64977,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 64992,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 65491,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 65649,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 65860,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 65980,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66253,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66350,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66435,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66616,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66617,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66625,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 66840,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 67154,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 67291,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 67315,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 67725,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 67919,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 68237,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68242,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 68407,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 68408,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68626,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68627,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68752,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68877,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 68899,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 70005,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 70859,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 70927,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 71074,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 72758,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 73213,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 73352,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 73410,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 73425,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 73556,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 9,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 73889,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 74232,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 74425,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 74442,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 74443,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75025,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 75030,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75342,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75488,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75496,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75508,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 75605,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75632,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 75701,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 75852,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 76004,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 76134,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 76158,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 76165,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 76191,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 76529,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 76553,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 20,
+          "show_id": 77060,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 77128,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 77589,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 77747,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 77778,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 77979,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 5,
+          "show_id": 78184,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 78228,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 78570,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 78962,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 78971,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 79185,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 79390,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 79932,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 80346,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 7,
+          "show_id": 80725,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 80978,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 4,
+          "show_id": 81228,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 1,
+          "show_id": 81529,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 82297,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 82716,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 12,
+          "episode_ratings": 0,
+          "episode_watches": 10,
+          "show_id": 82915,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 83015,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 83065,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 83270,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 84622,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 84641,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 85269,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 85300,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 2,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 86175,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 8,
+          "show_id": 86738,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 87386,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 87519,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 5,
+          "show_id": 87753,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 88862,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 1,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 89109,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 89662,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 90122,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 0,
+          "episode_ratings": 0,
+          "episode_watches": 0,
+          "show_id": 90609,
+          "show_ratings": 0,
+          "tracked_shows": 1
+        }
+      ],
+      "totals": {
+        "activity_events": 384,
+        "episode_ratings": 0,
+        "episode_watches": 4459,
+        "show_ratings": 38,
+        "tracked_shows": 532
+      },
+      "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263"
+    },
+    {
+      "shows": [
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 594,
+          "show_id": 103,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 257,
+          "show_id": 1209,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 73,
+          "show_id": 42713,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 19,
+          "show_id": 44933,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 9,
+          "episode_ratings": 0,
+          "episode_watches": 7,
+          "show_id": 48073,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 75,
+          "show_id": 48631,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 50,
+          "show_id": 48830,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 58174,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 47,
+          "show_id": 58177,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 24,
+          "show_id": 62556,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 68408,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 25,
+          "show_id": 68687,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 71188,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 26,
+          "show_id": 74089,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 16,
+          "show_id": 75030,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 30,
+          "show_id": 75632,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 9,
+          "show_id": 79108,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 6,
+          "show_id": 79326,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 6,
+          "episode_ratings": 0,
+          "episode_watches": 11,
+          "show_id": 82873,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 3,
+          "episode_ratings": 0,
+          "episode_watches": 12,
+          "show_id": 86346,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        },
+        {
+          "activity_events": 4,
+          "episode_ratings": 0,
+          "episode_watches": 2,
+          "show_id": 86707,
+          "show_ratings": 1,
+          "tracked_shows": 1
+        }
+      ],
+      "totals": {
+        "activity_events": 74,
+        "episode_ratings": 0,
+        "episode_watches": 1346,
+        "show_ratings": 21,
+        "tracked_shows": 21
+      },
+      "user_id": "f687c87e-c025-441f-896c-107fb4d76bc4"
+    }
+  ]
+}
