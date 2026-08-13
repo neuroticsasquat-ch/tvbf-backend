@@ -104,6 +104,10 @@ After cutover, add `--spine catalog` so the episode→show joins resolve against
 the new schema. The show ids are unchanged by design (TV Maze ids are preserved
 as `catalog.show.id`), which is what lets one baseline span both spines.
 
+That post-cutover run is NEU-1125, and it has already happened — *Post-repoint
+acceptance test (NEU-1125)* below records its verdict, and settles which of the
+two committed artifacts a given gate compares against.
+
 ## `neu-1043-collision-remediation.sql`
 
 **Executed against production 2026-08-10.** 107 collisions, 18 repairable: 18
@@ -807,9 +811,16 @@ worth recording.** `docs/migration/reconciliation-baseline.json` was captured
 2026-08-11 and production had since gained 9 episode watches and 9 activity events:
 a real user marked *Arrested Development* 1x16–2x2 watched at 02:01 on 2026-08-12.
 Verifying against it would have failed on a gain that has nothing to do with this
-pass, and the harness fails as loudly on gains as on losses by design. **The
-committed baseline needs re-capturing before NEU-1125 can use it as the cutover
-gate** — that ticket's whole premise is a baseline that matches.
+pass, and the harness fails as loudly on gains as on losses by design.
+
+**Superseded 2026-08-13 — do not re-capture the committed baseline.** This
+paragraph originally concluded that NEU-1125 needed a re-captured baseline to
+match against. It does not, and doing it would have destroyed the only record of
+the pre-cutover state: NEU-1125 ran against the committed file, exited 1 on those
+same user gains and three more, and read the verdict off the *direction* of every
+line instead. See *Post-repoint acceptance test (NEU-1125)* below. What was right
+here is the narrower claim: a snapshot taken immediately before a pass is the
+right instrument for **that pass**, and is not the cutover gate.
 
 A `--limit 100` smoke run preceded the full pass, per the section below: it deleted
 100, moved `repointable` from 1,908,478 to exactly 1,908,378, and reconciled clean.
@@ -986,20 +997,39 @@ exactly as much as the argument written down beside it.
 | -- | -- |
 | baseline | `docs/migration/reconciliation-baseline.json`, captured 2026-08-09 and re-captured 2026-08-11 after the prune |
 | spine | `catalog` |
-| deployed image | `1e7e51339af5a20d8c3716d2a1628b6acc74e8e1` (NEU-1047 live) |
+| deployed image | `1e7e51339af5a20d8c3716d2a1628b6acc74e8e1` — the tip of `release/v0.3.0`, which is downstream of NEU-1047 rather than being it |
 | run at | 2026-08-13 22:15 UTC |
 | exit code | 1 |
 
+**The ticket assumed a frozen window and there was not one.** It scopes the run
+as *"inside the window, before the app is handed back to users"*; in fact the app
+stayed up and writable throughout, which is why gains exist at all. Recording that
+matters more than the gains do: the ticket's own instrument — *"a discrepancy in
+either direction blocks the window"* — is calibrated for a database nobody is
+writing to, so reading its verdict correctly here means knowing that premise did
+not hold. It is also why the successor baseline below exists.
+
+The eight lines as the harness emitted them, in its own order — ascending by
+delta, then user, then show — with the one substitution this file requires:
+`describe` names the user by **email**, resolved live so the artifact need not
+carry it, and the record keeps the **user id** in its place for exactly the reason
+the artifact does. Nothing else is edited.
+
 ```
-GAINED 1 episode_ratings  — Ted Lasso (44458)            (baseline 1,  current 2)
-GAINED 1 episode_watches  — Ted Lasso (44458)            (baseline 35, current 36)
-GAINED 2 activity_events  — Ted Lasso (44458)            (baseline 3,  current 5)
-GAINED 1 episode_ratings  — Lucky (81228)                (baseline 5,  current 6)
-GAINED 1 episode_watches  — Lucky (81228)                (baseline 5,  current 6)
-GAINED 2 activity_events  — Lucky (81228)                (baseline 10, current 12)
-GAINED 9 episode_watches  — Arrested Development (321)   (baseline 15, current 24)
-GAINED 9 activity_events  — Arrested Development (321)   (baseline 17, current 26)
+GAINED 1 episode_ratings — c558c2bb-499f-4641-9d72-49270d7ff52a — Ted Lasso (id 44458) (baseline 1, current 2)
+GAINED 1 episode_watches — c558c2bb-499f-4641-9d72-49270d7ff52a — Ted Lasso (id 44458) (baseline 35, current 36)
+GAINED 1 episode_ratings — c558c2bb-499f-4641-9d72-49270d7ff52a — Lucky (id 81228) (baseline 5, current 6)
+GAINED 1 episode_watches — c558c2bb-499f-4641-9d72-49270d7ff52a — Lucky (id 81228) (baseline 5, current 6)
+GAINED 2 activity_events — c558c2bb-499f-4641-9d72-49270d7ff52a — Ted Lasso (id 44458) (baseline 3, current 5)
+GAINED 2 activity_events — c558c2bb-499f-4641-9d72-49270d7ff52a — Lucky (id 81228) (baseline 10, current 12)
+GAINED 9 activity_events — c558c2bb-499f-4641-9d72-49270d7ff52a — Arrested Development (id 321) (baseline 17, current 26)
+GAINED 9 episode_watches — c558c2bb-499f-4641-9d72-49270d7ff52a — Arrested Development (id 321) (baseline 15, current 24)
 ```
+
+**One user id across all eight, which the committed artifacts let anyone
+re-derive**: that user's totals move 2,764 → 2,775 watches, 78 → 80 episode
+ratings and 343 → 356 events between the two files, and no other user's totals
+move at all. The record is checkable from the repo rather than taken on trust.
 
 **Every line reads GAINED, and that is the proof.** `compare` reports both
 directions, so a harness that found a loss would have said so; eight gains and no
@@ -1079,11 +1109,29 @@ ssh tom@ssh.neuroticsasquat.ch \
 | episode ratings | 78 | 80 |
 | activity events | 802 | 815 |
 
-**It does not replace the baseline and must not be used as one** — NEU-1125 is the
-comparison against the pre-cutover file, and that is the comparison that means
-something. What this artifact is for is the *next* question: a re-run after
-NEU-1050 or NEU-1051 diffs against this, so a loss caused by retiring code or
-dropping the schema shows up against the state the window actually closed in
-rather than against a state three passes older. Same format, same determinism, and
-it holds user ids rather than emails, which is why it can be committed at all.
+**It does not replace `reconciliation-baseline.json` and must not be used as one**
+— NEU-1125 is the comparison against the *pre-cutover* file, and that is the
+comparison that means something. What this artifact is instead is **the baseline
+NEU-1050 and NEU-1051 verify against**, and using it is what makes their gate
+machine-checkable again:
 
+```bash
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline - --spine catalog' \
+  < docs/migration/neu-1125-post-repoint-snapshot.json
+```
+
+Neither of those passes should move a single count — retiring TV Maze code and
+dropping a schema `app` no longer references are both meant to be invisible to
+every number in here — so a loss caused by either shows up against the state the
+window actually closed in rather than against a state three passes older, and the
+user activity that makes the pre-cutover baseline exit 1 forever is already
+folded in. Re-capture this file, deliberately and in its own commit, whenever a
+later gate wants a fresher zero point; the pre-cutover baseline is the one that
+must never be re-captured.
+
+Same format and same determinism as the baseline, which is why `git diff` over it
+is the regression check — and why it carries **no capture timestamp of its own**:
+a clock in the payload would make two captures of an unchanged database differ.
+Its date lives in the run log above and in the commit that added it. It holds
+user ids rather than emails, which is why it can be committed at all.
