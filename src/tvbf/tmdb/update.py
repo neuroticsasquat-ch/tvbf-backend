@@ -339,9 +339,9 @@ def _session_factory():
 async def run_catalog_update_job(run_id: UUID, settings: Settings) -> None:
     """One delta cycle, wired from settings and guaranteed to finalize.
 
-    Two callers, as `run_update_job` has: `POST /admin/catalog-update` spawns it
-    with `create_task` and the `tvbf.jobs.catalog_update` CLI awaits it. Sharing
-    the body is what stops the scheduled delta and the manual trigger drifting.
+    Two callers: `POST /admin/catalog-update` spawns it with `create_task` and
+    the `tvbf.jobs.catalog_update` CLI awaits it. Sharing the body is what stops
+    the scheduled delta and the manual trigger drifting.
     """
     try:
         async with TMDBClient(

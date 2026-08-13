@@ -1,21 +1,20 @@
-"""Integration tests for admin routes.
+"""Integration tests for the shared admin surface.
 
-Merges tests from tests/test_admin_routes.py and the admin handler tests from
-tests/test_route_handlers_browse_admin.py.
+What is left here after NEU-1050 retired the TV Maze triggers is the part no
+per-pass test owns: authentication, and the unfiltered `GET /admin/ingest/{id}`
+that reports a run of *any* kind. The TMDB pass and delta have their own files
+(`test_admin_catalog_ingest.py`, `test_catalog_update.py`), and the per-kind
+409 guard has `test_admin_concurrency_guard.py`.
 """
 
 import uuid
 
 import httpx
 import pytest
-import respx
 from httpx import ASGITransport
-from sqlalchemy import select
 
-from tvbf.config import get_settings
 from tvbf.main import app
 from tvbf.routers import admin as admin_router
-from tvbf.tvmaze import models as m
 
 
 @pytest.fixture
@@ -36,101 +35,15 @@ async def admin_client(session, monkeypatch):
         yield client
 
 
-async def test_ingest_rejects_unauth(admin_client):
-    r = await admin_client.post("/admin/ingest")
+async def test_run_status_rejects_unauth(admin_client):
+    r = await admin_client.get(f"/admin/ingest/{uuid.uuid4()}")
     assert r.status_code == 401
 
 
-@pytest.mark.asyncio
-async def test_trigger_update_route_creates_run_and_returns_id(session, monkeypatch):
-    """trigger_update spawns a background task. Patch asyncio.create_task to
-    a no-op so the test doesn't actually run the update against TV Maze."""
-    import tvbf.routers.admin as admin_module
-
-    spawned = []
-
-    def _capture(coro):
-        spawned.append(coro)
-        coro.close()
-        return None
-
-    monkeypatch.setattr(admin_module.asyncio, "create_task", _capture)
-
-    settings = get_settings()
-    out = await admin_router.trigger_update(settings=settings, session=session)
-    assert "run_id" in out
-    assert spawned, "trigger_update must spawn the background task"
-
-
-async def test_background_update_marks_run_failed_on_crash(session, monkeypatch):
-    from tvbf.tvmaze.runs import create_run
-    from tvbf.tvmaze.update import run_update_job
-
-    async def boom(**kwargs):
-        raise RuntimeError("simulated background crash")
-
-    monkeypatch.setattr("tvbf.tvmaze.update.run_update", boom)
-
-    run_id = await create_run(session, kind="update")
-    await session.commit()
-
-    await run_update_job(run_id, get_settings())
-
-    row = (
-        await session.execute(
-            select(m.IngestRun).where(m.IngestRun.id == run_id),
-            execution_options={"populate_existing": True},
-        )
-    ).scalar_one()
-    assert row.status == "failed"
-    assert row.error is not None
-    assert "simulated background crash" in row.error
-
-
-@respx.mock
-async def test_ingest_accepts_and_returns_run_id(admin_client):
-    respx.get("https://api.tvmaze.com/updates/shows").mock(
-        return_value=httpx.Response(200, json={})
-    )
-    r = await admin_client.post("/admin/ingest", headers={"Authorization": "Bearer shh"})
-    assert r.status_code == 202, r.text
-    assert "run_id" in r.json()
-
-
-async def test_ingest_status_404_for_unknown_run(admin_client):
+async def test_run_status_404_for_unknown_run(admin_client):
     fake = uuid.uuid4()
     r = await admin_client.get(f"/admin/ingest/{fake}", headers={"Authorization": "Bearer shh"})
     assert r.status_code == 404
-
-
-async def test_background_ingest_marks_run_failed_on_crash(session, monkeypatch):
-    from tvbf.routers.admin import _background_ingest
-    from tvbf.tvmaze.runs import create_run
-
-    async def boom(**kwargs):
-        raise RuntimeError("simulated background crash")
-
-    monkeypatch.setattr("tvbf.routers.admin.run_initial_ingest", boom)
-
-    run_id = await create_run(session, kind="initial")
-    await session.commit()
-
-    await _background_ingest(run_id, get_settings())
-
-    row = (
-        await session.execute(
-            select(m.IngestRun).where(m.IngestRun.id == run_id),
-            execution_options={"populate_existing": True},
-        )
-    ).scalar_one()
-    assert row.status == "failed"
-    assert row.error is not None
-    assert "simulated background crash" in row.error
-
-
-# ---------------------------------------------------------------------------
-# Admin — direct route handler calls (from test_route_handlers_browse_admin.py)
-# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio
@@ -144,36 +57,20 @@ async def test_get_run_status_route_raises_404_for_unknown_run(session):
 
 
 @pytest.mark.asyncio
-async def test_get_run_status_route_returns_run_for_known_id(session):
-    """Seed a run and read it back via the route handler."""
+@pytest.mark.parametrize("kind", ["catalog_initial", "catalog_update", "update"])
+async def test_get_run_status_route_returns_a_run_of_any_kind(session, kind):
+    """This route filters on nothing, unlike every per-pass status route.
+
+    That is what a run with no status route of its own is polled through — the
+    catalog delta today — and it is why a `update` row written by the retired
+    TV Maze daily is still readable while `tvmaze.ingest_run` stands.
+    """
     from tvbf.tvmaze.runs import create_run
 
-    run_id = await create_run(session, kind="initial")
+    run_id = await create_run(session, kind=kind)
     await session.commit()
 
     out = await admin_router.get_run_status(run_id=run_id, session=session)
     assert out["id"] == str(run_id)
-    assert out["kind"] == "initial"
+    assert out["kind"] == kind
     assert out["status"] == "running"
-
-
-@pytest.mark.asyncio
-async def test_trigger_ingest_route_creates_run_and_returns_id(session, monkeypatch):
-    """trigger_ingest spawns a background task. Patch asyncio.create_task to
-    a no-op so the test doesn't actually run ingestion against TV Maze."""
-    import tvbf.routers.admin as admin_module
-
-    spawned = []
-
-    def _capture(coro):
-        # Close the coroutine to avoid 'never awaited' warning.
-        spawned.append(coro)
-        coro.close()
-        return None
-
-    monkeypatch.setattr(admin_module.asyncio, "create_task", _capture)
-
-    settings = get_settings()
-    out = await admin_router.trigger_ingest(settings=settings, session=session)
-    assert "run_id" in out
-    assert spawned, "trigger_ingest must spawn the background task"

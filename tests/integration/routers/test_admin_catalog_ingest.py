@@ -77,14 +77,15 @@ async def test_a_second_trigger_is_rejected_while_one_is_live(session, monkeypat
 
 
 @pytest.mark.asyncio
-async def test_a_live_tv_maze_ingest_does_not_block_the_catalog_one(session, monkeypatch):
-    """Different kinds, different guards. They are also different upstreams, so
-    they are not even competing for the same request budget."""
+async def test_a_live_run_of_another_kind_does_not_block_this_one(session, monkeypatch):
+    """Different kinds, different guards — a live delta must not wedge the pass."""
     import tvbf.routers.admin as admin_module
+    from tvbf.tvmaze.runs import create_run
 
     monkeypatch.setattr(admin_module.asyncio, "create_task", lambda coro: coro.close())
 
-    await admin_router.trigger_ingest(settings=get_settings(), session=session)
+    await create_run(session, kind="catalog_update")
+    await session.commit()
     out = await admin_router.trigger_catalog_ingest(settings=get_settings(), session=session)
 
     assert uuid.UUID(out["run_id"])

@@ -18,13 +18,12 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from tvbf.rate_budget import (
     BUCKETS,
     TMDB_BUCKET,
-    TVMAZE_BUCKET,
     Bucket,
     Budget,
     DatabaseRateLimiter,
     RateLimiter,
 )
-from tvbf.tvmaze.client import TVMazeClient
+from tvbf.tmdb.client import TMDBClient
 
 # Every registered bucket, so a new upstream cannot be added without these
 # properties being asserted for it too.
@@ -78,17 +77,25 @@ async def test_two_limiters_share_one_budget(bucket, factory, empty_buckets):
 
 
 async def test_separate_sources_do_not_share_a_budget(factory, empty_buckets):
-    """TMDB's ceiling is its own. A bucket keyed by source that nonetheless
-    throttled every source together would silently cost TV Maze its rate."""
+    """Each upstream's ceiling is its own.
+
+    TMDB is the only registered source since NEU-1050 retired TV Maze, so the
+    second source here is a bucket built for this test — the property has to
+    keep holding for whichever upstream is added next, and a registry of one
+    cannot assert it. A bucket keyed by source that nonetheless throttled every
+    source together would silently cost the newcomer its rate.
+    """
+    other = Bucket(table="catalog.rate_budget", key_column="source", key="other")
+
     tmdb = DatabaseRateLimiter(TMDB_BUCKET, Budget(1, 10.0), session_factory=factory)
     await tmdb.acquire()  # drains the TMDB bucket for the next 10 seconds
 
-    tvmaze = DatabaseRateLimiter(TVMAZE_BUCKET, Budget(1, 10.0), session_factory=factory)
+    second = DatabaseRateLimiter(other, Budget(1, 10.0), session_factory=factory)
     start = time.monotonic()
-    await tvmaze.acquire()
+    await second.acquire()
     elapsed = time.monotonic() - start
 
-    assert elapsed < 0.5, f"TV Maze waited {elapsed:.2f}s on TMDB's budget — the buckets are shared"
+    assert elapsed < 0.5, f"the second source waited {elapsed:.2f}s — the buckets are shared"
 
 
 @ALL_BUCKETS
@@ -235,18 +242,19 @@ async def test_an_unreachable_bucket_raises_rather_than_proceeding(bucket, empty
 @respx.mock
 async def test_an_injected_limiter_bypasses_the_bucket_entirely(empty_buckets):
     """`limiter=` is what keeps the unit suite off a database. Keep it working."""
-    respx.get("https://api.tvmaze.com/shows/1").mock(
+    respx.get("https://api.themoviedb.org/3/tv/1").mock(
         return_value=httpx.Response(200, json={"id": 1, "name": "Alpha"})
     )
-    async with TVMazeClient(
-        base_url="https://api.tvmaze.com",
+    async with TMDBClient(
+        base_url="https://api.themoviedb.org/3",
+        read_access_token="token",
         rate_calls=2,
         rate_window=1,
         limiter=RateLimiter(calls=2, window_seconds=1),
     ) as client:
-        await client.get_show(1)
+        await client.get_tv_series(1, append=[])
 
     rows = (
-        await empty_buckets.execute(text(f"SELECT COUNT(*) FROM {TVMAZE_BUCKET.table}"))
+        await empty_buckets.execute(text(f"SELECT COUNT(*) FROM {TMDB_BUCKET.table}"))
     ).scalar_one()
     assert rows == 0, "an injected limiter touched the shared bucket"

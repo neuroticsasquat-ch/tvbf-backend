@@ -116,22 +116,11 @@ tasks:
     cmds:
       - "{{.EXEC}} pytest --cov=src/tvbf --cov-report=term-missing --cov-report=html {{.CLI_ARGS}}"
 
-  ingest:
-    desc: POST /admin/ingest
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/ingest
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  update:
-    desc: POST /admin/update
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/update
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
   ingest:status:
-    desc: 'GET /admin/ingest/<id> — task ingest:status -- <uuid>'
+    # The one status route that filters nothing, so it reads a run of any kind.
+    # Poll `update:catalog` through it — that delta has no status route of its
+    # own — and the retired TV Maze runs while `tvmaze.ingest_run` stands.
+    desc: 'GET /admin/ingest/<id> — status of any run — task ingest:status -- <uuid>'
     cmds:
       - >
         curl -sk https://api.tvbf.localhost/admin/ingest/{{.CLI_ARGS}}
@@ -156,71 +145,6 @@ tasks:
     cmds:
       - >
         curl -sk -X POST https://api.tvbf.localhost/admin/catalog-update
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  akas:backfill:
-    desc: POST /admin/backfill-akas
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-akas
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  akas:backfill:status:
-    desc: 'GET /admin/backfill-akas/<id> — task akas:backfill:status -- <uuid>'
-    cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/backfill-akas/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  ratings:backfill:
-    desc: POST /admin/backfill-ratings
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-ratings
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  ratings:backfill:status:
-    desc: 'GET /admin/backfill-ratings/<id> — task ratings:backfill:status -- <uuid>'
-    cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/backfill-ratings/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  credits:backfill:
-    # Not to be confused with `backfill:credits`, which is the TMDB catalog's
-    # (NEU-1127). This one is TV Maze's, it is ~29h, and it writes `tvmaze`.
-    desc: 'POST /admin/backfill-episode-credits — TV MAZE episode credits, ~29h, writes tvmaze'
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-episode-credits
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  credits:backfill:status:
-    desc: 'GET /admin/backfill-episode-credits/<id> — task credits:backfill:status -- <uuid>'
-    cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/backfill-episode-credits/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  refresh:shows:
-    desc: POST /admin/refresh-shows
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/refresh-shows
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  refresh:shows:status:
-    desc: 'GET /admin/refresh-shows/<id> — task refresh:shows:status -- <uuid>'
-    cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/refresh-shows/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  people:update:
-    desc: POST /admin/update-people
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/update-people
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   archive:watches:
@@ -320,8 +244,6 @@ tasks:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_repoint report
 
   backfill:credits:
-    # Not to be confused with `credits:backfill`, which is TV Maze's ~29h
-    # episode-credits pass. This one is the TMDB catalog's and writes `catalog`.
     desc: 'TMDB credits for every mirrored catalog show that has none — ~8.7h, resumable (NEU-1127)'
     cmds:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.

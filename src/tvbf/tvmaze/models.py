@@ -396,10 +396,13 @@ class IngestRun(Base):
 class RateBudget(Base):
     """The TV Maze request budget, as one token bucket every process shares.
 
-    TV Maze's cap applies to us as a whole. An in-process limiter could express
-    that only while every job ran inside the app; the daily now runs as its own
-    process (`tvbf.jobs.daily_update`), so the budget has to live somewhere both
-    can see (ADR-0006).
+    TV Maze's cap applied to us as a whole. An in-process limiter could express
+    that only while every job ran inside the app; a delta runs as its own
+    process, so the budget had to live somewhere both could see (ADR-0006).
+
+    Nothing spends from this row since NEU-1050 retired the TV Maze client —
+    `rate_budget.BUCKETS` no longer registers it. The table stands with the rest
+    of the schema until NEU-1051 drops it.
 
     One row, and the check constraint says so: a second row would be a second
     budget, which is the failure this exists to prevent.

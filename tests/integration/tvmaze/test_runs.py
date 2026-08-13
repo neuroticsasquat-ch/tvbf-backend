@@ -5,7 +5,6 @@ from sqlalchemy import select
 
 from tvbf.tvmaze import models as m
 from tvbf.tvmaze.runs import (
-    SHOW_CURSOR_KINDS,
     create_run,
     finalize_run,
     find_live_run,
@@ -62,11 +61,11 @@ async def test_get_last_successful_cursor_returns_latest(session):
         (r2, datetime(2026, 6, 1, tzinfo=UTC)),
     )
 
-    assert await get_last_successful_cursor(session) == 20
+    assert await get_last_successful_cursor(session, kinds=("initial", "update")) == 20
 
 
 async def test_get_last_successful_cursor_none_when_no_runs(session):
-    assert await get_last_successful_cursor(session) is None
+    assert await get_last_successful_cursor(session, kinds=("initial", "update")) is None
 
 
 async def _pin_finished_at(session, *pairs) -> None:
@@ -92,7 +91,7 @@ async def test_initial_ingest_cursor_is_inherited_by_the_daily_delta(session):
     await finalize_run(session, initial, status="succeeded", last_update_cursor=100)
     await session.commit()
 
-    assert await get_last_successful_cursor(session) == 100
+    assert await get_last_successful_cursor(session, kinds=("initial", "update")) == 100
 
 
 async def test_get_last_successful_cursor_is_scoped_to_its_axis(session):
@@ -103,9 +102,9 @@ async def test_get_last_successful_cursor_is_scoped_to_its_axis(session):
     two axes resume from each other's position. Both cursors are TV Maze epoch
     seconds, so nothing errors; work is just silently skipped.
 
-    Uses `akas_backfill` as the stand-in off-axis kind rather than the real
-    second lineage (`person_update`) so this stays a test of the scoping itself
-    and not of one particular pair of axes.
+    Both kinds here are stand-ins, so this stays a test of the scoping itself
+    and not of one particular pair of axes — which is what keeps it standing
+    after NEU-1050 retired the TV Maze lineages it was first written against.
     """
     show_run = await create_run(session, kind="update")
     other_axis = await create_run(session, kind="akas_backfill")
@@ -119,7 +118,7 @@ async def test_get_last_successful_cursor_is_scoped_to_its_axis(session):
         (other_axis, datetime(2026, 6, 1, tzinfo=UTC)),
     )
 
-    assert await get_last_successful_cursor(session, kinds=SHOW_CURSOR_KINDS) == 100
+    assert await get_last_successful_cursor(session, kinds=("initial", "update")) == 100
     assert await get_last_successful_cursor(session, kinds=("akas_backfill",)) == 999
 
 
@@ -129,7 +128,7 @@ async def test_get_last_successful_cursor_none_when_only_other_axes_have_one(ses
     await finalize_run(session, run_id, status="succeeded", last_update_cursor=500)
     await session.commit()
 
-    assert await get_last_successful_cursor(session, kinds=SHOW_CURSOR_KINDS) is None
+    assert await get_last_successful_cursor(session, kinds=("initial", "update")) is None
 
 
 async def test_mark_stale_runs_cancelled(session):
