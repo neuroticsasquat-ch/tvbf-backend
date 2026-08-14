@@ -258,6 +258,17 @@ LINK_EPISODE_TITLE_AGGREGATE = "aggregate_episode_title_evidence"
 LOSS_GENUINE = "genuine_loss"
 LOSS_DEDUPLICATION = "deduplication"
 
+# **How a loss row's disposition was decided**, because the two are not equally
+# strong and a reviewer approving an irreversible pass should be able to tell
+# them apart. `matched_twin` is proven: the matcher paired this orphan with a
+# surviving row and the user holds that row too, so the orphan's is redundant by
+# construction. `position_only` is inferred from which ingested episode occupies
+# the orphan's position, and is the one that can be wrong. `no_counterpart` is
+# neither — there was nothing to compare against.
+LOSS_BASIS_MATCHED_TWIN = "matched_twin"
+LOSS_BASIS_POSITION_ONLY = "position_only"
+LOSS_BASIS_NO_COUNTERPART = "no_counterpart"
+
 
 class OrphanRetireAborted(Exception):
     """A show's writes did not account for every row selected. The message is what to read."""
@@ -1622,6 +1633,7 @@ async def build_report(db: AsyncSession, *, min_ingested: int = MIN_INGESTED_SHO
                     losses.append(
                         {
                             "disposition": LOSS_DEDUPLICATION,
+                            "basis": LOSS_BASIS_MATCHED_TWIN,
                             "user_id": str(row.user_id),
                             "show_id": show.id,
                             "show_name": show.name,
@@ -1672,12 +1684,40 @@ async def build_report(db: AsyncSession, *, min_ingested: int = MIN_INGESTED_SHO
                         watches_delete += 1
                     else:
                         ratings_delete += 1
-                    absorbed = target is not None and (row.user_id, target.id) in watched_ingested
+                    # **A merged two-parter airs in one slot**, so the row that
+                    # absorbed this one carries its air date. Requiring that is
+                    # what separates a genuine merge from an orphan that simply
+                    # sits past the end of TMDB's season with an unrelated
+                    # episode below it — The Hook Up Plan `s2e7`, a 2020 lockdown
+                    # special whose positional neighbour aired in 2019, was
+                    # reported as a de-duplication on the first production run
+                    # and is a real loss.
+                    #
+                    # The date is consulted **here and nowhere else**. It is noise
+                    # for *matching* (§2.4) because the two catalogues date
+                    # compilations differently; it is signal for *this* question,
+                    # which is whether one broadcast became one row. And the
+                    # asymmetry runs the safe way: a two-parter split across two
+                    # nights is reported as a loss it may not be, where the
+                    # converse would tell somebody nothing was lost when it was.
+                    watched = target is not None and (row.user_id, target.id) in watched_ingested
+                    absorbed = (
+                        watched
+                        and target is not None
+                        and target.air_date is not None
+                        and target.air_date == orphan.air_date
+                    )
                     disposition = LOSS_DEDUPLICATION if absorbed else LOSS_GENUINE
+                    basis = (
+                        LOSS_BASIS_POSITION_ONLY
+                        if target is not None
+                        else LOSS_BASIS_NO_COUNTERPART
+                    )
                     loss_summary[disposition] += 1
                     losses.append(
                         {
                             "disposition": disposition,
+                            "basis": basis,
                             "user_id": str(row.user_id),
                             "show_id": show.id,
                             "show_name": show.name,
@@ -1735,6 +1775,9 @@ async def build_report(db: AsyncSession, *, min_ingested: int = MIN_INGESTED_SHO
             losses.append(
                 {
                     "disposition": disposition,
+                    "basis": (
+                        LOSS_BASIS_NO_COUNTERPART if link is None else LOSS_BASIS_MATCHED_TWIN
+                    ),
                     "user_id": str(row.user_id),
                     "show_id": row.show_id,
                     "show_name": None,
