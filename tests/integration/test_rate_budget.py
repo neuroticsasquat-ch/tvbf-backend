@@ -131,6 +131,18 @@ async def test_a_waiting_acquirer_does_not_hold_the_row_lock(
 
 @ALL_BUCKETS
 async def test_refill_is_time_based_and_capped_at_capacity(bucket, factory, empty_buckets):
+    """Idle time is credited, and only up to capacity.
+
+    **Both assertions are measured over three acquisitions rather than one, and
+    that is about CI rather than about the limiter.** Refill is computed from
+    `clock_timestamp()`, so the round trips *inside* a measurement credit
+    tokens as they go: timing a single acquisition against a fraction of one
+    token's refill made the deficit smaller the slower the machine got, and the
+    assertion therefore failed on a loaded runner and passed on a fast laptop —
+    backwards, for a floor. Over three tokens the discriminator is a full 0.3s
+    of refill against a few local round trips, so a slow runner only ever
+    pushes both measurements further into passing.
+    """
     # 10/sec, capacity 3
     limiter = DatabaseRateLimiter(bucket, Budget(3, 0.3), session_factory=factory)
     for _ in range(3):
@@ -139,19 +151,25 @@ async def test_refill_is_time_based_and_capped_at_capacity(bucket, factory, empt
     # Idle for a full second: 10 tokens' worth of refill against a cap of 3.
     await asyncio.sleep(1.0)
 
+    # Capacity was banked during the idle, so these three cost no waiting at
+    # all. Had the elapsed time not been credited they would have cost 0.3s.
     start = time.monotonic()
     for _ in range(3):
         await limiter.acquire()
-    burst = time.monotonic() - start
-    assert burst < 0.1, (
-        f"a burst of capacity took {burst:.2f}s — refill is not crediting elapsed time"
+    banked = time.monotonic() - start
+    assert banked < 0.25, (
+        f"a burst of capacity took {banked:.2f}s — refill is not crediting elapsed time"
     )
 
+    # The bucket is empty now, and the idle banked three tokens rather than ten,
+    # so the next three have to be waited for at 10/sec. Uncapped refill would
+    # have handed these over free too.
     start = time.monotonic()
-    await limiter.acquire()
-    fourth = time.monotonic() - start
-    assert fourth >= 0.05, (
-        f"a fourth token came free after {fourth:.2f}s — refill is not capped at capacity"
+    for _ in range(3):
+        await limiter.acquire()
+    beyond = time.monotonic() - start
+    assert beyond >= 0.25, (
+        f"three more tokens came free after {beyond:.2f}s — refill is not capped at capacity"
     )
 
 
