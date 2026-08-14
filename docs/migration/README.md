@@ -1575,3 +1575,93 @@ is the regression check — and why it carries **no capture timestamp of its own
 a clock in the payload would make two captures of an unchanged database differ.
 Its date lives in the run log above and in the commit that added it. It holds
 user ids rather than emails, which is why it can be committed at all.
+
+
+## Airdate correction (NEU-1145)
+
+`catalog.air_date_offset` records how many days one season's mirrored dates are
+shifted from TMDB's, established nightly against the TV Maze oracle by
+`task reconcile:airdates`. This section is about **proving it worked**, which is
+acceptance criteria 2 and 3 and neither of which is a unit test.
+
+### Capture the baseline BEFORE the first pass
+
+Non-negotiable and unrecoverable afterwards. AC 3 makes two claims:
+
+> the 198 Apple and 93 Prime shifted rows now agree, and the 104 + 35
+> already-correct rows are untouched
+
+A query run after the fact can see the first. Nothing but a baseline can see the
+second, because a row that agrees today looks identical whether it always did or
+whether something broke it and something else repaired it — and moving a
+correct row a day the *other* way is exactly what the per-network rule §2.6
+rejected would have done to 17 Prime Video rows.
+
+`app.watch_archive` is append-only (NEU-1029), so the baseline keeps
+indefinitely. It just has to be taken first.
+
+```bash
+# production, immediately before the first `airdate_reconcile` run — read-only
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.airdate_verify capture' \
+  > docs/migration/neu-1145-airdate-baseline.json
+
+# local
+task verify:airdates:capture
+```
+
+Commit the baseline. It holds no email or display name — show name, season,
+episode number and two dates per row — and it is byte-identical between two
+captures of an unchanged database, so `git diff` over it is itself the check.
+
+### The verdict
+
+```bash
+# production, baseline back in on stdin
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.airdate_verify verify --baseline -' \
+  < docs/migration/neu-1145-airdate-baseline.json
+
+# local
+task verify:airdates:verify
+```
+
+**Exit 0 = nothing got worse. Exit 1 = something did.** This deliberately
+inverts `reconcile verify` above, which fails on any difference in either
+direction because during a cutover window nothing should move at all. Here
+movement is the point — a row going from *a day early* to *agrees* is the ticket
+working — so only a regression fails, in three shapes: a disagreement that grew,
+a disagreement that changed sign without reaching zero (the over-correction), or
+a row that stopped resolving to a catalog episode at all. That last one matters
+because a shrinking denominator is how a regression hides inside an improving
+percentage.
+
+**Rows still reading a day early are printed, not scored.** Some cannot be
+corrected and it is on purpose: a show TV Maze has never heard of, and a season
+the trust rule refused — Shrinking S3 is the worked example, and it is in the
+reconciliation's own refusal log with its per-episode deltas. Read the count;
+do not treat it as a failure.
+
+Resolution is by `(source_show_id, season_number, episode_number)` rather than
+by the archived episode id: those ids are a pre-cutover snapshot and NEU-1126
+and NEU-1146 both moved out from under them, while the show id survived because
+NEU-1042 preserved TV Maze's ids as the catalog surrogates. An `unresolved`
+count above a handful is worth reading rather than waving through.
+
+### AC 2, which cannot be automated
+
+```bash
+task verify:airdates:shows                        # Silo, Lucky, Ted Lasso
+task verify:airdates:shows -- --show "Severance"
+```
+
+The criterion is *"hand-verified against Apple's published schedule"* and there
+is no machine-readable schedule to check against, so this asserts nothing. It
+prints the three values a human compares: the date now served, the raw TMDB
+value it was derived from, and the offset between them. A season with no offset
+whose dates still look a day early is the interesting row — the reconciliation
+log says which rule refused it.
+
+Note that a bare name can match more than one show (two "Silo", three "Lucky"
+locally), so every match is listed rather than one being picked.
+
