@@ -38,6 +38,7 @@ pointing at unmapped rows.
 | Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
 | Post-repoint acceptance test (NEU-1125) | `task reconcile:verify -- --spine catalog` | **after NEU-1046 + NEU-1047**, gates NEU-1050 and NEU-1051 | ✅ 2026-08-13 — **GO**. Exit 1 with eight discrepancies, every one of them a *gain* traceable to one user's app use after the baseline was taken (11 watches, 2 ratings, 13 events); no `LOST` line, and the null-show bucket empty on both sides. Close-of-window state committed as `neu-1125-post-repoint-snapshot.json` |
 | Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ✅ 2026-08-13 — run in production, confirmed by the operator. This row is the record NEU-1127 existed to create; the counts were not captured at the time, so `task backfill:credits:report` against prod is what would restate them |
+| On-the-day reconciliation (NEU-1051) | `reconcile verify` in the prod container | **before** the drop | ✅ 2026-08-14 — **GO**. Exit 1 with 8 discrepancies, every one a *gain* from one user's app use after the baseline (Ted Lasso +1 watch +1 rating, Lucky +1 watch +1 rating, Arrested Development +9 watches, +13 activity events total); no `LOST` line |
 | Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
 | `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
 
@@ -94,14 +95,20 @@ Then, in order:
 
 1. Copy `tvmaze-<stamp>.dump` and `.counts.txt` **off the VM**. A dump sitting on
    the machine whose loss it insures against is not a backup.
-2. Re-run the reconciliation against the live database **on the day**, which the
-   ticket asks for and the 2026-08-13 NEU-1125 run does not satisfy — that one
-   predates this change flipping `DEFAULT_SPINE` to `catalog`:
+2. Re-run the reconciliation against the live database **on the day**. Note the
+   direction: `verify --baseline -` reads the *baseline* from stdin and diffs it
+   against whatever database **that process** connects to — so `verify` has to run
+   **inside the prod container**, with the committed baseline piped in. Piping a
+   prod `capture` into a local `verify` looks equivalent and silently checks your
+   laptop's database instead.
    ```bash
-   ssh $PROD_SSH 'docker exec <tvbf-backend> python -m tvbf.jobs.reconcile capture' \
-     | task reconcile:verify -- --baseline -
+   cat docs/migration/reconciliation-baseline.json \
+     | ssh $PROD_SSH 'docker exec -i <tvbf-backend-container> \
+         python -m tvbf.jobs.reconcile verify --baseline - --spine catalog'
    ```
-   Gains are expected (users keep using the app); a `LOST` line is a stop.
+   `--spine catalog` explicitly, because until this PR merges the prod image still
+   defaults to `tvmaze`. Exit 1 with **gains only** is the pass — users keep using
+   the app between the baseline and the drop. A `LOST` line is a stop.
 3. Set `TVBF_TVMAZE_DUMP_VERIFIED=yes` in Coolify.
 4. Merge. The deploy applies the migration and the schema goes.
 
