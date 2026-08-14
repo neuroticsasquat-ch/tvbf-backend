@@ -41,7 +41,7 @@ pointing at unmapped rows.
 | On-the-day reconciliation (NEU-1051) | `reconcile verify` in the prod container | **before** the drop | ✅ 2026-08-14 — **GO**. Exit 1 with 8 discrepancies, every one a *gain* from one user's app use after the baseline (Ted Lasso +1 watch +1 rating, Lucky +1 watch +1 rating, Arrested Development +9 watches, +13 activity events total); no `LOST` line |
 | Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
 | `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
-| Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ⬜ not yet run. Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
+| Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ⬜ **report run 2026-08-14** (artifact `neu-1146-pre-run-report.json`, and it caught the tier-2 special-offset bug fixed in #255); **the pass itself has not run.** Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
 
 
 ## Dropping `tvmaze` (NEU-1051)
@@ -546,19 +546,47 @@ Five things to know before running it in production:
    same applies to a show still holding catalog rows, which would otherwise
    cascade over ingested episodes.
 
-The 2026-08-14 pre-run measurement, for diffing against whatever the run prints:
+**The pre-run report, run against production 2026-08-14** and committed as
+`neu-1146-pre-run-report.json`. These are the figures to diff the pass against —
+not the spec's, which came from a hand-written SQL probe that approximated the
+matcher rather than being it:
 
 | Tier | Rule | Orphans | User-touched |
 | -- | -- | --: | --: |
 | 0 | Exact `(season, number)`, 1:1 | 880 | 0 |
-| 1 | Same show, folded title unique both sides | 116,923 | 64 |
-| 2 | Cross-show, `(season − offset, episode_number)` | 4,161 | 17 |
-| 2b | Title fallback inside a linked pair | 53 | 0 |
-| 3 | **Delete** | 660,138 | 108 |
+| 1 | Same show, folded title unique both sides | 116,911 | 64 |
+| 2 | Cross-show, `(season − offset, episode_number)` | 3,565 | 17 |
+| 2b | Title fallback inside a linked pair | 1,511 | 0 |
+| 3 | **Delete** | 659,294 | 108 |
 
-At row grain: 82 watch rows move, 109 watch rows and 1 rating are deleted (14 of
-them de-duplications, ~95 genuine losses), and 1 `user_show_watch` row is
-created.
+At row grain: **79 watch rows move; 112 watch rows and 1 rating are deleted** —
+94 a genuine loss and 19 a de-duplication a surviving twin already records — and
+**1 `user_show_watch` row is created**. 166 links proposed, 4 dropped for
+carrying more than one candidate, and exactly **one carries user data**: Will &
+Grace `549 → 1064267`, offset 8, 17 user-touched. That is the only link needing
+review, per the reasoning above.
+
+All three links the acceptance criteria name resolve automatically, each by a
+different route — which is why all three routes exist:
+
+| Link | Basis | Offset |
+| -- | -- | -- |
+| Will & Grace `549 → 1064267` | title + airdate evidence (48 pairs) | 8 |
+| Cunk on Earth `63900 → 1067768` | aggregate episode-title evidence (5 titles) | none — tier 2b |
+| Discretion `87519 → 1202502` | sole same-folded-name sibling | none — no episodes |
+
+**The first run of this report found a bug, and it is the one worth knowing
+about.** It rescued 16 of Will & Grace's 17 user-touched rows — the outcome the
+sixth acceptance criterion names as a failure. 47 of the 48 evidence pairs gave
+offset 8 and one gave 11: orphan `s11e-1`, a synthetic special, against TMDB's
+`s0e1`. NEU-1042 numbered TV Maze specials negative *within their original
+season* while TMDB parks them in season 0, so a special's season relationship is
+precisely the one that does not follow the series' — and a single such pair was
+enough to make a unanimous offset read as inconsistent, skip tier 2, and drop the
+show to a title fallback that cannot pair `"Eleven Years Later"` with
+`"11 Years Later"`. Specials are now excluded from the offset derivation; the
+consistency rule is unchanged and still takes no vote. If a future change makes
+tier 2 quietly stop placing a show, this is the shape of the bug to look for.
 
 ## Credits backfill (NEU-1127)
 
