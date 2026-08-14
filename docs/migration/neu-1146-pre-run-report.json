@@ -1538,6 +1538,7 @@
   "losses": [
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 49,
       "show_name": "Brooklyn Nine-Nine",
@@ -1550,6 +1551,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 49,
       "show_name": "Brooklyn Nine-Nine",
@@ -1562,6 +1564,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 49,
       "show_name": "Brooklyn Nine-Nine",
@@ -1574,6 +1577,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 49,
       "show_name": "Brooklyn Nine-Nine",
@@ -1586,6 +1590,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1598,6 +1603,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1610,6 +1616,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1622,6 +1629,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1634,6 +1642,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1646,6 +1655,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1658,6 +1668,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1670,6 +1681,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 123,
       "show_name": "Lost",
@@ -1682,6 +1694,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 169,
       "show_name": "Breaking Bad",
@@ -1694,6 +1707,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1706,6 +1720,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1718,6 +1733,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1730,6 +1746,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1742,6 +1759,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1754,6 +1772,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1766,6 +1785,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1778,6 +1798,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1790,6 +1811,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1802,6 +1824,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1814,6 +1837,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1826,6 +1850,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1838,6 +1863,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1850,6 +1876,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1862,6 +1889,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 174,
       "show_name": "Parks and Recreation",
@@ -1874,6 +1902,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "matched_twin",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1886,6 +1915,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1898,6 +1928,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1910,6 +1941,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1922,6 +1954,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1934,6 +1967,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1946,6 +1980,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1958,6 +1993,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1970,6 +2006,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1982,6 +2019,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -1994,6 +2032,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2006,6 +2045,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2018,6 +2058,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2030,6 +2071,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2042,6 +2084,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2054,6 +2097,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2066,6 +2110,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2078,6 +2123,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2090,6 +2136,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2102,6 +2149,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2114,6 +2162,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2126,6 +2175,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2138,6 +2188,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2150,6 +2201,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2162,6 +2214,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2174,6 +2227,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2186,6 +2240,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2198,6 +2253,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2210,6 +2266,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2222,6 +2279,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2234,6 +2292,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2246,6 +2305,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2258,6 +2318,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2270,6 +2331,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2282,6 +2344,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2294,6 +2357,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2306,6 +2370,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2318,6 +2383,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2330,6 +2396,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2342,6 +2409,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2354,6 +2422,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2366,6 +2435,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2378,6 +2448,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2390,6 +2461,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2402,6 +2474,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2414,6 +2487,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2426,6 +2500,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2438,6 +2513,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2450,6 +2526,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2462,6 +2539,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2474,6 +2552,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2486,6 +2565,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2498,6 +2578,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2510,6 +2591,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2522,6 +2604,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2534,6 +2617,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2546,6 +2630,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2558,6 +2643,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2570,6 +2656,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2582,6 +2669,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 361,
       "show_name": "Saturday Night Live",
@@ -2594,6 +2682,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2606,6 +2695,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2618,6 +2708,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2630,6 +2721,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2642,6 +2734,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2654,6 +2747,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2666,6 +2760,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2678,6 +2773,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2690,6 +2786,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2702,6 +2799,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2714,6 +2812,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2726,6 +2825,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 431,
       "show_name": "Friends",
@@ -2738,6 +2838,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 537,
       "show_name": "30 Rock",
@@ -2750,6 +2851,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 676,
       "show_name": "Sex and the City",
@@ -2762,6 +2864,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 676,
       "show_name": "Sex and the City",
@@ -2774,6 +2877,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 1368,
       "show_name": "Unbreakable Kimmy Schmidt",
@@ -2786,6 +2890,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 1871,
       "show_name": "Mr. Robot",
@@ -2798,6 +2903,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 13417,
       "show_name": "Ozark",
@@ -2809,7 +2915,8 @@
       "absorbed_by_episode_id": null
     },
     {
-      "disposition": "deduplication",
+      "disposition": "genuine_loss",
+      "basis": "position_only",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 39604,
       "show_name": "The Hook Up Plan",
@@ -2818,10 +2925,11 @@
       "episode_name": "Plan Confin\u00e9.e.s",
       "air_date": "2020-08-26",
       "row_kind": "watch",
-      "absorbed_by_episode_id": 12926117
+      "absorbed_by_episode_id": null
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 52904,
       "show_name": "And Just Like That\u2026",
@@ -2834,6 +2942,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 54198,
       "show_name": "The Bear",
@@ -2846,6 +2955,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 54198,
       "show_name": "The Bear",
@@ -2858,6 +2968,7 @@
     },
     {
       "disposition": "genuine_loss",
+      "basis": "no_counterpart",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 54198,
       "show_name": "The Bear",
@@ -2870,6 +2981,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "matched_twin",
       "user_id": "c558c2bb-499f-4641-9d72-49270d7ff52a",
       "show_id": 58323,
       "show_name": "Shrinking",
@@ -2882,6 +2994,7 @@
     },
     {
       "disposition": "deduplication",
+      "basis": "matched_twin",
       "user_id": "d9a07ae4-c664-4cb1-bf05-d5db1ce38263",
       "show_id": 58323,
       "show_name": "Shrinking",
@@ -2894,7 +3007,7 @@
     }
   ],
   "loss_summary": {
-    "genuine_loss": 94,
-    "deduplication": 19
+    "genuine_loss": 95,
+    "deduplication": 18
   }
 }
