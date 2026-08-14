@@ -79,13 +79,12 @@ CANDIDATE_LIMIT = 5
 # not be able to silently retract one either.
 RESOLVABLE_METHODS = (None, MATCH_TITLE_YEAR, MATCH_HUMAN)
 
-# Episode-grain user rows reach a show through `tvmaze.episode`, which is where
-# `app.user_episode_watch.episode_id` points for the whole window this queue
-# exists in: it gates NEU-1046, which is the ticket that repoints those foreign
-# keys. The join stays correct past that point anyway, because the copy preserved
-# episode ids — but this is scaffolding, not something to generalise a spine
-# parameter for.
-_EPISODE = "tvmaze.episode"
+# Episode-grain user rows reach a show through the episode table
+# `app.user_episode_watch.episode_id` references. That was `tvmaze.episode` when
+# this queue was written and has been `catalog.episode` since NEU-1046 repointed
+# the foreign keys; NEU-1051 removed the alternative entirely. The switch was a
+# rename rather than a re-derivation, because the copy preserved episode ids.
+_EPISODE = "catalog.episode"
 
 # Every way a user can have touched a show, unioned. `activity_event` is
 # polymorphic with no foreign key, so its show is resolved per target type
@@ -93,12 +92,12 @@ _EPISODE = "tvmaze.episode"
 # same reason: this query's job is that nothing slips through, not that the
 # common cases are covered.
 #
-# Public because `show_prune` (NEU-1066) asks the identical question for the
-# opposite purpose — it deletes the rows this queue would never surface — and a
-# second copy of this union is the one way the two could disagree about whether a
-# show is safe to drop. It lives here rather than in a shared module because this
-# is where the concept was defined; when NEU-1046 repoints the episode-grain
-# foreign keys off `tvmaze.episode`, both callers move together.
+# Public because `show_prune` (NEU-1066) asked the identical question for the
+# opposite purpose — it deleted the rows this queue would never surface — and a
+# second copy of this union was the one way the two could disagree about whether
+# a show was safe to drop. That pass went with the `tvmaze` schema its guard read
+# (NEU-1051), so this is the only caller left; the union stays public because the
+# next pass to ask "has anyone touched this show?" should not rewrite it.
 TOUCHED_SHOWS = f"""
     SELECT show_id FROM app.user_show_watch
     UNION

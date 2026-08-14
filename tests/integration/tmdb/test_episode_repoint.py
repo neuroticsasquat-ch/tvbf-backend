@@ -6,13 +6,11 @@ than `season_dedupe`'s, because this is the one migration pass that writes to
 `app`.
 
 The two that matter most are the ones asserting what is *kept*: an episode with
-no TMDB counterpart is the only row that watch record can point at, and `tvmaze`
-is the only place it could come back from.
-
-Seeding is doubled wherever a watch record is involved, for the reason
-`test_season_dedupe.py` doubles it: `app.user_episode_watch` references
-`catalog.episode` and the two spines share an id because NEU-1042 preserved TV
-Maze ids as the catalog surrogates.
+no TMDB counterpart is the only row that watch record can point at, and since
+NEU-1051 dropped `tvmaze` there is nowhere left for it to come back from. The
+reversibility test that stood here went with `task copy:catalog` in that ticket
+— it asserted a revert path the schema drop removed, and a test that still
+passed would have been asserting the wrong thing.
 
 No upstream is mocked because none is called — every question this pass asks is
 answered in Postgres.
@@ -544,51 +542,3 @@ async def test_one_persons_rows_move_together_or_not_at_all(session, make_user):
     assert (result.watches_repointed, result.activity_repointed) == (0, 0)
     assert result.episodes_deleted == 0
     assert await _watch_targets(session, user.id) == [copy]
-
-
-@pytest.mark.asyncio
-async def test_the_pass_is_reversible_from_tvmaze(session, make_user):
-    """The acceptance criterion, exercised rather than asserted in prose.
-
-    Step one is `task copy:catalog`, which restores the deleted episode under its
-    original id — and it restores seasons before episodes, so the `season_id` the
-    copy carries forward has a parent to point at. Step two is the re-point in
-    reverse, which `copy:catalog` cannot do because it never touches `app`.
-    """
-    from sqlalchemy import text as sql_text
-
-    from tvbf.tvmaze.catalog_copy import copy_to_catalog
-    from tvbf.tvmaze.models import Episode as MazeEpisode
-    from tvbf.tvmaze.models import Show as MazeShow
-
-    user = await make_user(email="er20@example.com")
-    show_id, copy, twin = await _pair(session)
-    # The copy's source rows, which are what a revert reads back from.
-    session.add(MazeShow(id=show_id, name="Revertible", tvmaze_updated=1))
-    await session.flush()
-    session.add(MazeEpisode(id=copy, show_id=show_id, season=1, number=1))
-    await _watched_episode(session, user.id, copy)
-    await session.commit()
-
-    await repoint_episodes(session, min_ingested=_NO_FLOOR)
-    assert await _watch_targets(session, user.id) == [twin]
-
-    await copy_to_catalog(session)
-    await session.execute(
-        sql_text("""
-            UPDATE app.user_episode_watch w
-               SET episode_id = c.id
-              FROM catalog.episode t
-              JOIN catalog.episode c
-                ON c.show_id = t.show_id
-               AND c.season_number = t.season_number
-               AND c.episode_number = t.episode_number
-               AND c.tmdb_id IS NULL
-             WHERE t.id = w.episode_id
-               AND t.tmdb_id IS NOT NULL
-        """)
-    )
-    await session.commit()
-
-    assert await _watch_targets(session, user.id) == [copy]
-    assert copy in await _episode_ids(session, show_id)

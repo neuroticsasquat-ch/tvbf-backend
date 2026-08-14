@@ -65,7 +65,7 @@ async def test_get_run_status_route_returns_a_run_of_any_kind(session, kind):
     catalog delta today — and it is why a `update` row written by the retired
     TV Maze daily is still readable while `tvmaze.ingest_run` stands.
     """
-    from tvbf.tvmaze.runs import create_run
+    from tvbf.catalog.runs import create_run
 
     run_id = await create_run(session, kind=kind)
     await session.commit()

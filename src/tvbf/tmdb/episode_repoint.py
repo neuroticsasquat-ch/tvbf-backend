@@ -133,14 +133,25 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Deliberately borrowed rather than redeclared. A second class of the same name
-# would mean `except show_prune.IngestNotRun` silently failed to catch this
-# pass's refusal — the two guards ask the same question of the same column for
-# the same reason, so they should be the same type.
-from tvbf.tmdb.show_prune import MIN_INGESTED_SHOWS as MIN_INGESTED_SHOWS
-from tvbf.tmdb.show_prune import IngestNotRun as IngestNotRun
-
 log = logging.getLogger(__name__)
+
+# The floor and its refusal were `show_prune`'s until NEU-1051 deleted that
+# pass along with the `tvmaze` schema its guard read. They live here now
+# because this is the only pass left that asks the question. The value is the
+# tombstone's `_MIN_FEED_ABSOLUTE`, set the same way: comfortably below a real
+# catalog (228,841 series ingested in production), far above anything a partial
+# pass would leave behind.
+MIN_INGESTED_SHOWS = 150_000
+
+
+class IngestNotRun(Exception):
+    """Too few ingested shows for the work list to mean what it claims.
+
+    Raised rather than returning an empty result: a pass that quietly did
+    nothing and a pass that quietly re-pointed the wrong 1.9M rows are the two
+    failures this guard sits between, and only one of them is loud on its own.
+    """
+
 
 # Episodes per transaction. Sized so 1.9M rows is a few hundred round trips while
 # killing the pass costs one batch. The ids travel as two arrays rather than a

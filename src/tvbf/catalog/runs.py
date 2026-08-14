@@ -6,14 +6,15 @@ from uuid import UUID, uuid4
 from sqlalchemy import desc, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.tvmaze import models as m
+from tvbf.catalog import models as m
 
 # Run kinds that share one `last_update_cursor` lineage. Each ingest axis has
 # its own, and axes must NOT see each other's — unscoped, one delta resumes
 # from another's watermark and silently skips work (see
 # `get_last_successful_cursor`). The TV Maze axes (`initial`/`update` and
-# `person_update`) went with their orchestrators in NEU-1050; their rows stand
-# in `ingest_run` and no code reads their cursors any more.
+# `person_update`) went with their orchestrators in NEU-1050; their rows
+# travelled into `catalog.ingest_run` with the table in NEU-1051 and no code
+# reads their cursors any more.
 #
 # The TMDB catalog delta's lineage (NEU-1035). A single kind, because the full
 # catalog pass deliberately hands nothing forward: TMDB's delta is a date range

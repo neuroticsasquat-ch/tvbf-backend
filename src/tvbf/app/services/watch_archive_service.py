@@ -6,6 +6,14 @@ rather than aspirational: it copies all four source tables into a table that
 describes what was watched in human terms, so a catastrophic mapping failure
 stays recoverable by hand even after `tvmaze` is gone.
 
+It now reads `catalog`, which is what "after `tvmaze` is gone" stopped being
+hypothetical about in NEU-1051. The archive's own shape is unchanged and its
+existing rows are still correct: NEU-1042 preserved TV Maze's ids as the catalog
+surrogates, so `source_show_id` and `source_episode_id` name the same rows they
+always did, and `app` has referenced `catalog` since NEU-1046 anyway — a run
+that read the old spine would have been describing a row the user's history no
+longer points at.
+
 Three properties are worth stating outright, because each is a decision:
 
 * **One statement per record type.** Each snapshot is a single
@@ -56,7 +64,7 @@ from tvbf.app.models import (
     WatchArchive,
     watch_archive_record_type_enum,
 )
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 log = logging.getLogger(__name__)
 
@@ -135,12 +143,12 @@ class ArchiveSnapshot:
 
 
 def _premiered_year():
-    """`Show.premiered`'s year as an integer, NULL when there is no premiere date.
+    """`Show.first_air_date`'s year as an integer, NULL when there is no premiere date.
 
     `extract` yields a numeric in Postgres; the cast keeps the archive column an
     honest `integer` rather than storing `2009.0`.
     """
-    return cast(extract("year", Show.premiered), Integer)
+    return cast(extract("year", Show.first_air_date), Integer)
 
 
 def _null(type_):
@@ -191,8 +199,8 @@ def _select_show_watches() -> Select:
             _null(Numeric(2, 1)),
             Show.id,
             _null(BigInteger),
-            Show.externals_imdb,
-            Show.externals_tvdb,
+            Show.imdb_id,
+            Show.tvdb_id,
         )
         .join(User, User.id == UserShowWatch.user_id)
         .join(Show, Show.id == UserShowWatch.show_id)
@@ -216,8 +224,8 @@ def _select_show_ratings() -> Select:
             UserShowRating.stars,
             Show.id,
             _null(BigInteger),
-            Show.externals_imdb,
-            Show.externals_tvdb,
+            Show.imdb_id,
+            Show.tvdb_id,
         )
         .join(User, User.id == UserShowRating.user_id)
         .join(Show, Show.id == UserShowRating.show_id)
@@ -233,16 +241,16 @@ def _select_episode_watches() -> Select:
             User.display_name,
             Show.name,
             _premiered_year(),
-            Episode.season,
-            Episode.number,
+            Episode.season_number,
+            Episode.episode_number,
             Episode.name,
-            Episode.airdate,
+            Episode.air_date,
             UserEpisodeWatch.watched_at,
             _null(Numeric(2, 1)),
             Show.id,
             Episode.id,
-            Show.externals_imdb,
-            Show.externals_tvdb,
+            Show.imdb_id,
+            Show.tvdb_id,
         )
         .join(User, User.id == UserEpisodeWatch.user_id)
         .join(Episode, Episode.id == UserEpisodeWatch.episode_id)
@@ -259,16 +267,16 @@ def _select_episode_ratings() -> Select:
             User.display_name,
             Show.name,
             _premiered_year(),
-            Episode.season,
-            Episode.number,
+            Episode.season_number,
+            Episode.episode_number,
             Episode.name,
-            Episode.airdate,
+            Episode.air_date,
             UserEpisodeRating.rated_at,
             UserEpisodeRating.stars,
             Show.id,
             Episode.id,
-            Show.externals_imdb,
-            Show.externals_tvdb,
+            Show.imdb_id,
+            Show.tvdb_id,
         )
         .join(User, User.id == UserEpisodeRating.user_id)
         .join(Episode, Episode.id == UserEpisodeRating.episode_id)

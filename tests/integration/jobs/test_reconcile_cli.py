@@ -30,7 +30,7 @@ async def test_capture_writes_only_the_artifact_to_stdout(session, tmp_path, cap
     # Nothing but JSON on stdout — logs go to stderr, so the caller can redirect
     # straight into a file over `ssh docker exec`.
     assert snapshot["artifact_version"] == 1
-    assert snapshot["spine"] == "tvmaze"
+    assert snapshot["spine"] == "catalog"
     assert set(snapshot) == {"artifact_version", "spine", "totals", "users"}
 
 

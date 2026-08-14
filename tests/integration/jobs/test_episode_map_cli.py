@@ -18,8 +18,6 @@ import pytest
 from tvbf.app.models import UserEpisodeWatch
 from tvbf.catalog import models as cm
 from tvbf.jobs.episode_map import _parse_args, run
-from tvbf.tvmaze.models import Episode as MazeEpisode
-from tvbf.tvmaze.models import Show as MazeShow
 
 _ID = 9_700_000
 
@@ -34,12 +32,10 @@ async def _seed_unmapped_watch(session, make_user, *, name: str = "CLI Show") ->
     """A watched episode with no `tmdb_id` — exactly what the report exists to surface."""
     user = await make_user(email=f"emcli{_next_id()}@example.com")
     show_id = _next_id()
-    session.add(MazeShow(id=show_id, name=name, tvmaze_updated=1))
     session.add(cm.Show(id=show_id, name=name, tmdb_id=1396))
     await session.flush()
 
     episode_id = _next_id()
-    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=1, number=9))
     session.add(
         cm.Episode(id=episode_id, show_id=show_id, season_number=1, episode_number=9, name="Odd")
     )

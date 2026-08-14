@@ -48,7 +48,7 @@ tasks:
         for db in tvbf tvbf_test; do
           docker exec tbc_postgresql_db psql -U root -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
             || docker exec tbc_postgresql_db psql -U root -d postgres -c "CREATE DATABASE $db"
-          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS tvmaze; CREATE SCHEMA IF NOT EXISTS catalog;"
+          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS catalog;"
         done
 
   migrate:
@@ -62,19 +62,9 @@ tasks:
       - "{{.EXEC}} alembic revision --autogenerate -m \"{{.CLI_ARGS}}\""
 
   db:refresh:
-    desc: 'Refresh local tvbf with prod tvmaze schema (preserves local app data)'
-    cmds:
-      - 'scripts/refresh_db.sh tvmaze'
-
-  db:refresh:app:
     desc: 'Refresh local tvbf with prod app schema (anonymizes by default; ANONYMIZE=0 to opt out)'
     cmds:
       - 'scripts/refresh_db.sh app'
-
-  db:refresh:both:
-    desc: 'Refresh local tvbf with both prod schemas (anonymizes app by default; ANONYMIZE=0 to opt out)'
-    cmds:
-      - 'scripts/refresh_db.sh both'
 
   db:set-password:
     desc: 'Reset a local user password (task db:set-password -- email [password], default: localdev)'
@@ -119,7 +109,8 @@ tasks:
   ingest:status:
     # The one status route that filters nothing, so it reads a run of any kind.
     # Poll `update:catalog` through it — that delta has no status route of its
-    # own — and the retired TV Maze runs while `tvmaze.ingest_run` stands.
+    # own — and the retired TV Maze runs, whose rows moved into
+    # `catalog.ingest_run` with the table in NEU-1051.
     desc: 'GET /admin/ingest/<id> — status of any run — task ingest:status -- <uuid>'
     cmds:
       - >
@@ -151,11 +142,6 @@ tasks:
     desc: Snapshot every watch and rating into app.watch_archive (idempotent)
     cmds:
       - docker compose exec tvbf-backend python -m tvbf.jobs.watch_archive
-
-  copy:catalog:
-    desc: Copy tvmaze.* into catalog.* with ids preserved (idempotent; NEU-1042)
-    cmds:
-      - docker compose exec tvbf-backend python -m tvbf.jobs.catalog_copy
 
   enrich:tmdb-ids:
     desc: Attach tmdb_id to the copied catalog rows in three tiers (idempotent; NEU-1043)
@@ -213,21 +199,6 @@ tasks:
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.season_dedupe report
 
-  prune:shows:
-    desc: Delete the unmatched, untouched copied show rows (idempotent; NEU-1066)
-    cmds:
-      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.show_prune prune {{.CLI_ARGS}}
-
-  prune:shows:report:
-    desc: 'Count the prunable shows and enumerate what the pass keeps, as JSON (NEU-1066)'
-    # `silent` + `-T` for the same reasons `dedupe:seasons:report` needs them: the
-    # report is the process stdout, so go-task's banner and docker's TTY carriage
-    # returns would both corrupt it.
-    silent: true
-    cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.show_prune report
-
   repoint:episodes:
     desc: Move user history onto the ingested episode rows, then delete the copies (NEU-1126)
     cmds:
@@ -257,16 +228,6 @@ tasks:
     silent: true
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.credits_backfill report
-
-  gate:coverage:
-    desc: 'Pre-cutover go/no-go: catalog coverage + the hard criteria, as JSON (exit 1 on no-go; NEU-1048)'
-    # `silent` + `-T` for the same reasons `prune:shows:report` needs them: the
-    # artifact is the process stdout, so go-task's banner and docker's TTY
-    # carriage returns would both corrupt it. The verdict goes to stderr, so a
-    # bare run still reads as prose.
-    silent: true
-    cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.coverage_gate
 
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'

@@ -37,7 +37,77 @@ pointing at unmapped rows.
 | `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ✅ 2026-08-12 — all five constraints on `catalog`, `ON DELETE` unchanged, verified by `pg_get_constraintdef` |
 | Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
 | Post-repoint acceptance test (NEU-1125) | `task reconcile:verify -- --spine catalog` | **after NEU-1046 + NEU-1047**, gates NEU-1050 and NEU-1051 | ✅ 2026-08-13 — **GO**. Exit 1 with eight discrepancies, every one of them a *gain* traceable to one user's app use after the baseline was taken (11 watches, 2 ratings, 13 events); no `LOST` line, and the null-show bucket empty on both sides. Close-of-window state committed as `neu-1125-post-repoint-snapshot.json` |
-| Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ⬜ not yet run — 228,841 mirrored shows carry no credits at all. ~8.7h, resumable, safe to kill and restart. Run `task backfill:credits:report` first and keep the artifact |
+| Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ✅ 2026-08-13 — run in production, confirmed by the operator. This row is the record NEU-1127 existed to create; the counts were not captured at the time, so `task backfill:credits:report` against prod is what would restate them |
+| `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy. `scripts/dump_tvmaze.sh` must have run and verified first; see below |
+
+
+## Dropping `tvmaze` (NEU-1051)
+
+**Merging the PR is the drop.** Migration `a7e3c8d15f42` moves `ingest_run` into
+`catalog` and then runs `DROP SCHEMA tvmaze CASCADE`, and Coolify applies
+migrations on deploy — so there is no separate "run the pass" step to forget,
+and equally no chance to take the dump afterwards. It goes 3.5M episodes,
+484k people and 2.67M guest-cast rows, and no upstream can put the TV Maze
+originals back.
+
+### Before merging
+
+```bash
+./scripts/dump_tvmaze.sh                    # dumps, then test-restores on prod
+```
+
+The script refuses to report success unless the restore reconciles table-for-table
+against the source and `show`, `episode`, `show_cast` and `episode_guest_cast`
+all come back non-empty. Copy both output files **off the VM** — a dump sitting
+on the machine whose loss it insures against is not a backup. Only then merge.
+
+The other preconditions the ticket names are matters of judgement rather than
+commands, and were satisfied as follows: the go/no-go passed 2026-08-12
+(`neu-1048-coverage-baseline.json`), the post-repoint reconciliation passed
+2026-08-13 (`neu-1125-post-repoint-snapshot.json`, gains only), `app.watch_archive`
+holds 9,359 verified rows, and the credits backfill ran 2026-08-13.
+
+### What the drop is safe against
+
+Nothing in `app` has referenced `tvmaze` since NEU-1046 repointed all five
+foreign keys onto `catalog`, so the `CASCADE` has no inbound constraint to
+follow. `app.watch_archive` has no foreign keys at all and describes every watch
+in human terms, so it survives intact and stays the recovery path of last resort
+— it is also the reason this ticket could be deferred safely for as long as it
+was.
+
+### Reverting
+
+`downgrade()` puts `ingest_run` back in a recreated `tvmaze` schema and **does
+not restore any data** — no downgrade could. A real revert is:
+
+```bash
+ssh $PROD_SSH 'docker exec -i <pg> psql -U root -d tvbf -c "DROP SCHEMA IF EXISTS tvmaze CASCADE"'
+ssh $PROD_SSH 'docker exec -i <pg> pg_restore --no-owner --no-acl -U root -d tvbf' < tvmaze-YYYYMMDDTHHMMSSZ.dump
+```
+
+then `alembic downgrade -1` to move `ingest_run` back. Note the order: the
+restore brings a `tvmaze.ingest_run` of its own, so the downgrade's
+`ALTER TABLE catalog.ingest_run SET SCHEMA tvmaze` would collide with it —
+drop the restored copy first, since the `catalog` one is the live table and
+holds every run since the move.
+
+### What went with the schema
+
+Four passes read `tvmaze` directly and could not outlive it, so NEU-1051 deleted
+them along with their tests: the catalog copy (`task copy:catalog`, NEU-1042),
+the show-grain prune (`task prune:shows`, NEU-1066) whose guard was
+`EXISTS (SELECT 1 FROM tvmaze.show ...)`, and the pre-cutover coverage gate
+(`task gate:coverage`, NEU-1048) whose entire denominator was `tvmaze.show`.
+Their production runs are recorded above and that record is now the only account
+of them. `MIN_INGESTED_SHOWS` and `IngestNotRun` moved from `show_prune` into
+`tmdb/episode_repoint.py`, the one pass left that asks the question.
+
+`season_dedupe`, `episode_map`, `episode_repoint`, `enrichment` and `human_queue`
+survive — they read `catalog` only. `season_dedupe` in particular should still be
+re-run after any later ingest or delta. What each of them lost is the revert
+path that ran through `task copy:catalog`; past this ticket, the dump above is
+the only way back.
 
 ## Deleting episodes needs two indexes that did not exist
 
@@ -432,6 +502,10 @@ carries a complete credit set and a re-run never has to wonder whether it does.
 
 ## Show-grain prune (NEU-1066)
 
+> **Retired by NEU-1051.** The pass below no longer exists — it read `tvmaze`
+> directly and was deleted with that schema. This section stays as the record
+> of what it did, which is now the only account of it.
+
 The show grain's version of the same problem, with the opposite outcome for
 matched rows. `catalog.show` upserts conflict-target `tmdb_id` (ADR-0008) and
 Postgres treats NULLs as distinct in a unique index, so the full ingest split the
@@ -521,6 +595,10 @@ enumerated above by hand rather than left for the query to find. Read an empty
 is clean".
 
 ## Pre-cutover go/no-go (NEU-1048)
+
+> **Retired by NEU-1051.** The pass below no longer exists — it read `tvmaze`
+> directly and was deleted with that schema. This section stays as the record
+> of what it did, which is now the only account of it.
 
 The last check before the window opens, and the only one that runs while there
 is still nothing to undo. `task gate:coverage` writes one JSON artifact to

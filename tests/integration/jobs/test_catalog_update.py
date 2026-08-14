@@ -12,11 +12,11 @@ import pytest
 import respx
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run, finalize_run
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.jobs import catalog_update
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import create_run, finalize_run
 
 HEALTHCHECK = "https://hc.example.com/catalog"
 

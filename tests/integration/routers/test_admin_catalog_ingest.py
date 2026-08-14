@@ -7,10 +7,10 @@ import pytest
 from httpx import ASGITransport
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
 from tvbf.config import get_settings
 from tvbf.main import app
 from tvbf.routers import admin as admin_router
-from tvbf.tvmaze import models as m
 
 
 @pytest.fixture
@@ -80,7 +80,7 @@ async def test_a_second_trigger_is_rejected_while_one_is_live(session, monkeypat
 async def test_a_live_run_of_another_kind_does_not_block_this_one(session, monkeypatch):
     """Different kinds, different guards — a live delta must not wedge the pass."""
     import tvbf.routers.admin as admin_module
-    from tvbf.tvmaze.runs import create_run
+    from tvbf.catalog.runs import create_run
 
     monkeypatch.setattr(admin_module.asyncio, "create_task", lambda coro: coro.close())
 
@@ -102,7 +102,7 @@ async def test_status_returns_404_for_an_unknown_run(admin_client):
 async def test_status_returns_404_for_a_run_of_another_kind(session):
     from fastapi import HTTPException
 
-    from tvbf.tvmaze.runs import create_run
+    from tvbf.catalog.runs import create_run
 
     run_id = await create_run(session, kind="akas_backfill")
     await session.commit()
@@ -114,7 +114,7 @@ async def test_status_returns_404_for_a_run_of_another_kind(session):
 
 @pytest.mark.asyncio
 async def test_status_reports_progress_for_a_known_run(session):
-    from tvbf.tvmaze.runs import create_run, record_progress
+    from tvbf.catalog.runs import create_run, record_progress
 
     run_id = await create_run(session, kind="catalog_initial")
     await record_progress(session, run_id, processed_delta=12, failed_delta=1)
@@ -130,8 +130,8 @@ async def test_status_reports_progress_for_a_known_run(session):
 async def test_the_background_worker_marks_the_run_failed_on_a_crash(session, monkeypatch):
     """A multi-hour pass that died has to say so, or the liveness guard wedges
     this kind until the next container restart."""
+    from tvbf.catalog.runs import create_run
     from tvbf.routers.admin import _background_catalog_ingest
-    from tvbf.tvmaze.runs import create_run
 
     async def boom(**kwargs):
         raise RuntimeError("simulated background crash")
@@ -159,8 +159,8 @@ async def test_a_missing_tmdb_token_fails_the_run_rather_than_the_process(sessio
     """The token is optional in config so this milestone could land without
     breaking running deploys. The cost is that a misconfigured deploy discovers
     it here — as a failed run row, not a silently dead background task."""
+    from tvbf.catalog.runs import create_run
     from tvbf.routers.admin import _background_catalog_ingest
-    from tvbf.tvmaze.runs import create_run
 
     monkeypatch.delenv("TMDB_READ_ACCESS_TOKEN", raising=False)
     get_settings.cache_clear()

@@ -8,7 +8,6 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 
 import tvbf.app.models  # noqa: F401
 import tvbf.catalog.models  # noqa: F401
-import tvbf.tvmaze.models  # noqa: F401  -- register models with Base.metadata
 from tvbf.config import get_settings
 from tvbf.db import Base
 
@@ -23,7 +22,7 @@ target_metadata = Base.metadata
 
 def include_name(name, type_, parent_names):
     if type_ == "schema":
-        return name in ("tvmaze", "app", "catalog")
+        return name in ("app", "catalog")
     return True
 
 

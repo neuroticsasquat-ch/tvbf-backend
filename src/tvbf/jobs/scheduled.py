@@ -27,11 +27,11 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run, find_live_run
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import create_run, find_live_run
 
 log = logging.getLogger(__name__)
 

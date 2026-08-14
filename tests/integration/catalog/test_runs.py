@@ -3,8 +3,8 @@ from uuid import UUID
 
 from sqlalchemy import select
 
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import (
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import (
     create_run,
     finalize_run,
     find_live_run,

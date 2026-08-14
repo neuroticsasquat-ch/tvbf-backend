@@ -72,6 +72,12 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.catalog.runs import (
+    CATALOG_CURSOR_KINDS,
+    finalize_run,
+    get_completed_pass_start,
+    get_last_successful_cursor,
+)
 from tvbf.config import Settings
 from tvbf.db import SessionLocal
 from tvbf.tmdb.client import (
@@ -87,12 +93,6 @@ from tvbf.tmdb.ingest import (
     mirror_series,
 )
 from tvbf.tmdb.tombstone import reconcile_tombstones
-from tvbf.tvmaze.runs import (
-    CATALOG_CURSOR_KINDS,
-    finalize_run,
-    get_completed_pass_start,
-    get_last_successful_cursor,
-)
 
 log = logging.getLogger(__name__)
 

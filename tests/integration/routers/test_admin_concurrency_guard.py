@@ -14,9 +14,9 @@ import pytest
 from httpx import ASGITransport
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run
 from tvbf.main import app
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import create_run
 
 # Every POST route on the admin router, with the run kind it creates.
 ROUTE_KINDS = [
@@ -118,7 +118,7 @@ async def test_post_202s_when_the_running_run_of_that_kind_is_stale(
 
 @pytest.mark.parametrize("route,kind", ROUTE_KINDS)
 async def test_post_202s_when_the_previous_run_finished(admin_client, session, route, kind):
-    from tvbf.tvmaze.runs import finalize_run
+    from tvbf.catalog.runs import finalize_run
 
     run_id = await create_run(session, kind=kind)
     await session.commit()
