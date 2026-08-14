@@ -17,11 +17,12 @@ ingest or delta.** A delta that adds a season to a matched show on a number a
 copied row still holds is a fresh duplicate; there is no watermark, so a re-run
 costs only what is genuinely still there.
 
-**`task copy:catalog` puts the deleted rows back** — its anti-join verification
-demands a catalog row per `tvmaze.season`, so it re-inserts each one under its
-original id. It does not restore the episodes' parentage; see the two-statement
-revert in `tvbf.tmdb.season_dedupe`'s module docstring, which is what keeps the
-work reversible while `tvmaze` stands (NEU-1051 has not run).
+**This is no longer reversible.** `task copy:catalog` used to put the deleted
+rows back — its anti-join verification demanded a catalog row per
+`tvmaze.season` — though even then it did not restore the episodes' parentage,
+which is why `tvbf.tmdb.season_dedupe`'s module docstring records a two-statement
+revert. NEU-1051 deleted that pass with the `tvmaze` schema; the pre-drop dump is
+the only source for the first half now.
 
 **Exit codes: 0 = the pass completed, 1 = it aborted or raised.** Seasons left
 behind are not a failure — the ones under an unmatched show are data the

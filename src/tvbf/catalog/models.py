@@ -34,6 +34,7 @@ the bottom of this module (NEU-1038). The `created_by` show-creator credit is
 
 from datetime import date, datetime
 from decimal import Decimal
+from uuid import UUID, uuid4
 
 from sqlalchemy import (
     ARRAY,
@@ -50,11 +51,13 @@ from sqlalchemy import (
     Integer,
     Numeric,
     PrimaryKeyConstraint,
+    String,
     Text,
     UniqueConstraint,
     func,
     text,
 )
+from sqlalchemy.dialects.postgresql import UUID as PG_UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
 from tvbf.db import Base
@@ -1189,18 +1192,79 @@ class EpisodeCrew(Base):
     credit_id: Mapped[str | None] = mapped_column(Text)
 
 
+class IngestRun(Base):
+    """One execution of one ingest pass, of any kind.
+
+    Operational metadata rather than catalog data, which is why it sat in
+    `tvmaze` right up until NEU-1051 dropped that schema — a second copy would
+    have meant a second stale-run cleanup, a second liveness guard and a second
+    status route while both spines stood. It moves here rather than to `app`
+    because it describes the mirror, the same way `RateBudget` above does, and
+    it moved with `ALTER TABLE ... SET SCHEMA` so every historical row came
+    with it.
+    """
+
+    __tablename__ = "ingest_run"
+    __table_args__ = (
+        CheckConstraint(
+            # The retired TV Maze kinds stay in the vocabulary. Their
+            # orchestrators went in NEU-1050 and their schema in NEU-1051, so
+            # nothing can write one again — but production rows carrying them
+            # travelled here with the table, and a narrower constraint would
+            # make history unreadable to buy nothing.
+            #
+            # `person_initial` is the exception and stays absent, exactly as it
+            # was in `tvmaze`: NEU-962 dropped that kind, rows of it still exist
+            # (one locally, one cancelled run in prod), and the migration re-adds
+            # this constraint NOT VALID so they stay readable while no new one
+            # can be written. NOT VALID skips only the scan of existing rows, so
+            # writes are enforced either way and what this declaration says is
+            # what every database does. Tests build from `create_all` and never
+            # see the migration, so they get an ordinary validated constraint
+            # from here — and must not seed a `person_initial` row.
+            #
+            # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034) and
+            # `catalog_update` its daily delta (NEU-1035) — the only two kinds
+            # any live code still writes.
+            "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
+            "'show_refresh', 'person_update', 'episode_credits_backfill', "
+            "'catalog_initial', 'catalog_update')",
+            name="ck_ingest_run_kind",
+        ),
+        CheckConstraint(
+            "status IN ('running', 'succeeded', 'failed', 'cancelled')",
+            name="ck_ingest_run_status",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[UUID] = mapped_column(PG_UUID(as_uuid=True), primary_key=True, default=uuid4)
+    kind: Mapped[str] = mapped_column(String(32), nullable=False)
+    status: Mapped[str] = mapped_column(String(16), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_update_cursor: Mapped[int | None] = mapped_column(BigInteger)
+    shows_processed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    shows_failed: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    last_progress_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    error: Mapped[str | None] = mapped_column(Text)
+
+
 class RateBudget(Base):
     """One upstream's request budget, as a token bucket every process shares.
 
     An upstream's cap applies to us as a whole. An in-process limiter could
-    express that only while every job ran inside the app; the daily now runs as
-    its own process (`tvbf.jobs.daily_update`), so the budget has to live
+    express that only while every job ran inside the app; a delta now runs as
+    its own process (`tvbf.jobs.catalog_update`), so the budget has to live
     somewhere both can see (ADR-0006).
 
-    A row per source, unlike `tvmaze.rate_budget`'s single check-constrained
-    row: TMDB's ceiling is its own and has nothing to do with TV Maze's
-    (NEU-1027). TV Maze keeps its original row until cutover — migrating a live
-    token bucket mid-ingest buys nothing.
+    A row per source, which is what made the next upstream a row rather than
+    a rewrite (NEU-1027). The TV Maze bucket it replaced was a single
+    check-constrained row in a schema that no longer exists; TMDB is the only
+    registered source today, and the keying is the reason that is a fact about
+    the registry rather than about this table.
     """
 
     __tablename__ = "rate_budget"

@@ -14,7 +14,6 @@ from tvbf.tmdb.client import (
     plan_append,
     season_key,
 )
-from tvbf.tvmaze.client import TVMazeClient
 
 BASE = "https://api.themoviedb.org/3"
 TOKEN = "eyJ-not-a-real-token"
@@ -93,13 +92,6 @@ def test_the_lease_never_exceeds_what_the_bucket_can_grant():
     assert _budget(20, 1.0).lease == 20
     assert _budget(5, 1.0).lease == 5
     assert _budget(5, 1.0).lease <= _budget(5, 1.0).capacity
-
-
-def test_tmdb_and_tvmaze_do_not_share_a_budget():
-    """Different ceilings, different buckets. TV Maze's calibration is untouched."""
-    tmdb = _client()
-    tvmaze = TVMazeClient(base_url="https://api.tvmaze.com", rate_calls=18, rate_window=10)
-    assert tmdb._limiter is not tvmaze._limiter
 
 
 # --- append_to_response -----------------------------------------------------

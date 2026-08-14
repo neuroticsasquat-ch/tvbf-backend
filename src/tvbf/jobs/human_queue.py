@@ -79,7 +79,8 @@ async def _list(db: AsyncSession, *, candidates: bool) -> int:
     if unmirrored:
         log.error(
             "%d user-touched show(s) have no catalog.show row and are NOT in the report "
-            "above — re-run `task copy:catalog`, then this: %s",
+            "above; the copy that would have created them went with the tvmaze schema "
+            "in NEU-1051, so these need authoring by hand: %s",
             len(unmirrored),
             ", ".join(str(show_id) for show_id in unmirrored),
         )

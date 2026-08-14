@@ -68,7 +68,7 @@ from tvbf.tmdb.api_payloads import (
 log = logging.getLogger(__name__)
 
 # Postgres caps bind parameters per query at 32,767 — the ceiling that forced
-# `tvmaze.upsert._EPISODE_BATCH_SIZE`, and it has not moved. An episode binds 15
+# the TV Maze mirror to batch episodes too, and it has not moved. An episode binds 15
 # columns here, so 1,000 rows is 15,000 parameters: comfortably under, and still
 # under for every other table in this module, none of which binds more. Without
 # batching, any show past ~2,180 episodes — soaps, daily talk, news — fails
@@ -1539,9 +1539,9 @@ async def upsert_series_payload(
     `prune_seasons` makes the payload authoritative for the show's season set and
     is **opt-in per caller, which it must stay**. `TMDBSeries.seasons` defaults
     to `[]`, so this function cannot tell "no seasons upstream" from "the caller
-    fetched something narrower" — the same reason `tvmaze.upsert` refuses the
-    tempting `if not seasons: skip` guard, which additionally conflates a
-    legitimately season-less show with a missing one.
+    fetched something narrower" — the same reason the TV Maze mirror refused the
+    tempting `if not seasons: skip` guard (ADR-0004), which additionally
+    conflates a legitimately season-less show with a missing one.
 
     Order is load-bearing in three places:
 

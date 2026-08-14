@@ -36,7 +36,132 @@ pointing at unmapped rows.
 | Pre-cutover go/no-go (NEU-1048) | `task gate:coverage` | **before NEU-1046**, while `tvmaze` still stands | ✅ 2026-08-12 — **GO** on the second run. The first returned no-go on the four `title_year` guesses NEU-1044 confirmed by hand on 2026-08-10 and never re-stamped; `queue:confirm` re-stamped all four `'human'`, and the re-run passed every criterion. Artifact committed as `neu-1048-coverage-baseline.json` |
 | `app` FK repoint (NEU-1046) | migration `b6d24f0ac715`, applied on deploy | after the go/no-go, before NEU-1126 | ✅ 2026-08-12 — all five constraints on `catalog`, `ON DELETE` unchanged, verified by `pg_get_constraintdef` |
 | Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
-| Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ⬜ not yet run — 228,841 mirrored shows carry no credits at all. ~8.7h, resumable, safe to kill and restart. Run `task backfill:credits:report` first and keep the artifact |
+| Post-repoint acceptance test (NEU-1125) | `task reconcile:verify -- --spine catalog` | **after NEU-1046 + NEU-1047**, gates NEU-1050 and NEU-1051 | ✅ 2026-08-13 — **GO**. Exit 1 with eight discrepancies, every one of them a *gain* traceable to one user's app use after the baseline was taken (11 watches, 2 ratings, 13 events); no `LOST` line, and the null-show bucket empty on both sides. Close-of-window state committed as `neu-1125-post-repoint-snapshot.json` |
+| Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ✅ 2026-08-13 — run in production, confirmed by the operator. This row is the record NEU-1127 existed to create; the counts were not captured at the time, so `task backfill:credits:report` against prod is what would restate them |
+| On-the-day reconciliation (NEU-1051) | `reconcile verify` in the prod container | **before** the drop | ✅ 2026-08-14 — **GO**. Exit 1 with 8 discrepancies, every one a *gain* from one user's app use after the baseline (Ted Lasso +1 watch +1 rating, Lucky +1 watch +1 rating, Arrested Development +9 watches, +13 activity events total); no `LOST` line |
+| Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
+| `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
+
+
+## Dropping `tvmaze` (NEU-1051)
+
+**Merging the PR is the drop.** Migration `a7e3c8d15f42` moves `ingest_run` into
+`catalog` and then runs `DROP SCHEMA tvmaze CASCADE`, and Coolify applies
+migrations on deploy — so there is no separate "run the pass" step to forget,
+and equally no chance to take the dump afterwards. It goes 3.5M episodes,
+484k people and 2.67M guest-cast rows, and no upstream can put the TV Maze
+originals back.
+
+### The migration refuses to run without the dump
+
+`upgrade()` raises `DumpNotVerified` when `tvmaze.show` holds real rows and
+`TVBF_TVMAZE_DUMP_VERIFIED` is not set to `yes`. That guard exists because a
+runbook sentence is not a control: every other one-shot pass here refuses
+structurally (`show_prune`'s `IngestNotRun`, then `episode_repoint`'s), and this
+is the only one where merging *is* the destructive act. It stands down below
+1,000 rows, so a fresh `db:init && migrate`, CI and the test suite never see it.
+
+### Before merging
+
+```bash
+./scripts/dump_tvmaze.sh                    # dump, test-restore, reconcile — all on prod
+```
+
+Everything runs on the prod host and the dump travels once, at the end. The
+script fails rather than reporting success unless the restored database matches
+the source **table-for-table on exact `count(*)`**, `show`, `episode`,
+`show_cast` and `episode_guest_cast` all come back non-empty, and the fetched
+file matches prod's byte count exactly.
+
+**A `--schema=tvmaze` dump is not restorable on its own**, which the first real
+run of this script is how we found out. It carries the schema and nothing else,
+so four of its indexes reference `public` objects that do not travel with it —
+`pg_trgm` for `gin_trgm_ops`, and this repo's own `immutable_unaccent` wrapper
+(`sql_fold.py`, migration `c2e451aa1ec6`). Any restore, including a real
+recovery, needs these first:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE OR REPLACE FUNCTION public.immutable_unaccent(text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT public.unaccent($1) $$;
+```
+
+The script runs them and then restores with `--exit-on-error`, because without it
+`pg_restore` reports "errors ignored on restore: 4" and exits having built no
+indexes — a dump that passes for good while being incomplete.
+
+Then, in order:
+
+1. Copy `tvmaze-<stamp>.dump` and `.counts.txt` **off the VM**. A dump sitting on
+   the machine whose loss it insures against is not a backup.
+2. Re-run the reconciliation against the live database **on the day**. Note the
+   direction: `verify --baseline -` reads the *baseline* from stdin and diffs it
+   against whatever database **that process** connects to — so `verify` has to run
+   **inside the prod container**, with the committed baseline piped in. Piping a
+   prod `capture` into a local `verify` looks equivalent and silently checks your
+   laptop's database instead.
+   ```bash
+   cat docs/migration/reconciliation-baseline.json \
+     | ssh $PROD_SSH 'docker exec -i <tvbf-backend-container> \
+         python -m tvbf.jobs.reconcile verify --baseline - --spine catalog'
+   ```
+   `--spine catalog` explicitly, because until this PR merges the prod image still
+   defaults to `tvmaze`. Exit 1 with **gains only** is the pass — users keep using
+   the app between the baseline and the drop. A `LOST` line is a stop.
+3. Set `TVBF_TVMAZE_DUMP_VERIFIED=yes` in Coolify.
+4. Merge. The deploy applies the migration and the schema goes.
+
+The remaining preconditions are matters of judgement rather than commands, and
+were satisfied as follows: the go/no-go passed 2026-08-12
+(`neu-1048-coverage-baseline.json`), `app.watch_archive` holds 9,359 verified
+rows, and the credits backfill ran 2026-08-13.
+
+**Take `TVBF_TVMAZE_DUMP_VERIFIED` back out of Coolify once the deploy has
+landed.** It has done its job, and a variable left set is one that cannot refuse
+anything next time.
+
+### What the drop is safe against
+
+Nothing in `app` has referenced `tvmaze` since NEU-1046 repointed all five
+foreign keys onto `catalog`, so the `CASCADE` has no inbound constraint to
+follow. `app.watch_archive` has no foreign keys at all and describes every watch
+in human terms, so it survives intact and stays the recovery path of last resort
+— it is also the reason this ticket could be deferred safely for as long as it
+was.
+
+### Reverting
+
+`downgrade()` puts `ingest_run` back in a recreated `tvmaze` schema and **does
+not restore any data** — no downgrade could. A real revert is:
+
+```bash
+ssh $PROD_SSH 'docker exec -i <pg> psql -U root -d tvbf -c "DROP SCHEMA IF EXISTS tvmaze CASCADE"'
+ssh $PROD_SSH 'docker exec -i <pg> pg_restore --no-owner --no-acl -U root -d tvbf' < tvmaze-YYYYMMDDTHHMMSSZ.dump
+```
+
+then `alembic downgrade -1` to move `ingest_run` back. Note the order: the
+restore brings a `tvmaze.ingest_run` of its own, so the downgrade's
+`ALTER TABLE catalog.ingest_run SET SCHEMA tvmaze` would collide with it —
+drop the restored copy first, since the `catalog` one is the live table and
+holds every run since the move.
+
+### What went with the schema
+
+Four passes read `tvmaze` directly and could not outlive it, so NEU-1051 deleted
+them along with their tests: the catalog copy (`task copy:catalog`, NEU-1042),
+the show-grain prune (`task prune:shows`, NEU-1066) whose guard was
+`EXISTS (SELECT 1 FROM tvmaze.show ...)`, and the pre-cutover coverage gate
+(`task gate:coverage`, NEU-1048) whose entire denominator was `tvmaze.show`.
+Their production runs are recorded above and that record is now the only account
+of them. `MIN_INGESTED_SHOWS` and `IngestNotRun` moved from `show_prune` into
+`tmdb/episode_repoint.py`, the one pass left that asks the question.
+
+`season_dedupe`, `episode_map`, `episode_repoint`, `enrichment` and `human_queue`
+survive — they read `catalog` only. `season_dedupe` in particular should still be
+re-run after any later ingest or delta. What each of them lost is the revert
+path that ran through `task copy:catalog`; past this ticket, the dump above is
+the only way back.
 
 ## Deleting episodes needs two indexes that did not exist
 
@@ -102,6 +227,10 @@ ran that should not have.
 After cutover, add `--spine catalog` so the episode→show joins resolve against
 the new schema. The show ids are unchanged by design (TV Maze ids are preserved
 as `catalog.show.id`), which is what lets one baseline span both spines.
+
+That post-cutover run is NEU-1125, and it has already happened — *Post-repoint
+acceptance test (NEU-1125)* below records its verdict, and settles which of the
+two committed artifacts a given gate compares against.
 
 ## `neu-1043-collision-remediation.sql`
 
@@ -427,6 +556,10 @@ carries a complete credit set and a re-run never has to wonder whether it does.
 
 ## Show-grain prune (NEU-1066)
 
+> **Retired by NEU-1051.** The pass below no longer exists — it read `tvmaze`
+> directly and was deleted with that schema. This section stays as the record
+> of what it did, which is now the only account of it.
+
 The show grain's version of the same problem, with the opposite outcome for
 matched rows. `catalog.show` upserts conflict-target `tmdb_id` (ADR-0008) and
 Postgres treats NULLs as distinct in a unique index, so the full ingest split the
@@ -516,6 +649,10 @@ enumerated above by hand rather than left for the query to find. Read an empty
 is clean".
 
 ## Pre-cutover go/no-go (NEU-1048)
+
+> **Retired by NEU-1051.** The pass below no longer exists — it read `tvmaze`
+> directly and was deleted with that schema. This section stays as the record
+> of what it did, which is now the only account of it.
 
 The last check before the window opens, and the only one that runs while there
 is still nothing to undo. `task gate:coverage` writes one JSON artifact to
@@ -806,9 +943,16 @@ worth recording.** `docs/migration/reconciliation-baseline.json` was captured
 2026-08-11 and production had since gained 9 episode watches and 9 activity events:
 a real user marked *Arrested Development* 1x16–2x2 watched at 02:01 on 2026-08-12.
 Verifying against it would have failed on a gain that has nothing to do with this
-pass, and the harness fails as loudly on gains as on losses by design. **The
-committed baseline needs re-capturing before NEU-1125 can use it as the cutover
-gate** — that ticket's whole premise is a baseline that matches.
+pass, and the harness fails as loudly on gains as on losses by design.
+
+**Superseded 2026-08-13 — do not re-capture the committed baseline.** This
+paragraph originally concluded that NEU-1125 needed a re-captured baseline to
+match against. It does not, and doing it would have destroyed the only record of
+the pre-cutover state: NEU-1125 ran against the committed file, exited 1 on those
+same user gains and three more, and read the verdict off the *direction* of every
+line instead. See *Post-repoint acceptance test (NEU-1125)* below. What was right
+here is the narrower claim: a snapshot taken immediately before a pass is the
+right instrument for **that pass**, and is not the cutover gate.
 
 A `--limit 100` smoke run preceded the full pass, per the section below: it deleted
 100, moved `repointable` from 1,908,478 to exactly 1,908,378, and reconciled clean.
@@ -958,3 +1102,168 @@ The revert is **wider than one run of this pass** — it matches every user row 
 an ingested episode with a copy beneath it, because nothing records which rows a
 given batch moved. That is right for undoing the migration and wrong for undoing
 a batch; `--limit` is what exists for the latter.
+
+## Post-repoint acceptance test (NEU-1125)
+
+The project spec's acceptance test — *"a migration that cannot produce that proof
+does not ship."* The NEU-1030 harness, re-run against the **committed** baseline
+with `--spine catalog`, after NEU-1046 moved the foreign keys and NEU-1047 moved
+the reads. It proves nothing was lost while the window was open, and it is what
+NEU-1050's code removal and NEU-1051's `DROP SCHEMA` are gated on. Nothing gets
+deleted on the strength of a check that ran before the thing being verified had
+happened.
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline - --spine catalog' \
+  < docs/migration/reconciliation-baseline.json
+```
+
+### The production run (2026-08-13)
+
+**Exit 1 — eight discrepancies, all of them gains, no loss anywhere. Verdict:
+GO.** Recorded here in full, because a non-zero exit adjudicated by hand is worth
+exactly as much as the argument written down beside it.
+
+| | |
+| -- | -- |
+| baseline | `docs/migration/reconciliation-baseline.json`, captured 2026-08-09 and re-captured 2026-08-11 after the prune |
+| spine | `catalog` |
+| deployed image | `1e7e51339af5a20d8c3716d2a1628b6acc74e8e1` — the tip of `release/v0.3.0`, which is downstream of NEU-1047 rather than being it |
+| run at | 2026-08-13 22:15 UTC |
+| exit code | 1 |
+
+**The ticket assumed a frozen window and there was not one.** It scopes the run
+as *"inside the window, before the app is handed back to users"*; in fact the app
+stayed up and writable throughout, which is why gains exist at all. Recording that
+matters more than the gains do: the ticket's own instrument — *"a discrepancy in
+either direction blocks the window"* — is calibrated for a database nobody is
+writing to, so reading its verdict correctly here means knowing that premise did
+not hold. It is also why the successor baseline below exists.
+
+The eight lines as the harness emitted them, in its own order — ascending by
+delta, then user, then show — with the one substitution this file requires:
+`describe` names the user by **email**, resolved live so the artifact need not
+carry it, and the record keeps the **user id** in its place for exactly the reason
+the artifact does. Nothing else is edited.
+
+```
+GAINED 1 episode_ratings — c558c2bb-499f-4641-9d72-49270d7ff52a — Ted Lasso (id 44458) (baseline 1, current 2)
+GAINED 1 episode_watches — c558c2bb-499f-4641-9d72-49270d7ff52a — Ted Lasso (id 44458) (baseline 35, current 36)
+GAINED 1 episode_ratings — c558c2bb-499f-4641-9d72-49270d7ff52a — Lucky (id 81228) (baseline 5, current 6)
+GAINED 1 episode_watches — c558c2bb-499f-4641-9d72-49270d7ff52a — Lucky (id 81228) (baseline 5, current 6)
+GAINED 2 activity_events — c558c2bb-499f-4641-9d72-49270d7ff52a — Ted Lasso (id 44458) (baseline 3, current 5)
+GAINED 2 activity_events — c558c2bb-499f-4641-9d72-49270d7ff52a — Lucky (id 81228) (baseline 10, current 12)
+GAINED 9 activity_events — c558c2bb-499f-4641-9d72-49270d7ff52a — Arrested Development (id 321) (baseline 17, current 26)
+GAINED 9 episode_watches — c558c2bb-499f-4641-9d72-49270d7ff52a — Arrested Development (id 321) (baseline 15, current 24)
+```
+
+**One user id across all eight, which the committed artifacts let anyone
+re-derive**: that user's totals move 2,764 → 2,775 watches, 78 → 80 episode
+ratings and 343 → 356 events between the two files, and no other user's totals
+move at all. The record is checkable from the repo rather than taken on trust.
+
+**Every line reads GAINED, and that is the proof.** `compare` reports both
+directions, so a harness that found a loss would have said so; eight gains and no
+`LOST` line is the no-data-lost statement the ticket asks for, stated by the
+instrument rather than inferred from totals.
+
+**The gains are one user's ordinary app use after the baseline was taken**, not
+something that ran during the window. Each row carries a timestamp later than the
+2026-08-11 re-capture, and each pairs with the activity event the write path
+emits alongside it — nine `watched_episode` events for nine watches on 2026-08-12
+02:01 UTC (a binge marked over 21 seconds), and a `rated_episode` + a
+`watched_episode` for each of the two rate-then-mark pairs on 2026-08-13 01:37
+and 02:20 UTC. 11 watches, 2 ratings, 13 events: the eight lines add up to
+exactly those rows and to nothing else.
+
+`tracked_shows` (621) and `show_ratings` (97) are **unchanged**, and the
+`show_id: null` bucket is **empty on both sides** — no watch, rating or event
+lost the episode row that resolves it to a show. That second one is the check the
+LEFT joins exist for, and it is the one a totals comparison would miss.
+
+### Adjudicating a gain, without reinventing the query
+
+A gain is only benign if the rows behind it are newer than the baseline. The
+harness counts and does not date, so that question is answered against the live
+database — the query is here so the next person does not write it from scratch at
+2am with a window open:
+
+```sql
+select 'episode_watch' as kind, e.show_id, count(*),
+       min(w.watched_at), max(w.watched_at)
+  from app.user_episode_watch w
+  join catalog.episode e on e.id = w.episode_id
+ where e.show_id in (<the shows the harness named>)
+   and w.watched_at > timestamptz '<baseline capture>'
+ group by 1, 2
+union all
+select 'event:' || a.verb, a.target_id, count(*), min(a.created_at), max(a.created_at)
+  from app.activity_event a
+ where a.created_at > timestamptz '<baseline capture>'
+ group by 1, 2;
+```
+
+A gain whose rows predate the baseline is **not** benign and blocks the window:
+it means something wrote history, which is a different failure from a user
+watching television.
+
+### Why the baseline is not re-captured to make this exit 0
+
+It would be one command and it would destroy the proof. The committed baseline is
+the only record of the pre-cutover state; replacing it with a post-cutover capture
+turns the acceptance test into a tautology — a snapshot compared against itself
+always passes, including after a loss. The harness's own docstring settles the
+adjacent temptation for the same reason: no flag lets gains pass, because *"a
+harness that warns is a harness that gets ignored during a migration window."*
+
+The cost is that a live application drifts away from a fixed baseline, so every
+future re-run also exits 1 and also has to be read. That is the intended trade —
+the run is cheap and the reading is the point.
+
+## `neu-1125-post-repoint-snapshot.json`
+
+The close-of-window state, captured on `--spine catalog` immediately after the run
+above:
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec <tvbf-backend-container> python -m tvbf.jobs.reconcile capture --spine catalog' \
+  > docs/migration/neu-1125-post-repoint-snapshot.json
+```
+
+| | baseline (`tvmaze`, 2026-08-11) | this snapshot (`catalog`, 2026-08-13) |
+| -- | -- | -- |
+| users | 5 | 5 |
+| tracked shows | 621 | 621 |
+| episode watches | 8,569 | 8,580 |
+| show ratings | 97 | 97 |
+| episode ratings | 78 | 80 |
+| activity events | 802 | 815 |
+
+**It does not replace `reconciliation-baseline.json` and must not be used as one**
+— NEU-1125 is the comparison against the *pre-cutover* file, and that is the
+comparison that means something. What this artifact is instead is **the baseline
+NEU-1050 and NEU-1051 verify against**, and using it is what makes their gate
+machine-checkable again:
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline - --spine catalog' \
+  < docs/migration/neu-1125-post-repoint-snapshot.json
+```
+
+Neither of those passes should move a single count — retiring TV Maze code and
+dropping a schema `app` no longer references are both meant to be invisible to
+every number in here — so a loss caused by either shows up against the state the
+window actually closed in rather than against a state three passes older, and the
+user activity that makes the pre-cutover baseline exit 1 forever is already
+folded in. Re-capture this file, deliberately and in its own commit, whenever a
+later gate wants a fresher zero point; the pre-cutover baseline is the one that
+must never be re-captured.
+
+Same format and same determinism as the baseline, which is why `git diff` over it
+is the regression check — and why it carries **no capture timestamp of its own**:
+a clock in the payload would make two captures of an unchanged database differ.
+Its date lives in the run log above and in the commit that added it. It holds
+user ids rather than emails, which is why it can be committed at all.

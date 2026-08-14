@@ -41,8 +41,6 @@ from tvbf.tmdb.credits_backfill import (
     backfill_credits,
     build_report,
 )
-from tvbf.tvmaze.models import Episode as MazeEpisode
-from tvbf.tvmaze.models import Show as MazeShow
 
 BASE = "https://api.themoviedb.org/3"
 
@@ -542,11 +540,6 @@ async def test_report_reaches_a_show_touched_only_through_an_episode_watch(sessi
     episode_id = (
         await session.execute(select(cm.Episode.id).where(cm.Episode.show_id == show_id).limit(1))
     ).scalar_one()
-    # `app.user_episode_watch` references `catalog.episode`, and the report
-    # joins through it — the tvmaze twin is what the seeded id would have had.
-    session.add(MazeShow(id=show_id, name="Watched Only", tvmaze_updated=1))
-    await session.flush()
-    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=1, number=1))
     user = User(
         id=uuid.uuid4(),
         email=f"credits-{uuid.uuid4().hex[:8]}@example.com",

@@ -26,10 +26,9 @@ from tests.fixtures.tmdb.series_factory import (
     make_series,
 )
 from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import run_catalog_ingest
-from tvbf.tvmaze import models as tvm
-from tvbf.tvmaze.runs import create_run
 
 BASE = "https://api.themoviedb.org/3"
 _SEASON_URL_RE = re.compile(rf"{re.escape(BASE)}/tv/\d+/season/\d+")
@@ -120,11 +119,11 @@ async def _show(session, tmdb_id: int) -> m.Show:
     ).scalar_one()
 
 
-async def _run_row(session, run_id) -> tvm.IngestRun:
+async def _run_row(session, run_id) -> m.IngestRun:
     return (
         await session.execute(
-            select(tvm.IngestRun)
-            .where(tvm.IngestRun.id == run_id)
+            select(m.IngestRun)
+            .where(m.IngestRun.id == run_id)
             .execution_options(populate_existing=True)
         )
     ).scalar_one()

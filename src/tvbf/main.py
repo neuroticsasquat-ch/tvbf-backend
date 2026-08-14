@@ -10,6 +10,7 @@ from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.catalog.runs import mark_stale_runs_cancelled
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.integrations.linear import LinearClient
@@ -31,7 +32,6 @@ from tvbf.routers import (
     password_reset,
     users,
 )
-from tvbf.tvmaze.runs import mark_stale_runs_cancelled
 
 if dsn := os.environ.get("SENTRY_DSN"):
     sentry_sdk.init(

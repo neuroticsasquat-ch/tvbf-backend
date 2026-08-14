@@ -23,7 +23,6 @@ from tvbf.app import models as _app_models  # noqa: F401, E402 -- register table
 from tvbf.catalog import models as _catalog_models  # noqa: F401, E402 -- register tables
 from tvbf.db import Base  # noqa: E402
 from tvbf.rate_budget import reset_rate_limiters  # noqa: E402
-from tvbf.tvmaze import models as _tvmaze_models  # noqa: F401, E402 -- register tables
 
 
 @pytest.fixture(scope="session")
@@ -31,10 +30,8 @@ async def test_engine():
     url = os.environ["TEST_DATABASE_URL"]
     engine = create_async_engine(url, pool_pre_ping=True)
     async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS tvmaze CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
-        await conn.execute(text("CREATE SCHEMA tvmaze"))
         await conn.execute(text("CREATE SCHEMA app"))
         await conn.execute(text("CREATE SCHEMA catalog"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
@@ -52,7 +49,6 @@ async def test_engine():
         await conn.run_sync(Base.metadata.create_all)
     yield engine
     async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS tvmaze CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
     await engine.dispose()
@@ -148,7 +144,7 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
         result = await conn.execute(
             text(
                 "SELECT schemaname || '.' || tablename FROM pg_tables "
-                "WHERE schemaname IN ('tvmaze', 'app', 'catalog')"
+                "WHERE schemaname IN ('app', 'catalog')"
             )
         )
         tables = [r[0] for r in result]

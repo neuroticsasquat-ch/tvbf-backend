@@ -1,7 +1,7 @@
 """TMDB HTTP client: bearer auth, the shared TMDB budget, retry, `append_to_response`.
 
-Same shape as `tvbf/tvmaze/client.py`, different economics. Three things differ
-and each one is load-bearing:
+Same shape as the TV Maze client it replaced (retired in NEU-1050), different
+economics. Three things differ and each one is load-bearing:
 
 **Auth is a header.** TMDB accepts either the v3 `api_key` query parameter or
 the account's API Read Access Token as `Authorization: Bearer`. Only the second
@@ -133,14 +133,11 @@ CHANGES_MAX_PAGE = 500
 def is_gone_upstream(exc: BaseException) -> bool:
     """True when TMDB says this series no longer exists.
 
-    404 only, and deliberately narrow — the same rule `tvmaze.client` applies,
-    restated rather than imported because it is one predicate over an `httpx`
-    exception with no TV Maze content in it, and because `tvmaze/client.py` is
-    deleted outright by NEU-1050. Note this is *not* a claim that nothing here
-    may touch `tvmaze`: `tmdb/ingest.py` deliberately imports `tvmaze.runs`,
-    because the run rows genuinely are shared and relocating them is that same
-    ticket's job. Copying a line beats an import that retires; copying a module
-    would not.
+    404 only, and deliberately narrow — the same rule the retired TV Maze
+    client applied, restated rather than imported because it is one predicate
+    over an `httpx` exception with no TV Maze content in it, and because
+    `tvmaze/client.py` was deleted outright by NEU-1050. Copying a line beats
+    an import that retires; copying a module would not.
 
     `_request` already retries timeouts, network errors, 429s and 5xx to
     exhaustion before raising, so an `HTTPStatusError` reaching a run loop is

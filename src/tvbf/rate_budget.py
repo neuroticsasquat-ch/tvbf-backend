@@ -4,16 +4,18 @@
 app: `get_rate_limiter` handed them all one bucket (NEU-955), so concurrent jobs
 split a single budget and simply ran slower.
 
-The daily update now runs as its own process on a Coolify schedule (NEU-1008),
+A delta now runs as its own process on a Coolify schedule (NEU-1008),
 and a per-process limiter cannot see it. Two processes each pacing at the
 configured rate is twice the configured rate upstream — the NEU-955 bug back
 again, architecturally this time. So the budget lives in Postgres, which is the
 one thing both processes already share.
 
 This module used to be `tvbf/tvmaze/rate_budget.py` and served exactly one
-upstream. TMDB needs its own ceiling and TV Maze's is untouched by it, so the
-bucket is now keyed: a `Bucket` says which row holds which budget, and
+upstream. TMDB needed its own ceiling without disturbing TV Maze's, so the
+bucket became keyed: a `Bucket` says which row holds which budget, and
 `get_rate_limiter(source, ...)` resolves the source name to one (NEU-1027).
+TV Maze has since been retired (NEU-1050) and TMDB is the only registered
+source, but the keying is what makes the next one a row rather than a rewrite.
 """
 
 import asyncio
@@ -81,10 +83,12 @@ class RateLimiter:
 class Bucket:
     """Which row holds one upstream's budget.
 
-    The table and the key column are both parameters because TV Maze's bucket
-    predates the keyed design and stays exactly where it is: `catalog` is where
-    every *new* budget lives, but migrating a live token bucket mid-ingest buys
-    nothing, and both upstreams run side by side until cutover (NEU-1027).
+    The table and the key column are both parameters because they were not
+    always the same pair: TV Maze's bucket was a single row in `tvmaze`, keyed
+    by a constant id, and ran beside TMDB's until its client was retired
+    (NEU-1027, NEU-1050). `catalog.rate_budget`, keyed by source name, is where
+    every budget lives now — a second upstream is a new row and a new registry
+    entry, not a second table.
 
     `table` and `key_column` are interpolated into SQL, so they must never come
     from anywhere but the module-level registry below.
@@ -95,13 +99,11 @@ class Bucket:
     key: str | int
 
 
-# `catalog.rate_budget` is keyed by source name; `tvmaze.rate_budget` is the
-# original single-row bucket, keyed by the constant id its check constraint
-# pins to 1.
-TVMAZE_BUCKET = Bucket(table="tvmaze.rate_budget", key_column="id", key=1)
+# `catalog.rate_budget` is keyed by source name, so every registered bucket
+# names the same table and differs only in its key.
 TMDB_BUCKET = Bucket(table="catalog.rate_budget", key_column="source", key="tmdb")
 
-BUCKETS: dict[str, Bucket] = {"tvmaze": TVMAZE_BUCKET, "tmdb": TMDB_BUCKET}
+BUCKETS: dict[str, Bucket] = {"tmdb": TMDB_BUCKET}
 
 
 @dataclass(frozen=True, order=True)
@@ -119,7 +121,7 @@ class Budget:
     calls: int
     window_seconds: float
     # Tokens taken per locked transaction. 1 is the pre-NEU-1027 behaviour token
-    # for token, which is what leaves TV Maze's calibration untouched.
+    # for token — the default a new source inherits until it is measured.
     lease: int = 1
 
     def __post_init__(self) -> None:
@@ -305,8 +307,8 @@ def get_rate_limiter(source: str, budget: Budget) -> Limiter:
     intended behaviour.
 
     The bucket lives in Postgres, so that holds across processes too — which it
-    has to, now the daily update runs as its own process rather than as a task
-    inside the app (ADR-0006). Caching stays worthwhile even so: the instance is
+    has to, now a delta runs as its own process rather than as a task inside the
+    app (ADR-0006). Caching stays worthwhile even so: the instance is
     cheap, but the cache is what makes a divergent budget detectable at all, and
     with leasing it is also what stops one process holding several leases
     against the same budget.

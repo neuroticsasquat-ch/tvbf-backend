@@ -73,14 +73,16 @@ work list by being deleted. That matters beyond resumability — the catalog del
 copied row still holds is a new duplicate. This is a pass to re-run, not a
 one-shot.
 
-The corollary is an ordering constraint in the other direction: **`task
-copy:catalog` puts the deleted rows back.** Its anti-join verification demands a
-catalog row for every `tvmaze.season`, so a re-run re-inserts each one under its
-original id — which is why the copy must not be run casually afterwards, and why
-`verify_copy` reports `catalog.season` short until it is.
+**There is no revert any more.** The corollary used to run in the other
+direction: `task copy:catalog` put the deleted rows back, because its anti-join
+verification demanded a catalog row for every `tvmaze.season`, so a re-run
+re-inserted each one under its original id. NEU-1051 deleted that pass along with
+the schema it read, so what follows is the account of a path that no longer
+exists — kept because it says what this pass destroys, which is what the pre-drop
+dump now has to cover.
 
-**Reverting takes two statements, not one**, and this is the part it would be
-easy to get wrong. The copy restores the season rows but *not* the episodes'
+**Reverting took two statements, not one**, and this was the part it would have
+been easy to get wrong. The copy restored the season rows but *not* the episodes'
 parentage: `_COPY_EPISODES` skips rows already present (`NOT EXISTS ... ce.id =
 e.id`, backstopped by `ON CONFLICT (id) DO NOTHING`), so it never rewrites a
 `season_id` this pass moved, and a bare re-copy hands back the seasons with no

@@ -19,7 +19,6 @@ from tvbf.app.models import UserShowWatch
 from tvbf.catalog import models as cm
 from tvbf.jobs.human_queue import _parse_args, run
 from tvbf.tmdb.enrichment import MATCH_HUMAN, MATCH_TITLE_YEAR
-from tvbf.tvmaze.models import Show as MazeShow
 
 _ID = 9_500_000
 
@@ -28,7 +27,6 @@ async def _seed_touched_show(session, make_user, *, name="CLI Show", **catalog_k
     global _ID
     _ID += 1
     user = await make_user(email=f"cli{_ID}@example.com")
-    session.add(MazeShow(id=_ID, name=name, tvmaze_updated=1))
     session.add(cm.Show(id=_ID, name=name, **catalog_kwargs))
     await session.flush()
     session.add(UserShowWatch(user_id=user.id, show_id=_ID))

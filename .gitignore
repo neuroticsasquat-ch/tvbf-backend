@@ -189,3 +189,7 @@ scripts/import_next_episode/review.csv
 # Raw exports and pre-write DB snapshots, if anyone parks them here.
 scripts/import_next_episode/*.json.html
 scripts/import_next_episode/*snapshot*/
+
+# NEU-1051 pre-drop archival dumps of the retired `tvmaze` schema. Gigabytes,
+# and they belong off-host rather than in git.
+tvmaze-archive/

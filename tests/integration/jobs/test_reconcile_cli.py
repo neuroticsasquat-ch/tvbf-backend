@@ -1,6 +1,6 @@
 """CLI-level tests for `python -m tvbf.jobs.reconcile` (NEU-1030).
 
-These exercise `run()` rather than `main()`, matching `test_daily_update.py`:
+These exercise `run()` rather than `main()`:
 `main` is a three-line wrapper whose `asyncio.run` would rebuild the event loop
 under the shared engine's pooled connections. What matters here is the **exit
 code**, because that is the contract the cutover gate reads.
@@ -30,7 +30,7 @@ async def test_capture_writes_only_the_artifact_to_stdout(session, tmp_path, cap
     # Nothing but JSON on stdout — logs go to stderr, so the caller can redirect
     # straight into a file over `ssh docker exec`.
     assert snapshot["artifact_version"] == 1
-    assert snapshot["spine"] == "tvmaze"
+    assert snapshot["spine"] == "catalog"
     assert set(snapshot) == {"artifact_version", "spine", "totals", "users"}
 
 

@@ -1,9 +1,11 @@
 """The shape every Coolify-scheduled delta shares (NEU-1008, NEU-1035).
 
-Two jobs run this way now — the TV Maze daily and the TMDB catalog delta — and
-they differ only in which run kind they take, which body they await and which
-deadman they feed. Everything else is a contract rather than a detail, and each
-part of it is easy to reintroduce wrongly a second time:
+Two jobs ran this way — the TV Maze daily and the TMDB catalog delta — and they
+differed only in which run kind they take, which body they await and which
+deadman they feed. NEU-1050 retired the daily, so the catalog delta is the only
+caller today; the shape stays here rather than folding back into it because
+every part of it is a contract, and each is easy to reintroduce wrongly the
+next time a scheduled job is added:
 
 - **The exit code is the result.** Coolify notifies on a task that fails, so 0
   must mean the delta actually ran and succeeded.
@@ -25,11 +27,11 @@ from uuid import UUID
 import httpx
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run, find_live_run
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import create_run, find_live_run
 
 log = logging.getLogger(__name__)
 

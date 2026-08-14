@@ -6,7 +6,6 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import text
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import (
     ActivityEvent,
     UserEpisodeRating,
@@ -15,23 +14,21 @@ from tvbf.app.models import (
     UserShowWatch,
 )
 from tvbf.app.services import reconciliation_service as rs
+from tvbf.catalog.models import Episode, Show
 from tvbf.jobs.reconcile import dumps
-from tvbf.tvmaze.models import Episode, Show
 
 
 async def _seed_show(session, *, show_id: int, name: str = "Recon Show") -> Show:
-    show = Show(id=show_id, name=name, tvmaze_updated=1)
+    show = Show(id=show_id, name=name)
     session.add(show)
     await session.flush()
-    await mirror_spine(session)
     return show
 
 
 async def _seed_episode(session, *, show_id: int, episode_id: int, number: int = 1) -> Episode:
-    ep = Episode(id=episode_id, show_id=show_id, season=1, number=number)
+    ep = Episode(id=episode_id, show_id=show_id, season_number=1, episode_number=number)
     session.add(ep)
     await session.flush()
-    await mirror_spine(session)
     return ep
 
 
@@ -71,7 +68,7 @@ async def test_snapshot_counts_every_metric_per_user_per_show(session, make_user
     assert entry["activity_events"] == 2
     assert snapshot["totals"]["episode_watches"] == 2
     assert snapshot["totals"]["users"] == 1
-    assert snapshot["spine"] == "tvmaze"
+    assert snapshot["spine"] == "catalog"
 
 
 @pytest.mark.asyncio
@@ -237,10 +234,9 @@ async def test_a_watch_whose_episode_vanished_lands_in_the_null_show_bucket(sess
     await session.commit()
 
     # Drop the episode out from under the watch, leaving the app row orphaned.
-    # The constraint references `catalog` since NEU-1046; the episode has to go
-    # from both spines, because the snapshot is taken against `tvmaze` and an
-    # episode still standing there would land the watch in its own show bucket
-    # rather than the null one this test is about.
+    # One delete since NEU-1051: `catalog` is both the constraint's target and
+    # the spine the snapshot reads, so there is no second copy that could land
+    # the watch in its own show bucket rather than the null one.
     fk_name = (
         await session.execute(
             text(
@@ -251,7 +247,6 @@ async def test_a_watch_whose_episode_vanished_lands_in_the_null_show_bucket(sess
         )
     ).scalar_one()
     await session.execute(text(f"ALTER TABLE app.user_episode_watch DROP CONSTRAINT {fk_name}"))
-    await session.execute(text("DELETE FROM tvmaze.episode WHERE id = :e"), {"e": ep.id})
     await session.execute(text("DELETE FROM catalog.episode WHERE id = :e"), {"e": ep.id})
     await session.commit()
     try:
@@ -330,19 +325,21 @@ async def test_a_new_user_appearing_is_caught_too(session, make_user):
     assert found["delta"] == 1
 
 
-def test_the_spine_selects_which_catalog_schema_the_joins_read():
-    """`--spine catalog` is the post-cutover path; prove it changes the SQL.
+def test_the_spine_names_the_schema_the_joins_read():
+    """The registry has one entry since NEU-1051; the parameterisation stays.
 
-    It cannot be run end to end yet — `catalog` has no `episode` table until the
-    catalog tables land — so this asserts the parameterisation itself, which is
-    the part that could silently be a no-op.
+    `SPINES` is interpolated into SQL, so what matters is that a spine name can
+    only ever come from the registry — the same guard `rate_budget.BUCKETS`
+    carries. A single-entry registry still has to prove the interpolation
+    reaches the SQL and that anything outside it is refused.
     """
-    tvmaze = rs._queries("tvmaze")
     catalog = rs._queries("catalog")
 
-    assert "tvmaze.episode" in tvmaze["episode_watches"]
     assert "catalog.episode" in catalog["episode_watches"]
+    assert "catalog.episode" in catalog["episode_ratings"]
     assert "catalog.episode" in catalog["activity_events"]
-    assert "tvmaze" not in catalog["episode_ratings"]
-    # Spine-free metrics are identical either way.
-    assert tvmaze["tracked_shows"] == catalog["tracked_shows"]
+    # Spine-free metrics name no schema at all.
+    assert "catalog.episode" not in catalog["tracked_shows"]
+
+    with pytest.raises(rs.UnknownSpine):
+        rs._queries("tvmaze")

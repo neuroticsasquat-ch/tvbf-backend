@@ -2,10 +2,10 @@
 
     python -m tvbf.jobs.tmdb_enrichment [--limit N]
 
-A CLI rather than an admin endpoint for the same reason `catalog_copy` is one:
-a migration-window operation run by hand a handful of times, with no cursor to
-advance and nothing to poll. The process *is* the run, so the exit code is the
-result.
+A CLI rather than an admin endpoint for the same reason `catalog_copy` was one
+before NEU-1051 deleted it: a migration-window operation run by hand a handful
+of times, with no cursor to advance and nothing to poll. The process *is* the
+run, so the exit code is the result.
 
 **Exit codes: 0 = the pass completed, 1 = it raised.** Unmatched shows are not a
 failure — they are the expected output, and NEU-1044's human queue and
@@ -13,7 +13,8 @@ NEU-1045's episode-grain report are what consume them. A run that matched
 nothing at all and a run that matched everything both exit 0; the counts in the
 log are the thing to read.
 
-Run it **after** `task copy:catalog` and **before** the full TMDB ingest. At prod
+It ran **after** `task copy:catalog` (deleted in NEU-1051) and **before** the
+full TMDB ingest. At prod
 scale it considers ~89k shows, with up to three upstream calls for a show that
 falls through all three tiers. **Measured 3h28m** on 2026-08-10, not the 90
 minutes first estimated from the 20 req/s budget: the loop is sequential, so

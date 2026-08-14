@@ -375,7 +375,7 @@ class WatchArchive(Base):
     show, which season and episode, when — rather than pointing at a catalog row
     that a later source change may delete. A catastrophic mapping failure stays
     recoverable by hand indefinitely, because reconstructing a user's history
-    from this table needs no reference to `tvmaze` or `catalog` at all.
+    from this table needs no reference to a catalog schema at all.
 
     Three properties make that hold, and each is load-bearing:
 
@@ -384,15 +384,17 @@ class WatchArchive(Base):
       `DO UPDATE` branch, so a re-run cannot rewrite what an earlier run
       recorded.
     * **No foreign key into any catalog schema.** `source_show_id` /
-      `source_episode_id` are TV Maze ids carried for convenience — a
-      cross-reference while the mirror still exists — not the row's identity.
-      Nothing here breaks when `tvmaze` is eventually dropped.
+      `source_episode_id` are carried for convenience — a cross-reference, not
+      the row's identity. They were written as TV Maze ids and still resolve
+      against `catalog`, because NEU-1042 preserved those ids as the catalog
+      surrogates. NEU-1051 dropping `tvmaze` broke nothing here, which was the
+      whole point of the constraint being absent.
     * **Human-readable identity is NOT NULL.** `show_name` always, plus
       `season_number` and an episode locator for episode-grain rows (see
       `ck_watch_archive_episode_identity`). A row that cannot say what it
       describes would be worthless as a backstop, so the table refuses one.
 
-    The table has **no foreign keys at all** — not into `tvmaze`, and
+    The table has **no foreign keys at all** — not into a catalog schema, and
     deliberately not into `app.user` either. A `CASCADE` to `app.user` would
     prune the archive on account deletion, and "never pruned" admits no
     exceptions: the reconciliation harness has to prove identical episode counts
@@ -469,8 +471,8 @@ class WatchArchive(Base):
     occurred_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
     stars: Mapped[Decimal | None] = mapped_column(Numeric(2, 1), nullable=True)
 
-    # Convenience cross-references, not identity. Deliberately unconstrained: no
-    # FK into `tvmaze`, so dropping that schema leaves the archive untouched.
+    # Convenience cross-references, not identity. Deliberately unconstrained,
+    # which is why dropping `tvmaze` in NEU-1051 left the archive untouched.
     source_show_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     source_episode_id: Mapped[int | None] = mapped_column(BigInteger, nullable=True)
     show_imdb_id: Mapped[str | None] = mapped_column(Text, nullable=True)

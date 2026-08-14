@@ -1,15 +1,15 @@
 """The daily TMDB catalog delta, as a Coolify scheduled task (NEU-1035).
 
-`python -m tvbf.jobs.catalog_update`. Same contract as the TV Maze daily it will
-outlive: **0 = the delta ran and succeeded, 1 = it failed**, with a
-healthchecks.io deadman for the case Coolify cannot report, which is the task
-never running at all.
+`python -m tvbf.jobs.catalog_update`. Same contract as the TV Maze daily it has
+now outlived (NEU-1050): **0 = the delta ran and succeeded, 1 = it failed**,
+with a healthchecks.io deadman for the case Coolify cannot report, which is the
+task never running at all.
 
-It is a second scheduled task rather than an extension of the first because the
-two run against different catalogs on different schedules and must be able to
+It was a second scheduled task rather than an extension of the first because the
+two ran against different catalogs on different schedules and had to be able to
 fail independently — a TV Maze daily wedged before cutover must not stop the
-spine that replaces it from staying current. The shared mechanics live in
-`tvbf.jobs.scheduled`; what varies is here.
+spine that replaces it from staying current. It is the only one left. The shared
+mechanics live in `tvbf.jobs.scheduled`; what varies is here.
 """
 
 import sys

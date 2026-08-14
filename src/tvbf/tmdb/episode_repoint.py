@@ -20,10 +20,11 @@ rows while spending ~62,000 TMDB requests — 1,909,367 collide and 760,254 have
 counterpart. This is the same wall NEU-1119 hit at season grain and NEU-1066 at
 show grain, and the same answer: retire the copy in favour of the ingested row.
 
-## What makes this pass different from its two siblings
+## What makes this pass different from its siblings
 
-`season_dedupe` and `show_prune` both go out of their way *not* to touch `app`.
-This one has to: the user rows are the whole point. Three consequences, and each
+`season_dedupe` goes out of its way *not* to touch `app`, and so did
+`show_prune` before NEU-1051 deleted it. This one has to: the user rows are the
+whole point. Three consequences, and each
 is a place the pass could quietly cost somebody their history.
 
 **Three write sites, not two.** `app.user_episode_watch` and
@@ -85,13 +86,14 @@ explicit: a batch that fails leaves the cursor behind it, so **the resumption
 point is a re-run from the start**, not the cursor. That is cheap, because a
 re-run only sees what is genuinely still there — the re-pointed rows are gone.
 
-## Reverting takes two statements, and neither is `copy:catalog` alone
+## Reverting took two statements, and there is no first one any more
 
-`task copy:catalog` puts the deleted episode rows back under their original ids —
-its anti-join verification demands a catalog row per `tvmaze.episode`. It does
-**not** put the user rows back, because it never touches `app`. While `tvmaze`
-stands (NEU-1051 has not run), the second statement re-derives the pairing in
-reverse:
+`task copy:catalog` put the deleted episode rows back under their original ids —
+its anti-join verification demanded a catalog row per `tvmaze.episode`. It did
+**not** put the user rows back, because it never touched `app`. NEU-1051 deleted
+that pass with the `tvmaze` schema, so the first statement is gone and only the
+pre-drop dump can supply it. The second, recorded because it is what a restore
+would still need, re-derives the pairing in reverse:
 
     UPDATE app.user_episode_watch w
        SET episode_id = c.id
@@ -133,14 +135,25 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-# Deliberately borrowed rather than redeclared. A second class of the same name
-# would mean `except show_prune.IngestNotRun` silently failed to catch this
-# pass's refusal — the two guards ask the same question of the same column for
-# the same reason, so they should be the same type.
-from tvbf.tmdb.show_prune import MIN_INGESTED_SHOWS as MIN_INGESTED_SHOWS
-from tvbf.tmdb.show_prune import IngestNotRun as IngestNotRun
-
 log = logging.getLogger(__name__)
+
+# The floor and its refusal were `show_prune`'s until NEU-1051 deleted that
+# pass along with the `tvmaze` schema its guard read. They live here now
+# because this is the only pass left that asks the question. The value is the
+# tombstone's `_MIN_FEED_ABSOLUTE`, set the same way: comfortably below a real
+# catalog (228,841 series ingested in production), far above anything a partial
+# pass would leave behind.
+MIN_INGESTED_SHOWS = 150_000
+
+
+class IngestNotRun(Exception):
+    """Too few ingested shows for the work list to mean what it claims.
+
+    Raised rather than returning an empty result: a pass that quietly did
+    nothing and a pass that quietly re-pointed the wrong 1.9M rows are the two
+    failures this guard sits between, and only one of them is loud on its own.
+    """
+
 
 # Episodes per transaction. Sized so 1.9M rows is a few hundred round trips while
 # killing the pass costs one batch. The ids travel as two arrays rather than a

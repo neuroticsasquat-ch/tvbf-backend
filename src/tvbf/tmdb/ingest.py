@@ -87,6 +87,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
+from tvbf.catalog.runs import finalize_run, record_progress, warn_if_all_gone
 from tvbf.tmdb.api_payloads import TMDBSeasonDetail, TMDBSeries
 from tvbf.tmdb.client import (
     APPEND_TO_RESPONSE_LIMIT,
@@ -97,7 +98,6 @@ from tvbf.tmdb.client import (
 )
 from tvbf.tmdb.export import fetch_series_ids
 from tvbf.tmdb.upsert import mark_series_synced, upsert_series_payload
-from tvbf.tvmaze.runs import finalize_run, record_progress, warn_if_all_gone
 
 log = logging.getLogger(__name__)
 

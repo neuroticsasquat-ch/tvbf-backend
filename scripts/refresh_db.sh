@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 # Refresh local tvbf from prod via SSH + docker exec.
-# Usage: ./scripts/refresh_db.sh [tvmaze|app|both]   (default: tvmaze)
+# Usage: ./scripts/refresh_db.sh [catalog|app|both]   (default: catalog)
 #
-# tvmaze : refresh tvmaze schema only; local app data is preserved.
-# app    : refresh app schema only; local tvmaze must already be present.
-# both   : drop+recreate both schemas from prod.
+# catalog : refresh catalog schema only; local app data is preserved.
+# app     : refresh app schema only; local catalog must already be present.
+# both    : drop+recreate both schemas from prod.
+#
+# The `tvmaze` mode went with the schema in NEU-1051. `catalog` replaces it and
+# is the spine every read path uses; note it is far larger than the old mirror,
+# so a full refresh streams for a while.
 #
 # App-schema restores are anonymized by default. Set ANONYMIZE=0 to opt out.
 
@@ -21,7 +25,7 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
-MODE="${1:-tvmaze}"
+MODE="${1:-catalog}"
 
 if [[ -z "${PROD_SSH:-}" ]]; then
   echo "ERROR: PROD_SSH is not set." >&2
@@ -36,15 +40,15 @@ LOCAL_DB_USER="${LOCAL_DB_USER:-root}"
 ANONYMIZE="${ANONYMIZE:-1}"
 
 case "$MODE" in
-  tvmaze|app|both) ;;
-  *) echo "usage: $0 [tvmaze|app|both]" >&2; exit 1 ;;
+  catalog|app|both) ;;
+  *) echo "usage: $0 [catalog|app|both]" >&2; exit 1 ;;
 esac
 
 # Schemas this run drops and restores from the prod dump.
 case "$MODE" in
-  tvmaze) RESTORED_SCHEMAS="'tvmaze'" ;;
-  app)    RESTORED_SCHEMAS="'app'" ;;
-  both)   RESTORED_SCHEMAS="'tvmaze','app'" ;;
+  catalog) RESTORED_SCHEMAS="'catalog'" ;;
+  app)     RESTORED_SCHEMAS="'app'" ;;
+  both)    RESTORED_SCHEMAS="'catalog','app'" ;;
 esac
 
 echo "→ Locating prod Postgres container on $PROD_SSH..."
@@ -65,15 +69,15 @@ echo "  prod user=$PROD_PG_USER db=$PROD_PG_DB container=$PROD_CONTAINER"
 
 DUMP_FLAGS=(--format=custom --no-owner --no-acl)
 case "$MODE" in
-  tvmaze) DUMP_FLAGS+=(--schema=tvmaze) ;;
-  app)    DUMP_FLAGS+=(--schema=app) ;;
-  both)   DUMP_FLAGS+=(--schema=tvmaze --schema=app) ;;
+  catalog) DUMP_FLAGS+=(--schema=catalog) ;;
+  app)     DUMP_FLAGS+=(--schema=app) ;;
+  both)    DUMP_FLAGS+=(--schema=catalog --schema=app) ;;
 esac
 
 DUMP_FILE=$(mktemp -t tvbf-refresh.XXXXXX.dump)
 trap 'rm -f "$DUMP_FILE"; docker exec -i "$LOCAL_PG_CONTAINER" rm -f /tmp/refresh.dump 2>/dev/null || true' EXIT
 
-echo "→ Dumping schemas [$MODE] from prod (this streams; may take a moment for tvmaze)..."
+echo "→ Dumping schemas [$MODE] from prod (this streams; may take a while for catalog)..."
 ssh "$PROD_SSH" \
   "docker exec -i $PROD_CONTAINER pg_dump ${DUMP_FLAGS[*]} -U $PROD_PG_USER $PROD_PG_DB" \
   > "$DUMP_FILE"
@@ -114,9 +118,9 @@ fi
 echo "→ Preparing local schemas..."
 DROP_SQL=""
 case "$MODE" in
-  tvmaze) DROP_SQL="DROP SCHEMA IF EXISTS tvmaze CASCADE;" ;;
-  app)    DROP_SQL="DROP SCHEMA IF EXISTS app CASCADE;" ;;
-  both)   DROP_SQL="DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS tvmaze CASCADE;" ;;
+  catalog) DROP_SQL="DROP SCHEMA IF EXISTS catalog CASCADE;" ;;
+  app)     DROP_SQL="DROP SCHEMA IF EXISTS app CASCADE;" ;;
+  both)    DROP_SQL="DROP SCHEMA IF EXISTS app CASCADE; DROP SCHEMA IF EXISTS catalog CASCADE;" ;;
 esac
 docker exec -i "$LOCAL_PG_CONTAINER" \
   psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -c "$DROP_SQL"
