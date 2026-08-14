@@ -618,6 +618,45 @@ show to a title fallback that cannot pair `"Eleven Years Later"` with
 consistency rule is unchanged and still takes no vote. If a future change makes
 tier 2 quietly stop placing a show, this is the shape of the bug to look for.
 
+### The expected reconciliation, enumerated before the run
+
+Baseline captured from production 2026-08-14, immediately before the pass, and
+committed as `neu-1146-pre-run-baseline.json`. §7 requires the discrepancies to
+be enumerated **in advance** rather than rationalised afterwards, so here they
+are:
+
+| Metric | Baseline | Delta | Expected after |
+| -- | --: | --: | --: |
+| `episode_watches` | 8,584 | −112 | 8,472 |
+| `episode_ratings` | 80 | −1 | 79 |
+| `activity_events` | 819 | −7 | 812 |
+| `tracked_shows` | 621 | **+1** | 622 |
+| `show_ratings` | 97 | 0 | 97 |
+| `users` | 5 | 0 | 5 |
+
+**Two things this table shows that the report does not, and both would otherwise
+read as unexplained losses.**
+
+**The report's loss list does not cover `activity_events`.** It enumerates watch
+and rating rows, because those are what a user would describe as their history —
+but the harness counts events as a sixth metric, so the pass drops seven of them
+and criterion 4's "every `LOST` line must appear on the report's loss list"
+cannot be checked against that metric. Nine events ride on orphan episodes; seven
+sit on rows the loss list already names (Sex and the City ×2, The Bear ×3, The
+Hook Up Plan, Unbreakable Kimmy Schmidt) and are deleted with them. The other two
+**move**, and are worth knowing about because their absence from the loss list
+looks like an omission and is not: Mr. Robot's `s2e-1 "Mr.Robot_dec0d3d.doc"` and
+The Expanse's `s1e-1 "The Expanse Expanded"` are synthetic specials whose titles
+match a TMDB season-0 special exactly, so tier 1 pairs them and their history
+survives.
+
+**A cross-show move appears as a loss *and* a gain.** The harness keys on
+`(user, show)`, so the 17 Will & Grace watches moving from `549` to `1064267`
+produce a `LOST` line on the original and a `GAINED` line on the revival. Nothing
+is lost — it is the same 17 rows under the show TMDB models them as belonging to
+— but a reader scanning for `LOST` will find it, and it is the single largest one
+in the diff. Check that the two sides balance before reading it as anything else.
+
 ## Credits backfill (NEU-1127)
 
 The third instance of *merged is not run*, and the reason the row above exists.
