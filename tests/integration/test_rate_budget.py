@@ -133,15 +133,21 @@ async def test_a_waiting_acquirer_does_not_hold_the_row_lock(
 async def test_refill_is_time_based_and_capped_at_capacity(bucket, factory, empty_buckets):
     """Idle time is credited, and only up to capacity.
 
-    **Both assertions are measured over three acquisitions rather than one, and
-    that is about CI rather than about the limiter.** Refill is computed from
-    `clock_timestamp()`, so the round trips *inside* a measurement credit
-    tokens as they go: timing a single acquisition against a fraction of one
-    token's refill made the deficit smaller the slower the machine got, and the
-    assertion therefore failed on a loaded runner and passed on a fast laptop —
-    backwards, for a floor. Over three tokens the discriminator is a full 0.3s
-    of refill against a few local round trips, so a slow runner only ever
-    pushes both measurements further into passing.
+    **The floor here is derived, not tuned, and two earlier attempts at it were
+    tuned.** Refill is computed from `clock_timestamp()`, so the round trips
+    *inside* a measurement credit tokens as they go — which means any assertion
+    timing one span in isolation has its deficit eaten by however slow the span
+    before it was, and gets *more* likely to fail the slower the machine is.
+    That is backwards for a floor, and it failed on CI twice: once timing a
+    single acquisition (0.044s against 0.05), then once timing the second burst
+    alone (0.247s against 0.25).
+
+    The stable statement is a conservation one, over the whole window. Six
+    tokens are taken from a bucket holding three, so three must be refilled at
+    10/sec however the time is distributed between waiting and round trips:
+    `3 + 10 * elapsed >= 6`, i.e. **elapsed >= 0.3s exactly**, with round trips
+    only ever adding to it. Uncapped refill would have banked ten tokens during
+    the idle and handed over all six for nothing.
     """
     # 10/sec, capacity 3
     limiter = DatabaseRateLimiter(bucket, Budget(3, 0.3), session_factory=factory)
@@ -151,9 +157,12 @@ async def test_refill_is_time_based_and_capped_at_capacity(bucket, factory, empt
     # Idle for a full second: 10 tokens' worth of refill against a cap of 3.
     await asyncio.sleep(1.0)
 
+    start = time.monotonic()
+
     # Capacity was banked during the idle, so these three cost no waiting at
     # all. Had the elapsed time not been credited they would have cost 0.3s.
-    start = time.monotonic()
+    # This is the one ceiling in the test, and it has ~5x headroom over the
+    # ~50ms three local round trips actually take on a loaded runner.
     for _ in range(3):
         await limiter.acquire()
     banked = time.monotonic() - start
@@ -161,15 +170,13 @@ async def test_refill_is_time_based_and_capped_at_capacity(bucket, factory, empt
         f"a burst of capacity took {banked:.2f}s — refill is not crediting elapsed time"
     )
 
-    # The bucket is empty now, and the idle banked three tokens rather than ten,
-    # so the next three have to be waited for at 10/sec. Uncapped refill would
-    # have handed these over free too.
-    start = time.monotonic()
+    # Three more, measured from the same start: six tokens out of a bucket that
+    # held three means three refilled, which cannot happen in under 0.3s.
     for _ in range(3):
         await limiter.acquire()
-    beyond = time.monotonic() - start
-    assert beyond >= 0.25, (
-        f"three more tokens came free after {beyond:.2f}s — refill is not capped at capacity"
+    total = time.monotonic() - start
+    assert total >= 0.29, (
+        f"six tokens out of a bucket of three took {total:.2f}s — refill is not capped at capacity"
     )
 
 
