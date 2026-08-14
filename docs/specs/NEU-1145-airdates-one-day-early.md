@@ -469,6 +469,28 @@ the footer in `AppShell.tsx`, alongside the TMDB attribution NEU-1049 requires
 verbatim. It reverses the removal NEU-1147 made, and must cite §6 of this
 document for the reason.
 
+> **Shipped 2026-08-14** in `tvbf-frontend`
+> [#181](https://github.com/neuroticsasquat-ch/tvbf-frontend/pull/181), without a
+> ticket of its own. Two things about it differ from what this section
+> anticipated, both downstream of §6.
+>
+> **It is not a reversal of NEU-1147.** That credit read *"Some legacy title
+> data is © TVmaze"*, which is now false — §6 is explicit that no TVmaze date,
+> title or numbering is stored, and that the extraction was minimised to a
+> derived integer precisely so the obligation would stay small. Restoring the
+> string verbatim would assert the thing §6 promises we do not do. The shipped
+> wording is *"Airdate corrections are derived from data provided by TVmaze,
+> licensed under CC BY-SA 4.0."* — which also supplies the
+> indication-of-modification CC BY-SA asks for alongside attribution and the
+> licence link.
+>
+> **It sits on its own line** rather than trailing the TMDB sentence, so neither
+> attribution reads as a qualifier on the other; TMDB's required notice is
+> untouched and still asserted verbatim by its own test. The footer assertion
+> has now been inverted twice — presence, absence, presence — which is the
+> argument for NEU-1147 having replaced it with its inverse rather than
+> deleting it.
+
 No other frontend change is needed: the SPA's date parsing is already correct
 (§3), and the API contract is unchanged — the same four fields carry the same
 types, with corrected values.

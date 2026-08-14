@@ -42,8 +42,8 @@ pointing at unmapped rows.
 | Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
 | `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
 | Airdate baseline (NEU-1145) | `airdate_verify capture` | **before the first `airdate_reconcile` run** | ✅ 2026-08-14 — 8,642 archived episode rows: 7,798 agree, **486 one day early**, 16 one day late, 150 other, 192 unresolved. Reproduces §2.4's finding in shape: Apple TV 162/**368**, Prime Video 59/**101**, Netflix 1,399/13, and essentially nothing anywhere else. Artifacts `neu-1145-airdate-baseline.json` and `neu-1145-airdate-shows-before.json` |
-| Airdate reconciliation (NEU-1145) | `reconcile:airdates` | **after** the baseline capture; nightly thereafter | ⬜ **not yet run.** Needs `HEALTHCHECK_AIRDATE_URL` set in Coolify and the scheduled task registered. Verified 2026-08-14 that no run and no offset exists yet, which is what makes the baseline above valid |
-| Airdate verdict (NEU-1145) | `airdate_verify verify` | after the first pass | ⬜ pending the pass. Exit 1 only on a regression; rows still a day early are printed, not scored |
+| Airdate reconciliation (NEU-1145) | `reconcile:airdates` | **after** the baseline capture; nightly thereafter | ✅ **2026-08-14 — run in production, twice.** The baseline above was captured before either, which is what makes it valid. **16:32:29→17:03:37 UTC**, 1,772 shows, 0 failed → **158 offsets** across 108 shows, **1,967 episodes corrected**. That run predates NEU-1148 and NEU-1149 being live (it left `catalog.airdate_show_state` empty). **19:34:59→20:06:07 UTC** (31m08s) was the first on both: same 1,772 shows, 0 failed, and **the offset and corrected-episode counts did not move** — 158 and 1,967 again, which is the raw-date comparison proving itself, since reading the corrected column would have judged all 158 seasons as agreeing and retracted every one. Left 1,772 `airdate_show_state` rows: 1,287 resolved, **485 with no TV Maze counterpart**, all 1,772 stamped. An earlier 15:49 attempt aborted on the consecutive-failure threshold and wrote nothing |
+| Airdate verdict (NEU-1145) | `airdate_verify verify` | after the first pass | ⬜ **now runnable** — the pass has run (above), so this is the outstanding step. Exit 1 only on a regression; rows still a day early are printed, not scored |
 | Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ✅ **2026-08-14 — criterion 7 met, catalog is TMDB-sourced throughout.** 0 `tmdb_id IS NULL` rows at all three grains, verified by query. Reconciliation matched the prediction **exactly** on all six metrics; 30 discrepancies, every one enumerated in advance, no unlisted `LOST` line. Needed `neu-1146-import-ne-remediation.sql` between two runs. Earlier note: report run 2026-08-14 (artifact `neu-1146-pre-run-report.json`, and it caught the tier-2 special-offset bug fixed in #255); **the pass itself has not run.** Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
 
 
@@ -1728,6 +1728,23 @@ separate upstreams. **Nothing in the repo can enforce this** — if the times ar
 never changed the behaviour degrades to a one-night lag on delta-driven changes
 for *finished* shows only, because airing shows are reconciled nightly
 regardless and the sweep bounds everything else at a week.
+
+**The Coolify scheduled task needs a timeout longer than the run.** Coolify caps
+each scheduled task with its own queue-job timeout, and the default of **300
+seconds** is far shorter than this pass. When it fires, Coolify marks the task
+**failed** and its `task-execution-*.log` contains one line — `Job permanently
+failed after 1 attempts: App\Jobs\ScheduledTaskJob has timed out.` — and nothing
+else, because the pass writes to the exec's stdout, which is exactly what was
+abandoned. Meanwhile **the process keeps running to completion inside the
+container**, so the log says failed while the database says succeeded. Observed
+on 2026-08-14; set to **10800** to match the catalog task. Two things make this
+survivable rather than dangerous, and both are worth knowing: the healthcheck
+ping happens inside our process rather than in Coolify's wrapper, so the deadman
+still reports the truth; and if the process *is* killed, the run row sits at
+`running` only until `INGEST_STALE_RUN_MINUTES` elapses, after which the per-kind
+guard stops treating it as live and the next night proceeds. Since NEU-1149 a
+killed run also keeps whatever it stamped, so the next run resumes rather than
+restarting.
 
 **Read the shape of a night off its opening log line**, which now breaks the
 count down by clause:
