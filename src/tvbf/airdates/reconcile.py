@@ -42,13 +42,36 @@ Pacific" is right on 197 of 200 rows, and the same rule corrupts 17
 currently-correct Prime Video rows to fix 93, because Prime really does release
 on those days.
 
-**No watermark.** The full work list runs every night. Re-checking everything is
-what makes the pass self-healing when a season's dates change upstream, and at
-~3,500 requests it is about 2% of one IP's daily TV Maze allowance. Widening the
-list to the 115,731 shows carrying an external id is a one-line change plus a
-resumable watermark, and was deliberately not done: ~32 hours of sustained
-traffic against a free, keyless, unfunded API for a five-user app is poor
-etiquette, and being blocked would take the fix down with it.
+**Scope and due are two different questions** (NEU-1149). A show is *in scope* —
+ours to correct at all — if a user tracks it or it holds a future-dated episode.
+It is *due* on a given night only if something could have changed for it: it has
+never been reconciled, TMDB touched it since we last looked, it is still airing,
+or its sweep turn has come. The pass originally re-derived every offset every
+night, which made its cost proportional to catalog size plus user count when the
+thing needing re-checking is proportional to change — and the population that
+grows with the user base, tracked shows that have finished airing, is exactly
+where nightly re-checking buys nothing.
+
+**The sweep is what preserves the self-healing property.** The first three
+clauses of `shows_to_check` see every change on TMDB's side, because
+`catalog.show.tmdb_synced_at` advances precisely when the delta re-mirrored a
+show. None of them can see a change on the
+**oracle's** side — TV Maze correcting a date on a finished show TMDB never
+touches — and without a backstop an offset that should be retracted never would
+be. So every show is re-checked on a `SWEEP_DAYS` cadence regardless of whether
+anything flagged it, which is the property re-checking everything nightly used to
+give for free. The sweep is amortised rather than periodic-in-bulk: a show's
+bucket is `show_id % SWEEP_DAYS`, so one seventh of the scope is swept each night
+and no night ever spikes. A plain "last reconciled more than a week ago" would
+instead synchronise permanently on the first run after deploy — six quiet nights
+and one that reconciles the entire scope, forever — which reimports the scaling
+problem one night in seven.
+
+**Widening the list to the whole catalog is still refused.** The 115,731 shows
+carrying an external id remain a one-line change here and deliberately not made:
+~32 hours of sustained traffic against a free, keyless, unfunded API for a
+five-user app is poor etiquette, and being blocked would take the fix down with
+it.
 """
 
 import logging
@@ -56,15 +79,16 @@ from collections import defaultdict
 from collections.abc import Callable, Iterable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from uuid import UUID
 
-from sqlalchemy import exists, func, or_, select
+from sqlalchemy import BigInteger, and_, cast, exists, func, literal, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.elements import ColumnElement
 
 from tvbf.airdates.api_payloads import TVMazeEpisode
 from tvbf.airdates.client import TVMazeOracleClient
-from tvbf.airdates.show_state import oracle_episodes
+from tvbf.airdates.show_state import mark_reconciled, oracle_episodes
 from tvbf.app import models as am
 from tvbf.catalog import models as m
 from tvbf.catalog.offsets import project_offsets, replace_season_offsets
@@ -84,6 +108,23 @@ MAX_OFFSET_DAYS = 1
 # The trust rule's third clause. Two agreeing episodes is a season; one is a
 # coincidence, and every off-by-one in the data would satisfy a rule of one.
 MIN_EPISODES = 2
+
+# How often a show is re-checked even though nothing flagged it as changed. The
+# backstop for drift on the oracle's side, which no watermark of ours can see —
+# see the module docstring for why the pass cannot do without one.
+#
+# A module constant beside `MAX_OFFSET_DAYS` and `MIN_EPISODES`, which are the
+# precedent NEU-1148 §4 set: rules about what the pass believes, changed by a
+# code change with a test rather than by an operator.
+SWEEP_DAYS = 7
+
+# How far behind its sweep turn a show may fall before it is due regardless of
+# bucket. The bucket rule alone costs a missed night — container down, or a run
+# that aborted before reaching those shows — a full extra interval. At 1× this
+# would fire for the whole scope one week after a cold start, reintroducing
+# exactly the synchronisation the bucketing removes; at 2× it fires only for
+# shows that are genuinely overdue, which is when a spike is wanted.
+_SWEEP_FLOOR = timedelta(days=2 * SWEEP_DAYS)
 
 _PROGRESS_EVERY = 50
 
@@ -125,8 +166,34 @@ class ReconcileResult:
     lookups_spent: int = 0
     links_reused: int = 0
     links_invalidated: int = 0
+    # Why tonight's shows are due, one counter per clause of `shows_to_check`
+    # (NEU-1149 §7). They overlap — an airing show TMDB also touched counts in
+    # two — because the question they answer is "which clause is growing", and
+    # forcing them to partition would answer it only for whichever clause was
+    # tested first. Without them a 1,790-show night reads identically whether it
+    # is the airing population or a sweep clause misfiring.
+    due_never: int = 0
+    due_changed: int = 0
+    due_airing: int = 0
+    due_swept: int = 0
     aborted: bool = False
     refusals: list[tuple[int, SeasonVerdict]] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class DueReasons:
+    """Which of `shows_to_check`'s clauses put this show on tonight's list.
+
+    Carried on the show rather than summed in SQL so the run can report the
+    breakdown without a second round trip, and so a test can assert that a show
+    is due *for the reason it was seeded to be due for* rather than merely
+    present — which is the whole of NEU-1149's acceptance criteria 2 to 5.
+    """
+
+    never: bool
+    changed: bool
+    airing: bool
+    swept: bool
 
 
 @dataclass(frozen=True)
@@ -135,6 +202,7 @@ class ShowToCheck:
     name: str
     imdb_id: str | None
     tvdb_id: int | None
+    due: DueReasons
 
 
 def _episode_key(season: int | None, number: int | None) -> tuple[int, int] | None:
@@ -224,31 +292,108 @@ def judge_seasons(
     return verdicts
 
 
-async def shows_to_check(session: AsyncSession) -> list[ShowToCheck]:
-    """The work list: every show a user tracks, or that has an episode still to air.
+def _todays_bucket() -> ColumnElement[int]:
+    """Tonight's sweep bucket, off the database's own clock.
 
-    Measured to be 1,762 shows in production against 1,767 with a future episode
-    and 560 tracked, so the two halves nearly coincide — the tracked half is
-    what makes the correction reach the shows somebody would notice, and the
-    future-dated half is what makes a newly tracked show already correct when
-    somebody adds it.
+    Days since the epoch modulo `SWEEP_DAYS`, rather than a day-of-week
+    comparison — which reads more directly and silently pins the interval to 7,
+    so `SWEEP_DAYS` would stop being a real constant the moment anybody changed
+    it.
+    """
+    days = cast(func.extract("epoch", func.current_date()) / 86400, BigInteger)
+    return days % SWEEP_DAYS
 
-    The scope predicate lives here and nowhere else, which is what makes
-    widening it the one-line change §9 says it is.
+
+async def shows_to_check(
+    session: AsyncSession, *, today_bucket: int | None = None
+) -> list[ShowToCheck]:
+    """The shows in scope that are due tonight, and why each one is.
+
+    **Scope** is unchanged: every show a user tracks, or that holds an episode
+    still to air. The tracked half is what makes the correction reach the shows
+    somebody would notice; the future-dated half is what makes a newly tracked
+    show already correct when somebody adds it. Measured in production on
+    2026-08-14, the two are nearly *disjoint* rather than nearly coincident —
+    560 tracked, 1,787 with a future episode, 27 in both — which is the claim
+    NEU-1145 §4.4 got wrong and NEU-1149 §1.1 corrects. The scope predicate lives
+    here and nowhere else, which is what makes widening it the one-line change
+    NEU-1145 §9 says it is.
+
+    **Due** is ANDed onto that scope, never substituted for it. A show is due
+    when any of:
+
+    1. it has never been reconciled — a new show, or one somebody just tracked;
+    2. `catalog.show.tmdb_synced_at` has advanced since, which happens precisely
+       when the delta re-mirrored the show because TMDB reported a change;
+    3. it is still airing, so its dates can still move;
+    4. its sweep turn has come, or it has fallen `2 * SWEEP_DAYS` behind one.
+
+    `last_reconciled_at IS NULL` alone would match all ~229k mirrored shows,
+    which is the ~32-hour run NEU-1145 §9 refuses; the scope is what bounds it.
+
+    **Clause 3 readmits every airing show every night**, including the ~1,760
+    nobody tracks, so the list is not proportional to change — it is proportional
+    to what is currently airing, plus what changed. That is deliberate: an airing
+    season's evidence changes on the *oracle's* side by nature, as TV Maze adds
+    episodes that have only just been announced, and that is exactly what turns a
+    season refused for `too_few` into one that can finally reach a verdict. TMDB
+    may not change at all in that window, having entered the full season already,
+    so no watermark of ours would fire until the sweep. What the predicate does
+    remove is the population that grows with the user base: shows a user tracks
+    that have finished airing, whose dates will never change again.
+
+    `today_bucket` overrides the database's clock so the sweep's tests assert
+    something that does not change with the calendar — the same shape
+    `oracle_episodes`' `relookup_missing_after` takes, and for the same reason.
     """
     tracked = exists().where(am.UserShowWatch.show_id == m.Show.id)
-    upcoming = exists().where(
+    airing = exists().where(
         m.Episode.show_id == m.Show.id,
         func.coalesce(m.Episode.tmdb_air_date, m.Episode.air_date) > func.current_date(),
     )
+    last = m.AirdateShowState.last_reconciled_at
+
+    never = last.is_(None)
+    # NULL on either side yields NULL, which an OR reads as not-true and a CASE
+    # reads as its ELSE — so a never-reconciled show is counted by `never` alone
+    # rather than by both clauses.
+    changed = m.Show.tmdb_synced_at > last
+    bucket = _todays_bucket() if today_bucket is None else literal(today_bucket % SWEEP_DAYS)
+    swept = and_(
+        last.is_not(None),
+        or_(m.Show.id % SWEEP_DAYS == bucket, last < func.now() - _SWEEP_FLOOR),
+    )
+
     rows = (
         await session.execute(
-            select(m.Show.id, m.Show.name, m.Show.imdb_id, m.Show.tvdb_id)
-            .where(or_(tracked, upcoming))
+            select(
+                m.Show.id,
+                m.Show.name,
+                m.Show.imdb_id,
+                m.Show.tvdb_id,
+                never.label("never"),
+                func.coalesce(changed, False).label("changed"),
+                airing.label("airing"),
+                func.coalesce(swept, False).label("swept"),
+            )
+            # Outer, because "no row" is the never-reconciled state clause 1
+            # reads — an inner join would silently drop every show the pass has
+            # not yet met, which is every show on the first run after deploy.
+            .outerjoin(m.AirdateShowState, m.AirdateShowState.show_id == m.Show.id)
+            .where(or_(tracked, airing), or_(never, changed, airing, swept))
             .order_by(m.Show.id)
         )
     ).all()
-    return [ShowToCheck(r.id, r.name, r.imdb_id, r.tvdb_id) for r in rows]
+    return [
+        ShowToCheck(
+            r.id,
+            r.name,
+            r.imdb_id,
+            r.tvdb_id,
+            DueReasons(never=r.never, changed=r.changed, airing=r.airing, swept=r.swept),
+        )
+        for r in rows
+    ]
 
 
 async def _our_episodes(session: AsyncSession, *, show_id: int) -> dict[tuple[int, int], date]:
@@ -398,13 +543,35 @@ async def run_airdate_reconcile(
         )
     checkable = [s for s in shows if s.imdb_id is not None or s.tvdb_id is not None]
 
-    log.info("airdate reconciliation: %d show(s) in scope", len(checkable))
+    for show in checkable:
+        result.due_never += show.due.never
+        result.due_changed += show.due.changed
+        result.due_airing += show.due.airing
+        result.due_swept += show.due.swept
+
+    log.info(
+        "airdate reconciliation: %d show(s) due — %d airing, %d changed, "
+        "%d never reconciled, %d swept",
+        len(checkable),
+        result.due_airing,
+        result.due_changed,
+        result.due_never,
+        result.due_swept,
+    )
 
     consecutive_failures = 0
     for index, show in enumerate(checkable, start=1):
         try:
             async with _owned_session(session_factory) as s:
                 await _reconcile_show(s, client, show, result)
+                # Same session and transaction as the show's own work, and
+                # immediately before its commit: a crash between the two would
+                # otherwise record a show as done that was not. Not inside
+                # `_reconcile_show`, which returns early on "no counterpart" and
+                # would need the stamp on both paths — and that early return is
+                # a genuine conclusion worth stamping, or the ~500-show negative
+                # population stays in every night's work list forever.
+                await mark_reconciled(s, show.show_id)
                 await s.commit()
         except Exception:
             log.exception("show %d (%s): airdate reconciliation failed", show.show_id, show.name)

@@ -79,6 +79,14 @@ not about the oracle's identity for the show — and that column belongs under t
 name without strain where it would sit oddly under `airdate_oracle_link`. One table
 for what the pass knows, not two.
 
+> **It landed.** [NEU-1149](NEU-1149-scope-the-airdate-work-list-to-change.md)
+> added `last_reconciled_at TIMESTAMPTZ NULL` to this table in migration
+> `d5f2a91c6b03`, exactly as this section predicted — nullable, because the rows
+> this ticket writes predate it and because NULL is the "never reconciled" state
+> the work list's first clause reads. The two columns are written by different
+> call sites and never together: `show_state._record_link` owns `tvmaze_id` /
+> `resolved_at`, `show_state.mark_reconciled` owns the watermark.
+
 **`show_id` is the primary key directly.** No surrogate `id` plus a unique
 constraint: one row per show is the table's entire meaning, and unlike
 `air_date_offset` there is no second key part that would make a surrogate earn its

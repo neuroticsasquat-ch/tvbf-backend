@@ -56,6 +56,14 @@ _Avoid_: source, upstream, provider, second catalog
 How many days a season's mirrored airdates are shifted from TMDB's, so `air_date` means the date a US Eastern viewer saw. One integer per `(show, season)`, established against the oracle by a nightly pass that refuses whenever the evidence is not unanimous — a refusal being the absence of a verdict, not a verdict of zero. `tmdb_air_date` holds the uncorrected upstream value and is NULL wherever no correction was applied.
 _Avoid_: timezone fix, date correction, airdate patch
 
+**Work list** / **Due**:
+A pass's work list is the set of rows it *may* act on — for the airdate pass, every show a user tracks or that holds a future-dated episode. Being in the work list is not being **due**: a show is due on a given night only if something could have changed for it (never reconciled, TMDB touched it since, it is still airing) or its sweep turn has come. Scope answers "is this show ours to correct", due answers "is tonight the night", and keeping them separate is what stops the run's cost tracking the catalog or the user base.
+_Avoid_: queue, backlog, batch
+
+**Sweep**:
+The periodic re-check of rows nothing has flagged as changed — the backstop that catches drift on the *oracle's* side, which no watermark of ours can see. Amortised rather than periodic-in-bulk: each show belongs to a fixed bucket by id and one bucket comes due per night, so every row is swept on cadence and no night ever spikes. A sweep is what preserves a pass's self-healing property once that pass stops re-deriving everything nightly.
+_Avoid_: full scan, refresh cycle, reindex
+
 ### People and credits
 
 **Person**:

@@ -46,6 +46,13 @@ pure repository.** The cache exists *only* to avoid a request, so a module that
 knew about the table but not the request would be a seam in the wrong place and
 the orchestration would leak back into `_reconcile_show`, whose subject is the
 trust rule.
+
+**`mark_reconciled` lives here because the table does** (NEU-1149). It is not
+about the oracle's identity for a show and has nothing to do with caching a
+request — it is the pass's own watermark — but `catalog.airdate_show_state` has
+one owner, and a second module writing the same row would be two owners. The
+work list that reads the watermark is `reconcile.shows_to_check`, which is where
+the rules about what makes a show due belong.
 """
 
 import logging
@@ -53,7 +60,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -76,6 +83,51 @@ log = logging.getLogger(__name__)
 # currently correct by any means, so a month's latency on one appearing costs
 # nothing.
 RELOOKUP_MISSING_AFTER = timedelta(days=30)
+
+# The `resolved_at` an insert from `mark_reconciled` carries — see its docstring.
+# Not a sentinel anybody reads: it is a real "when we last asked", set far enough
+# back that the negative it would otherwise assert is already expired. The epoch
+# rather than `datetime.min`, so it reads the same as the runbook's partial-reset
+# hatch, which is `SET resolved_at = 'epoch'`.
+_NEVER_ASKED = datetime(1970, 1, 1, tzinfo=UTC)
+
+
+async def mark_reconciled(session: AsyncSession, show_id: int) -> None:
+    """Stamp a show whose turn just completed without raising (NEU-1149).
+
+    Called once per show from `run_airdate_reconcile`'s success branch, in the
+    same session and transaction as the show's own work — so a crash between
+    the work and the stamp cannot leave a show recorded as done that was not.
+
+    An upsert rather than an update, so the stamp does not depend on a link row
+    having been written first. Today it always has been — every path through
+    `oracle_episodes` either reuses a row or writes one — but a plain UPDATE
+    would silently no-op if that ever stopped being true, and a show that can
+    never be stamped is one every night's work list contains forever.
+
+    The insert branch dates `resolved_at` to the epoch rather than to now. It is
+    unreachable today, and if it ever fires the row it creates carries
+    `tvmaze_id IS NULL`, which is the negative cache's "we asked and TV Maze
+    does not carry this show". Dating that never-made lookup as long expired is
+    the fail-safe direction: the next run re-resolves the show instead of
+    trusting a negative nobody established.
+
+    **The stamp is the database's clock, not this process's**, which is the one
+    way this write differs from `_record_link` beside it. That row is compared
+    against `datetime.now(UTC)` in `_usable`, so a single clock is
+    self-consistent; this one is compared against `catalog.show.tmdb_synced_at`,
+    written by a different process under `func.now()`. Two clocks either side of
+    that comparison would let skew hide a change until the sweep.
+    """
+    now = func.now()
+    await session.execute(
+        insert(m.AirdateShowState)
+        .values(show_id=show_id, resolved_at=_NEVER_ASKED, last_reconciled_at=now)
+        .on_conflict_do_update(
+            index_elements=[m.AirdateShowState.show_id],
+            set_={"last_reconciled_at": now},
+        )
+    )
 
 
 class SpendCounters(Protocol):

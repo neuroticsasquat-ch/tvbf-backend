@@ -7,13 +7,19 @@ rule, which is unit-tested against `judge_seasons`.
 The oracle is stubbed throughout; no test here makes a live call.
 """
 
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select, update
+from sqlalchemy.dialects.postgresql import insert
 
 from tvbf.airdates.api_payloads import TVMazeEpisode
-from tvbf.airdates.reconcile import run_airdate_reconcile, shows_to_check
+from tvbf.airdates.reconcile import (
+    SWEEP_DAYS,
+    DueReasons,
+    run_airdate_reconcile,
+    shows_to_check,
+)
 from tvbf.app import models as am
 from tvbf.catalog import models as m
 from tvbf.catalog.runs import create_run
@@ -109,6 +115,41 @@ async def _seed_show(
     await session.commit()
 
 
+async def _touch(session, show_id: int) -> None:
+    """Advance `tmdb_synced_at`, which is what the daily delta does when TMDB
+    reports a change.
+
+    Since NEU-1149 that is also what puts a *finished* show back on the next
+    night's work list, so a two-run test has to say so rather than lean on every
+    show being re-checked nightly. Leaning on it would also make the test
+    calendar-dependent, since the show might instead be due because tonight
+    happens to be its sweep turn.
+    """
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(tmdb_synced_at=func.now())
+    )
+    await session.commit()
+
+
+async def _stamp(session, show_id: int, *, age: timedelta = timedelta()) -> None:
+    """Pretend a run reconciled this show `age` ago."""
+    when = datetime.now(UTC) - age
+    await session.execute(
+        insert(m.AirdateShowState)
+        .values(show_id=show_id, last_reconciled_at=when)
+        .on_conflict_do_update(
+            index_elements=[m.AirdateShowState.show_id], set_={"last_reconciled_at": when}
+        )
+    )
+    await session.commit()
+
+
+def _other_bucket(show_id: int) -> int:
+    """A sweep bucket that is not this show's, so a test about some other clause
+    cannot pass or fail on what day it is run."""
+    return (show_id + 1) % SWEEP_DAYS
+
+
 def _factory():
     return SessionLocal()
 
@@ -175,6 +216,156 @@ class TestTheWorkList:
         assert [s.show_id for s in await shows_to_check(session)] == [813]
 
 
+class TestWhatIsDue:
+    """Scope says a show is ours to correct; due says tonight is its night.
+
+    Every test here seeds a show that is in scope and due for exactly one
+    reason, so a clause that stops working fails its own test rather than
+    hiding behind another (NEU-1149 §9).
+    """
+
+    async def test_a_never_reconciled_show_is_due(self, session, user):
+        """A new show, or one somebody just tracked. Clause 1, and the reason
+        the cold start needs no backfill: every row starts NULL."""
+        await _seed_show(session, show_id=840, imdb_id="tt840", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=840))
+        await session.commit()
+
+        due = await shows_to_check(session, today_bucket=_other_bucket(840))
+
+        assert [s.show_id for s in due] == [840]
+        assert due[0].due == DueReasons(never=True, changed=False, airing=False, swept=False)
+
+    async def test_a_show_the_delta_touched_is_due(self, session, user):
+        """Clause 2. `tmdb_synced_at` advances precisely when TMDB reported a
+        change and `mirror_series` re-mirrored the show, so the trigger this
+        ticket needs already existed."""
+        await _seed_show(session, show_id=841, imdb_id="tt841", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=841))
+        await session.commit()
+        await _stamp(session, 841)
+        await _touch(session, 841)
+
+        due = await shows_to_check(session, today_bucket=_other_bucket(841))
+
+        assert [s.show_id for s in due] == [841]
+        assert due[0].due == DueReasons(never=False, changed=True, airing=False, swept=False)
+
+    async def test_an_airing_show_is_due_every_night(self, session):
+        """Clause 3, kept even though it readmits ~1,760 shows nobody tracks:
+        an airing season's evidence changes on the *oracle's* side as TV Maze
+        announces episodes, and no watermark of ours can see that."""
+        future = (date.today() + timedelta(days=30)).isoformat()
+        await _seed_show(session, show_id=842, imdb_id="tt842", dates={1: [future]})
+        await _stamp(session, 842)
+
+        due = await shows_to_check(session, today_bucket=_other_bucket(842))
+
+        assert [s.show_id for s in due] == [842]
+        assert due[0].due == DueReasons(never=False, changed=False, airing=True, swept=False)
+        # "Every night", not "some night": no bucket leaves it out, which is the
+        # difference between clause 3 and the sweep.
+        for bucket in range(SWEEP_DAYS):
+            assert [s.show_id for s in await shows_to_check(session, today_bucket=bucket)] == [842]
+
+    async def test_a_finished_untouched_show_is_not_due(self, session, user):
+        """The whole ticket. This is the population that grows with the user
+        base — tracked shows that have finished airing — and re-deriving its
+        offsets nightly buys nothing, because nothing about them can change."""
+        await _seed_show(session, show_id=843, imdb_id="tt843", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=843))
+        await session.commit()
+        await _stamp(session, 843)
+
+        assert await shows_to_check(session, today_bucket=_other_bucket(843)) == []
+
+    async def test_the_same_show_is_due_when_its_sweep_turn_comes(self, session, user):
+        """Clause 4 — and what preserves NEU-1145 §4.4's self-healing property.
+        Nothing on our side can see TV Maze correcting a date on a finished show
+        TMDB never touches, so without the sweep an offset that should be
+        retracted never would be."""
+        await _seed_show(session, show_id=844, imdb_id="tt844", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=844))
+        await session.commit()
+        await _stamp(session, 844)
+
+        due = await shows_to_check(session, today_bucket=844 % SWEEP_DAYS)
+
+        assert [s.show_id for s in due] == [844]
+        assert due[0].due == DueReasons(never=False, changed=False, airing=False, swept=True)
+
+    async def test_the_sweep_is_amortised_so_no_night_spikes(self, session, user):
+        """One bucket per night, every show swept within `SWEEP_DAYS`, and no
+        night carrying more than its share. A plain `last_reconciled_at < now() -
+        7 days` would instead synchronise permanently on the first run after
+        deploy: six quiet nights and one that reconciles the entire scope."""
+        ids = list(range(850, 850 + 3 * SWEEP_DAYS))
+        for show_id in ids:
+            await _seed_show(
+                session, show_id=show_id, imdb_id=f"tt{show_id}", dates={1: ["2001-01-01"]}
+            )
+            session.add(am.UserShowWatch(user_id=user.id, show_id=show_id))
+        await session.commit()
+        for show_id in ids:
+            await _stamp(session, show_id)
+
+        nights = [
+            [s.show_id for s in await shows_to_check(session, today_bucket=bucket)]
+            for bucket in range(SWEEP_DAYS)
+        ]
+
+        assert sorted(n for night in nights for n in night) == ids
+        assert {len(night) for night in nights} == {3}
+
+    async def test_a_show_that_has_fallen_two_intervals_behind_is_due_anyway(self, session, user):
+        """The staleness floor. A missed night — container down, or a run that
+        aborted on the consecutive-failure threshold before reaching this
+        bucket — would otherwise cost it a full extra interval."""
+        await _seed_show(session, show_id=870, imdb_id="tt870", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=870))
+        await session.commit()
+        await _stamp(session, 870, age=timedelta(days=2 * SWEEP_DAYS + 1))
+
+        due = await shows_to_check(session, today_bucket=_other_bucket(870))
+
+        assert [s.show_id for s in due] == [870]
+        assert due[0].due.swept
+
+    async def test_the_default_bucket_is_todays_days_since_epoch(self, session, user):
+        """The override exists so the sweep's tests do not depend on the
+        calendar, which leaves the default — the database's own clock — the one
+        thing no other test here exercises. Days since the epoch rather than a
+        day of the week, so `SWEEP_DAYS` stays a real constant instead of being
+        silently pinned to 7.
+        """
+        ids = list(range(875, 875 + SWEEP_DAYS))
+        for show_id in ids:
+            await _seed_show(
+                session, show_id=show_id, imdb_id=f"tt{show_id}", dates={1: ["2001-01-01"]}
+            )
+            session.add(am.UserShowWatch(user_id=user.id, show_id=show_id))
+        await session.commit()
+        for show_id in ids:
+            await _stamp(session, show_id)
+        tonight = (date.today() - date(1970, 1, 1)).days % SWEEP_DAYS
+
+        by_the_clock = await shows_to_check(session)
+
+        assert [s.show_id for s in by_the_clock] == [
+            s.show_id for s in await shows_to_check(session, today_bucket=tonight)
+        ]
+        assert [s.show_id for s in by_the_clock] == [i for i in ids if i % SWEEP_DAYS == tonight]
+
+    async def test_due_is_anded_onto_scope_never_substituted_for_it(self, session):
+        """`last_reconciled_at IS NULL` alone matches all ~229k mirrored shows,
+        which is the ~32-hour run NEU-1145 §9 refuses. A show out of scope is
+        never due however many clauses it satisfies."""
+        await _seed_show(session, show_id=871, imdb_id="tt871", dates={1: ["2001-01-01"]})
+        await _touch(session, 871)
+
+        assert await shows_to_check(session, today_bucket=871 % SWEEP_DAYS) == []
+
+
 class TestThePass:
     async def test_a_unanimous_shift_is_recorded_and_projected(self, session, user):
         """The end the whole ticket is for: Silo's stored rows are corrected by
@@ -210,6 +401,7 @@ class TestThePass:
             {"tt821": [_oracle_episode(1, 1, "2023-05-05"), _oracle_episode(1, 2, "2023-05-12")]}
         )
         await _run(oracle, session=session)
+        await _touch(session, 821)
 
         _, result = await _run(oracle, session=session)
 
@@ -232,6 +424,9 @@ class TestThePass:
             {"tt822": [_oracle_episode(1, 1, "2023-05-05"), _oracle_episode(1, 2, "2023-05-12")]}
         )
         await _run(shifted, session=session)
+        # TMDB fixing its own data is a change the delta re-mirrors, which is
+        # what makes the show due again — clause 2 of the work list.
+        await _touch(session, 822)
 
         agreeing = FakeOracle(
             {"tt822": [_oracle_episode(1, 1, "2023-05-04"), _oracle_episode(1, 2, "2023-05-11")]}
@@ -265,6 +460,7 @@ class TestThePass:
             ),
             session=session,
         )
+        await _touch(session, 823)
 
         _, result = await _run(
             FakeOracle(
@@ -361,6 +557,7 @@ class TestThePass:
         )
 
         _, first = await _run(oracle, session=session)
+        await _touch(session, 827)
         _, second = await _run(oracle, session=session)
 
         assert (first.lookups_spent, first.links_reused) == (1, 0)
@@ -376,10 +573,77 @@ class TestThePass:
         oracle = FakeOracle({})
 
         await _run(oracle, session=session)
+        await _touch(session, 828)
         _, second = await _run(oracle, session=session)
 
         assert oracle.lookups == 1
         assert (second.shows_not_found, second.links_reused) == (1, 1)
+
+    async def test_a_finished_turn_is_stamped_even_when_the_oracle_has_nothing(self, session, user):
+        """ "No TV Maze counterpart" is a conclusion, not an omission. Leaving it
+        unstamped would keep the ~500-show negative population in every night's
+        work list forever — the failure NEU-1148's negative cache prevents one
+        grain down, which still costs a session and two queries here."""
+        await _seed_show(session, show_id=880, imdb_id="tt880", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=880))
+        await session.commit()
+
+        await _run(FakeOracle({}), session=session)
+
+        stamped = (
+            await session.execute(
+                select(m.AirdateShowState.last_reconciled_at)
+                .where(m.AirdateShowState.show_id == 880)
+                .execution_options(populate_existing=True)
+            )
+        ).scalar_one()
+        assert stamped is not None
+
+    async def test_a_show_that_raised_is_due_again_on_the_next_run(self, session, user):
+        """AC 9, and the one place the stamp's placement is observable: it is
+        written in the same transaction as the show's own work, so a show whose
+        turn blew up is left at its previous value and retried tomorrow rather
+        than skipped to its sweep turn."""
+        await _seed_show(session, show_id=881, imdb_id="tt881", dates={1: ["2001-01-01"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=881))
+        await session.commit()
+
+        class Exploding(FakeOracle):
+            async def get_show_episodes(self, show_id):
+                raise RuntimeError("upstream is having a day")
+
+        _, result = await _run(Exploding({"tt881": []}), session=session)
+
+        assert result.shows_failed == 1
+        due = await shows_to_check(session, today_bucket=_other_bucket(881))
+        assert [s.show_id for s in due] == [881]
+
+    async def test_the_next_night_is_the_airing_set_and_tonights_bucket(self, session, user):
+        """What AC 1 measures, in miniature: the tracked-finished show leaves the
+        list after one run and the airing one does not, so the run's cost stops
+        tracking how many shows users have accumulated."""
+        future = (date.today() + timedelta(days=30)).isoformat()
+        await _seed_show(session, show_id=890, imdb_id="tt890", dates={1: ["2001-01-01"]})
+        await _seed_show(session, show_id=891, imdb_id="tt891", dates={1: [future]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=890))
+        await session.commit()
+        oracle = FakeOracle({"tt890": [], "tt891": []})
+
+        _, first = await _run(oracle, session=session)
+        # A bucket belonging to neither show, so 891 is on the list because it
+        # is airing and not because tonight happens to be its sweep turn.
+        due = await shows_to_check(session, today_bucket=(890 + 2) % SWEEP_DAYS)
+
+        assert (first.shows_considered, first.due_never) == (2, 2)
+        assert [s.show_id for s in due] == [891]
+        assert due[0].due == DueReasons(never=False, changed=False, airing=True, swept=False)
+
+        # ...and the other half of the night: the finished show comes back on
+        # its own bucket, off the stamp `mark_reconciled` actually wrote rather
+        # than one a test hand-placed.
+        swept = await shows_to_check(session, today_bucket=890 % SWEEP_DAYS)
+        assert 890 in [s.show_id for s in swept]
+        assert next(s for s in swept if s.show_id == 890).due.swept
 
     async def test_the_run_row_is_finalized(self, session, user):
         await _seed_show(session, show_id=826, imdb_id="tt826", dates={1: ["2023-05-04"]})
