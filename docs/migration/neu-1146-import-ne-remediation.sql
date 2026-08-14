@@ -4,9 +4,11 @@
 -- re-run that followed deleted the two shows and exited 0. Kept for the record and
 -- for the reversal below. It was run as:
 --
---   ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire"
+--   ssh tom@ssh.neuroticsasquat.ch \
+--     "docker exec -i $BE psql ..." < docs/migration/neu-1146-import-ne-remediation.sql
 --
--- which will then delete both shows and exit 0, satisfying criterion 7.
+-- followed by a re-run of the pass, which deleted both shows and exited 0:
+-- "no orphan rows remain at any grain — the catalog is TMDB-sourced throughout".
 --
 -- ## What happened
 --
