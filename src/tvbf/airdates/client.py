@@ -2,11 +2,13 @@
 
 Not a mirror client. NEU-1050 retired the one this repo used to have and
 NEU-1051 dropped the schema behind it, and none of that comes back: nothing here
-writes a catalog row, and the only value that survives a call is **one integer
-per `(show, season)`** — never TV Maze's dates, titles, numbering or anything
-else. That minimisation is deliberate and it is what the licence position in
-NEU-1145 §6 rests on, since TV Maze data is CC BY-SA 4.0 and the attribution
-returns to the SPA footer alongside it.
+writes a catalog row, and the only values that survive a call are **one integer
+per `(show, season)`** and **one show id per show** — never TV Maze's dates,
+titles, numbering or anything else. That minimisation is deliberate and it is
+what the licence position in NEU-1145 §6, as amended by NEU-1148 §7, rests on:
+TV Maze data is CC BY-SA 4.0, the attribution is in the SPA footer, and an
+identifier is a bare fact about which record corresponds to which series rather
+than any of the authored content the licence exists to govern.
 
 Why this oracle and not another. Trakt's `first_aired` is a true UTC instant and
 is not copyleft, which would have been the better shape — but it needs a
@@ -16,10 +18,12 @@ rows. The iTunes Search API stamps its dates at midnight Pacific and would have
 answered the question directly; it carries no Apple TV+ originals at all, which
 is where most of the shift is.
 
-**Two requests per show.** A `/lookup/shows` by external id, then one
-`/shows/{id}/episodes` that carries the whole series. Against a work list of
-~1,800 shows that is ~3,500 requests a night — about 2% of one IP's daily
-allowance, which is the number that decided the work list's scope.
+**One request per show in steady state.** A `/shows/{id}/episodes` that carries
+the whole series, and a `/lookup/shows` by external id only when
+`airdates/show_state` has no usable id cached (NEU-1148) — which on a settled
+work list is nearly never. It was two per show and ~3,500 requests a night
+before the cache; either way it is a low single-digit percentage of one IP's
+daily allowance, which is the number that decided the work list's scope.
 
 **The lookup answers `301`, and the id is in the `Location` header.** Measured
 against the live API on 2026-08-14: `/lookup/shows?imdb=tt2356777` returns
@@ -207,8 +211,17 @@ class TVMazeOracleClient:
                 return show_id
         return None
 
-    async def get_show_episodes(self, show_id: int) -> list[TVMazeEpisode]:
+    async def get_show_episodes(self, show_id: int) -> list[TVMazeEpisode] | None:
         """Every numbered episode of one show, in one request.
+
+        **`None` means TV Maze does not carry this show; `[]` means it does and
+        has no episodes to give.** The same distinction `tmdb/upsert.py` draws
+        between "the caller did not append this namespace" and "upstream has
+        none", and here it is load-bearing rather than tidy: since NEU-1148 the
+        id we ask with can come from a cached row, so a 404 is the only signal
+        that the cached link has gone stale. Collapsing the two would let such a
+        show silently stop being reconciled forever, counted only among the
+        seasons nothing could be compared for.
 
         **`specials=1` is deliberately not sent.** It would add the episodes TV
         Maze numbers `null`, and a null number cannot be paired with anything on
@@ -218,5 +231,5 @@ class TVMazeOracleClient:
         """
         resp = await self._request("GET", f"{self._base_url}/shows/{show_id}/episodes")
         if resp is None:
-            return []
+            return None
         return [TVMazeEpisode.model_validate(entry) for entry in resp.json()]

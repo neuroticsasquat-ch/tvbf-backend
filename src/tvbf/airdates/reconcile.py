@@ -2,8 +2,10 @@
 
 The pass that makes the correction automatic. It compares every mirrored show a
 user tracks — or that has an episode still to air — against TV Maze, and records
-one integer per season where the evidence is unanimous. Nothing else about TV
-Maze is stored (§6).
+one integer per season where the evidence is unanimous. The only other thing
+kept is the show's id on the oracle, cached by `airdates/show_state` so the
+lookup is not re-derived nightly (NEU-1148 §7); nothing else about TV Maze is
+stored.
 
 **The trust rule is the whole design, and it refuses rather than guesses.** An
 offset is written for a `(show_id, season_number)` only when all three hold:
@@ -62,6 +64,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.airdates.api_payloads import TVMazeEpisode
 from tvbf.airdates.client import TVMazeOracleClient
+from tvbf.airdates.show_state import oracle_episodes
 from tvbf.app import models as am
 from tvbf.catalog import models as m
 from tvbf.catalog.offsets import project_offsets, replace_season_offsets
@@ -115,6 +118,13 @@ class ReconcileResult:
     offsets_retracted: int = 0
     seasons_refused: int = 0
     rows_corrected: int = 0
+    # What `airdates/show_state` spent or avoided (NEU-1148 §9). Flat fields
+    # rather than a nested object because they are read by the closing log
+    # line, and `lookups_spent` falling to near zero across consecutive runs is
+    # the acceptance criterion — observable in production, not only in a test.
+    lookups_spent: int = 0
+    links_reused: int = 0
+    links_invalidated: int = 0
     aborted: bool = False
     refusals: list[tuple[int, SeasonVerdict]] = field(default_factory=list)
 
@@ -299,14 +309,19 @@ async def _reconcile_show(
     result: ReconcileResult,
 ) -> None:
     """One show, in its own transaction. Raises only on a genuine failure."""
-    oracle_id = await client.lookup_show(imdb_id=show.imdb_id, tvdb_id=show.tvdb_id)
-    if oracle_id is None:
+    # One call, which spends a lookup only when there is no usable cached id —
+    # and which owns the stale-link retry. `None` is "TV Maze has no
+    # counterpart", however we learned it: the log below is identical whether
+    # the answer came from a request or from a row, because its subject is
+    # which shows cannot be corrected and not how we found out.
+    episodes = await oracle_episodes(session, client, show, result)
+    if episodes is None:
         result.shows_not_found += 1
         log.info("show %d (%s): no TV Maze counterpart", show.show_id, show.name)
         return
 
     ours = await _our_episodes(session, show_id=show.show_id)
-    theirs = _oracle_episodes(await client.get_show_episodes(oracle_id))
+    theirs = _oracle_episodes(episodes)
 
     verdicts = judge_seasons(ours, theirs)
     decided = [
@@ -431,7 +446,7 @@ async def run_airdate_reconcile(
     log.info(
         "airdate reconciliation: %d show(s) considered, %d not on TV Maze, %d failed; "
         "%d offset(s) written, %d retracted, %d season(s) refused, %d with nothing comparable, "
-        "%d row(s) corrected",
+        "%d row(s) corrected; %d lookup(s) spent, %d link(s) reused, %d invalidated",
         result.shows_considered,
         result.shows_not_found,
         result.shows_failed,
@@ -440,6 +455,9 @@ async def run_airdate_reconcile(
         result.seasons_refused,
         result.seasons_uncomparable,
         result.rows_corrected,
+        result.lookups_spent,
+        result.links_reused,
+        result.links_invalidated,
     )
     return result
 

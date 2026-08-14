@@ -1668,3 +1668,36 @@ log says which rule refused it.
 Note that a bare name can match more than one show (two "Silo", three "Lucky"
 locally), so every match is listed rather than one being picked.
 
+### The cached oracle link (NEU-1148)
+
+`catalog.airdate_show_state` holds one row per show the pass has asked TV Maze
+about, so the `/lookup/shows` half of the two-requests-per-show cost is spent
+once rather than nightly. Three things are worth knowing operationally.
+
+**The first run after deploy costs exactly what the run before it cost.** The
+table is created empty and nothing is backfilled, so every show takes a lookup
+plus an episode fetch. The saving appears on the **second** run — a before/after
+wall-clock comparison taken from the first one reads as a failed optimisation.
+
+**Read the saving off the run itself.** `catalog.ingest_run` already carries
+`started_at` / `finished_at` for `kind='airdate_reconcile'`, so the wall clock
+needs no new machinery: `task ingest:status -- <uuid>`. The closing log line
+carries `lookups spent`, `links reused` and `invalidated`; `lookups spent`
+falling to near zero across consecutive runs is the acceptance criterion.
+`invalidated` climbing says many cached ids have stopped resolving upstream,
+which is the one thing here worth investigating rather than merely noting.
+
+**The escape hatch is a `DELETE`.** The table is a pure derived cache — nothing
+in it cannot be rebuilt by asking again — so truncating it is always safe and
+the next run rebuilds it. There is deliberately no CLI flag and no `task`
+target, matching how `air_date_offset`'s own escape hatch works:
+
+```sql
+-- full reset: the next run pays the uncached price once
+DELETE FROM catalog.airdate_show_state;
+
+-- re-ask only the shows TV Maze had no counterpart for, without waiting out
+-- the 30-day `RELOOKUP_MISSING_AFTER` expiry
+DELETE FROM catalog.airdate_show_state WHERE tvmaze_id IS NULL;
+```
+

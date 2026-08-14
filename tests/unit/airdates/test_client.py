@@ -126,6 +126,7 @@ class TestEpisodes:
         async with _client() as client:
             episodes = await client.get_show_episodes(5)
 
+        assert episodes is not None
         assert [(e.season, e.number, e.airdate) for e in episodes] == [
             (1, 1, date(2014, 1, 12)),
             (1, 2, None),
@@ -146,8 +147,20 @@ class TestEpisodes:
         assert "specials" not in str(route.calls[0].request.url)
 
     @respx.mock
-    async def test_a_missing_show_yields_no_episodes(self):
+    async def test_a_show_tv_maze_does_not_carry_is_none_not_empty(self):
+        """NEU-1148 §5: the id can now come from a cached row, so a 404 is the
+        only signal that the cached link has gone stale. `[]` would be
+        indistinguishable from a show upstream carries with no episodes, and the
+        show would silently stop being reconciled forever."""
         respx.get(f"{BASE}/shows/5/episodes").mock(return_value=httpx.Response(404))
+
+        async with _client() as client:
+            assert await client.get_show_episodes(5) is None
+
+    @respx.mock
+    async def test_a_show_with_no_episodes_is_empty_not_none(self):
+        """The other half of the same contract."""
+        respx.get(f"{BASE}/shows/5/episodes").mock(return_value=httpx.Response(200, json=[]))
 
         async with _client() as client:
             assert await client.get_show_episodes(5) == []

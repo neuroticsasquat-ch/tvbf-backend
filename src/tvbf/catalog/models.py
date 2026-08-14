@@ -644,6 +644,63 @@ class AirDateOffset(Base):
     )
 
 
+class AirdateShowState(Base):
+    """What the airdate pass knows about one show (NEU-1148).
+
+    Today that is the show's id on the oracle, cached so the nightly pass stops
+    re-deriving it: `airdates/reconcile` spent two TV Maze requests per show, a
+    `/lookup/shows` by external id and then the episode list, and the first of
+    those returns the same answer every night. The pass is entirely
+    rate-limiter-bound, so halving the requests roughly halves the ~23 minute
+    wall clock.
+
+    **Named for what the pass knows, not for the one column it holds.** A
+    watermark about our own work — "when did we last reconcile this show?" —
+    belongs here too, and would sit oddly under a name about the oracle's
+    identity for the show. One table for what the pass knows, not two.
+
+    **A table of its own rather than a column on `catalog.show`**, for the
+    reason `AirDateOffset` above is one: ADR-0012 sole-sources the spine from
+    TMDB, and a TV Maze id is not TMDB's. `show.tvdb_id` / `show.imdb_id` are
+    TMDB's own `external_ids`; this is a sidecar holding a derived integer, and
+    that is a different thing from the catalog holding TV Maze rows. It is also
+    what gives the negative result a home — a column on `catalog.show` could not
+    tell *never asked* from *asked, no counterpart*, and both read NULL.
+
+    **`tvmaze_id IS NULL` means "we looked and TV Maze does not carry it."**
+    Without that the ~500 shows in scope with no counterpart would be
+    re-looked-up every night forever, which is most of the saving gone. The
+    absence of a row is *never asked*, and `resolved_at` — NOT NULL, meaning
+    "when we last asked", for both row shapes — is what dates the negative so
+    `airdates/show_state.RELOOKUP_MISSING_AFTER` can expire it.
+
+    **No `UNIQUE (tvmaze_id)` and no index on it.** Two of our shows legitimately
+    resolving to one TV Maze show is the shape NEU-1146 spent four match tiers
+    on — TMDB models the *Will & Grace* revival as a separate series where
+    another catalogue keeps it whole — so a unique constraint would fire on
+    correct data and, after ten shows in a row, abort the run. Every access is by
+    `show_id`, which is the primary key directly: one row per show is the table's
+    entire meaning.
+
+    **A pure derived cache.** Nothing here cannot be rebuilt by asking again,
+    which is what makes the escape hatch a bare `DELETE FROM
+    catalog.airdate_show_state` — see `docs/migration/README.md`.
+    """
+
+    __tablename__ = "airdate_show_state"
+    __table_args__ = ({"schema": SCHEMA},)
+
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), primary_key=True
+    )
+    # NULL is the negative result, dated by `resolved_at` — see the docstring.
+    tvmaze_id: Mapped[int | None] = mapped_column(Integer)
+    # When we last asked the oracle about this show, whichever answer it gave.
+    resolved_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+
 class ShowGenre(Base):
     __tablename__ = "show_genre"
     __table_args__ = (

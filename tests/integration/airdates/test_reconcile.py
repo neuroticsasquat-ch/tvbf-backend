@@ -25,22 +25,29 @@ class FakeOracle:
 
     Keyed by our external id so the lookup half is exercised rather than
     bypassed: a show whose id is absent here is one TV Maze has never heard of,
-    which is the ordinary case the client answers `None` for.
+    which is the ordinary case the client answers `None` for. Each entry is
+    minted a TV Maze id, because since NEU-1148 that id is stored — a string
+    stand-in would not survive the integer column.
+
+    `get_show_episodes` answers `None` for an id TV Maze does not serve, which
+    is the signal a cached link has gone stale, and `[]` for one it serves with
+    no episodes.
     """
 
     def __init__(self, by_external_id: dict[str, list[TVMazeEpisode]]):
-        self._by_external_id = by_external_id
+        self._ids = {external: index for index, external in enumerate(by_external_id, start=1)}
+        self._episodes = {self._ids[external]: eps for external, eps in by_external_id.items()}
         self.lookups = 0
 
     async def lookup_show(self, *, imdb_id, tvdb_id):
         self.lookups += 1
         for value in (imdb_id, tvdb_id):
-            if value is not None and str(value) in self._by_external_id:
-                return str(value)
+            if value is not None and str(value) in self._ids:
+                return self._ids[str(value)]
         return None
 
     async def get_show_episodes(self, show_id):
-        return self._by_external_id[show_id]
+        return self._episodes.get(show_id)
 
 
 @pytest.fixture
@@ -338,6 +345,41 @@ class TestThePass:
             )
         ).scalar_one()
         assert run.shows_failed == 3
+
+    async def test_the_second_run_spends_no_lookups_at_all(self, session, user):
+        """AC 1, and the whole ticket: a show resolved once is not looked up
+        again, so the pass settles at one TV Maze request per show. `lookups`
+        counts what the oracle was actually asked — the counter on the result is
+        the same number, reported so a production run can be read the same way."""
+        await _seed_show(
+            session, show_id=827, imdb_id="tt827", dates={1: ["2023-05-04", "2023-05-11"]}
+        )
+        session.add(am.UserShowWatch(user_id=user.id, show_id=827))
+        await session.commit()
+        oracle = FakeOracle(
+            {"tt827": [_oracle_episode(1, 1, "2023-05-05"), _oracle_episode(1, 2, "2023-05-12")]}
+        )
+
+        _, first = await _run(oracle, session=session)
+        _, second = await _run(oracle, session=session)
+
+        assert (first.lookups_spent, first.links_reused) == (1, 0)
+        assert (second.lookups_spent, second.links_reused) == (0, 1)
+        assert oracle.lookups == 1
+
+    async def test_a_show_with_no_counterpart_is_not_asked_about_twice(self, session, user):
+        """AC 2's first half. The ~500 shows TV Maze has never heard of are most
+        of the saving, and re-looking them up nightly would give it back."""
+        await _seed_show(session, show_id=828, imdb_id="tt828", dates={1: ["2023-05-04"]})
+        session.add(am.UserShowWatch(user_id=user.id, show_id=828))
+        await session.commit()
+        oracle = FakeOracle({})
+
+        await _run(oracle, session=session)
+        _, second = await _run(oracle, session=session)
+
+        assert oracle.lookups == 1
+        assert (second.shows_not_found, second.links_reused) == (1, 1)
 
     async def test_the_run_row_is_finalized(self, session, user):
         await _seed_show(session, show_id=826, imdb_id="tt826", dates={1: ["2023-05-04"]})
