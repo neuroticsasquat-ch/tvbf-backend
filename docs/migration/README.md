@@ -41,6 +41,7 @@ pointing at unmapped rows.
 | On-the-day reconciliation (NEU-1051) | `reconcile verify` in the prod container | **before** the drop | ✅ 2026-08-14 — **GO**. Exit 1 with 8 discrepancies, every one a *gain* from one user's app use after the baseline (Ted Lasso +1 watch +1 rating, Lucky +1 watch +1 rating, Arrested Development +9 watches, +13 activity events total); no `LOST` line |
 | Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
 | `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
+| Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ⬜ not yet run. Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
 
 
 ## Dropping `tvmaze` (NEU-1051)
@@ -461,6 +462,103 @@ Four things about it are worth knowing before running it in production:
 Re-run the pass after any later ingest or catalog delta: a delta that adds a
 season to a matched show on a number a copied row still holds is a fresh
 duplicate, and there is no watermark to make that a one-shot.
+
+## Retiring the TV Maze orphan rows (NEU-1146)
+
+The pass that ends the migration. Everything before it moved user history onto
+TMDB-sourced rows where the *exact* key paired; this one handles everything that
+key could not reach, and then deletes what has no counterpart at all — **user
+rows included**. It is the only pass here that destroys watch records on purpose,
+and [ADR-0012](../adr/0012-the-catalog-is-sole-sourced-from-tmdb.md) is the
+decision that permits it.
+
+**Read the report first. It is not optional, and it is the artifact of record.**
+
+```bash
+# safe against production: writes nothing, needs no TMDB credential
+task retire:orphans:report > neu-1146-report-$(date -u +%Y%m%dT%H%M%SZ).json
+```
+
+Three things in it decide whether to proceed:
+
+1. **`losses`** — every user row that would be deleted rather than moved, per
+   user, per show, with episode title and air date, split by `disposition`.
+   `deduplication` means the user already holds a row on the surviving twin, so
+   one viewing keeps one row and **nothing is lost**; `genuine_loss` means TMDB
+   does not model that content as an episode of that series. Folding the two
+   together over-reports the loss by roughly the count of two-parter halves — the
+   2026-08-14 measurement was 109 deleted watch rows of which only ~95 were real.
+   Diff this list against the spec's §6 and **commit the copy the run printed**,
+   not the spec's; the figures move as deltas land.
+2. **`links`** — every show link tier 2 would make, worst first. There were 130
+   against production, which is more than anyone will review by hand and does not
+   need to be: for an orphan carrying no user rows, tier 2 and tier 3 end in the
+   same place (the row is deleted either way), so **only rows with
+   `user_touched > 0` need scrutiny**. There was exactly one — Will & Grace
+   `549 → 1064267`, offset 8.
+3. **`rejections`** — why rows reached tier 3, split by reason rather than folded
+   into one bucket: ambiguous on the orphan side, ambiguous on the ingested side,
+   blank title after folding, no counterpart in the show.
+
+Then capture a fresh reconciliation baseline, run a smoke pass, and run it:
+
+```bash
+task reconcile:capture > neu-1146-pre-run-baseline.json   # immediately before
+task retire:orphans -- --limit 100                        # smoke run
+task retire:orphans
+```
+
+`--limit` rounds **up to a show boundary** — a show is one transaction and one
+link resolution — so a limit of 100 landing on Saturday Night Live retires all 89
+of its orphans. It also skips the season and show phases entirely, because a
+season is only deletable once its episodes are gone and a partial pass has not
+established that.
+
+Five things to know before running it in production:
+
+1. **`reconcile:verify` will not come back clean, and that is the design.** Three
+   expected discrepancy classes, every one of which must be confirmed
+   line-by-line against the report: **losses** (the `genuine_loss` rows),
+   **de-duplications** (the `deduplication` rows), and **gains** — this is the one
+   pass that *creates* `app` rows, adding a show to a user's My Shows when their
+   history moves to a series they did not track, plus whatever ordinary app use
+   has added since the baseline. **A `LOST` line that is not on the report's loss
+   list is a stop.**
+2. **It is not reversible.** The pre-drop `tvmaze` dump is the only source for the
+   deleted catalog rows and it cannot restore `app` rows at all. What can is
+   `app.watch_archive` — a human-readable snapshot of every watch and rating, no
+   foreign keys, unaffected by the schema drop. Recovery is by hand, from there.
+3. **Criterion 7 is a query, and the frontend half waits on it.** After the pass,
+   `catalog.episode`, `catalog.season` and `catalog.show` must hold **zero** rows
+   with `tmdb_id IS NULL`; the run says so itself and logs a warning naming what
+   survived if not. The TVmaze CC BY-SA credit only comes out of
+   `tvbf-frontend`'s footer once this holds in production.
+4. **Re-run it after any later ingest or delta.** There is no watermark — a row
+   leaves the work list by being re-pointed or deleted — and a delta can add an
+   ingested episode that gives a fresh orphan a twin. Tier 0 found 880 such rows
+   on 2026-08-14 that had accrued since NEU-1126 ran two days earlier, which is
+   the same property `season_dedupe` carries and the reason tier 0 exists here at
+   all rather than being assumed spent.
+5. **A show it could not delete is reported, not worked around.**
+   `import_ne.show_resolution` references `catalog.show` with **NO ACTION**, and
+   those staging rows are an import audit trail rather than ours to rewrite — so
+   a referenced orphan show is skipped and named in `shows_kept_referenced`. The
+   same applies to a show still holding catalog rows, which would otherwise
+   cascade over ingested episodes.
+
+The 2026-08-14 pre-run measurement, for diffing against whatever the run prints:
+
+| Tier | Rule | Orphans | User-touched |
+| -- | -- | --: | --: |
+| 0 | Exact `(season, number)`, 1:1 | 880 | 0 |
+| 1 | Same show, folded title unique both sides | 116,923 | 64 |
+| 2 | Cross-show, `(season − offset, episode_number)` | 4,161 | 17 |
+| 2b | Title fallback inside a linked pair | 53 | 0 |
+| 3 | **Delete** | 660,138 | 108 |
+
+At row grain: 82 watch rows move, 109 watch rows and 1 rating are deleted (14 of
+them de-duplications, ~95 genuine losses), and 1 `user_show_watch` row is
+created.
 
 ## Credits backfill (NEU-1127)
 

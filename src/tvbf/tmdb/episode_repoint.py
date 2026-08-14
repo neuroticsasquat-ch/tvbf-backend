@@ -135,6 +135,8 @@ from typing import Any
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.tmdb import user_history
+
 log = logging.getLogger(__name__)
 
 # The floor and its refusal were `show_prune`'s until NEU-1051 deleted that
@@ -247,68 +249,27 @@ _NOT_BLOCKED = """
     )
 """
 
-# The three write sites. `_NOT_BLOCKED` withholds a whole person's rows when any
-# one of them would collide; the per-table `NOT EXISTS` stays as the backstop that
-# keeps a constraint violation from taking the batch down if the two disagree.
-_REPOINT_WATCH = text(f"""
-    UPDATE app.user_episode_watch w
-       SET episode_id = m.survivor_id
-      FROM unnest(cast(:doomed AS bigint[]), cast(:survivors AS bigint[]))
-             AS m(doomed_id, survivor_id)
-     WHERE w.episode_id = m.doomed_id
-       AND NOT EXISTS (
-             SELECT 1 FROM app.user_episode_watch x
-              WHERE x.user_id = w.user_id AND x.episode_id = m.survivor_id
-           )
-       AND {_NOT_BLOCKED.format(owner="w.user_id")}
-""")
-
-_REPOINT_RATING = text(f"""
-    UPDATE app.user_episode_rating r
-       SET episode_id = m.survivor_id
-      FROM unnest(cast(:doomed AS bigint[]), cast(:survivors AS bigint[]))
-             AS m(doomed_id, survivor_id)
-     WHERE r.episode_id = m.doomed_id
-       AND NOT EXISTS (
-             SELECT 1 FROM app.user_episode_rating x
-              WHERE x.user_id = r.user_id AND x.episode_id = m.survivor_id
-           )
-       AND {_NOT_BLOCKED.format(owner="r.user_id")}
-""")
-
-# `season_number` is compared with IS NOT DISTINCT FROM because
-# `uq_activity_event` is NULLS NOT DISTINCT — two episode events with a NULL
-# season number do conflict, where a plain `=` would decide they do not and let
-# the UPDATE raise.
-_REPOINT_ACTIVITY = text(f"""
-    UPDATE app.activity_event a
-       SET target_id = m.survivor_id
-      FROM unnest(cast(:doomed AS bigint[]), cast(:survivors AS bigint[]))
-             AS m(doomed_id, survivor_id)
-     WHERE a.target_type = 'episode'
-       AND a.target_id = m.doomed_id
-       AND NOT EXISTS (
-             SELECT 1 FROM app.activity_event x
-              WHERE x.actor_id = a.actor_id
-                AND x.verb = a.verb
-                AND x.target_type = 'episode'
-                AND x.target_id = m.survivor_id
-                AND x.season_number IS NOT DISTINCT FROM a.season_number
-           )
-       AND {_NOT_BLOCKED.format(owner="a.actor_id")}
-""")
+# The three write sites, built from the shared machinery in `user_history` —
+# NEU-1146 extracted them there so its own pass could not drift from this one on
+# which uniqueness constraint each table carries. `_NOT_BLOCKED` withholds a
+# whole person's rows when any one of them would collide; the per-table
+# `NOT EXISTS` inside each statement stays as the backstop that keeps a
+# constraint violation from taking the batch down if the two ever disagree.
+#
+# The withholding is this pass's policy and not the shared module's: NEU-1146
+# reverses it, deleting the redundant row where this one keeps it (§4.2). That
+# is exactly why `extra` is injected rather than baked in.
+_WRITES = user_history.episode_statements(lambda owner: _NOT_BLOCKED.format(owner=owner))
+_REPOINT_WATCH = _WRITES.watch
+_REPOINT_RATING = _WRITES.rating
+_REPOINT_ACTIVITY = _WRITES.activity
 
 # `_STILL_REFERENCED` is both the delete's guard and the pass's honesty: a copy
 # whose user rows could not move keeps its row, so nothing is deleted out from
 # under a watch record. The predicates from `_CANDIDATES` are re-asserted for the
 # reason `season_dedupe._DELETE` re-asserts its own — this is the statement that
 # destroys data no feed can restore.
-_STILL_REFERENCED = """
-    EXISTS (SELECT 1 FROM app.user_episode_watch w WHERE w.episode_id = e.id)
- OR EXISTS (SELECT 1 FROM app.user_episode_rating r WHERE r.episode_id = e.id)
- OR EXISTS (SELECT 1 FROM app.activity_event a
-             WHERE a.target_type = 'episode' AND a.target_id = e.id)
-"""
+_STILL_REFERENCED = user_history.EPISODE_STILL_REFERENCED
 
 _DELETE = text(f"""
     DELETE FROM catalog.episode e
@@ -550,8 +511,10 @@ async def repoint_episodes(
             "blocked_users": [pair.user_id for pair in blocked_pairs],
         }
 
-        moved_watches = await db.execute(_REPOINT_WATCH, params)
-        moved_ratings = await db.execute(_REPOINT_RATING, params)
+        # `RETURNING` on the first two, so their counts come from the rows
+        # themselves; the activity statement has none and still reports rowcount.
+        moved_watches = len((await db.execute(_REPOINT_WATCH, params)).all())
+        moved_ratings = len((await db.execute(_REPOINT_RATING, params)).all())
         moved_activity = await db.execute(_REPOINT_ACTIVITY, params)
         deleted = await db.execute(_DELETE, {"doomed": doomed})
         still_referenced = (await db.execute(_BLOCKED, {"doomed": doomed})).scalar_one()
@@ -575,8 +538,8 @@ async def repoint_episodes(
         after = doomed[-1]
         consumed += len(doomed)
         episodes_deleted += deleted.rowcount  # type: ignore[attr-defined]
-        watches += moved_watches.rowcount  # type: ignore[attr-defined]
-        ratings += moved_ratings.rowcount  # type: ignore[attr-defined]
+        watches += moved_watches
+        ratings += moved_ratings
         activity += moved_activity.rowcount  # type: ignore[attr-defined]
         blocked += still_referenced
         batches += 1
@@ -584,8 +547,8 @@ async def repoint_episodes(
             "batch %d: moved %d watch(es), %d rating(s), %d event(s); deleted %d "
             "episode(s) (%d total), kept %d still referenced",
             batches,
-            moved_watches.rowcount,  # type: ignore[attr-defined]
-            moved_ratings.rowcount,  # type: ignore[attr-defined]
+            moved_watches,
+            moved_ratings,
             moved_activity.rowcount,  # type: ignore[attr-defined]
             deleted.rowcount,  # type: ignore[attr-defined]
             episodes_deleted,
