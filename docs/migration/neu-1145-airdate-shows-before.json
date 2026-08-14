@@ -1,0 +1,1132 @@
+{
+  "shows": [
+    {
+      "matched": [
+        {
+          "first_air_date": "2023-05-04",
+          "name": "Silo",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2026-09-03",
+              "episode": 10,
+              "name": "Troy",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-27",
+              "episode": 9,
+              "name": "Farewell",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-20",
+              "episode": 8,
+              "name": "Gray Goo",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-13",
+              "episode": 7,
+              "name": "Radio",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-06",
+              "episode": 6,
+              "name": "The Drive",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-30",
+              "episode": 5,
+              "name": "Memory",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-23",
+              "episode": 4,
+              "name": "Whatever You Do, Don't Go Home",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-16",
+              "episode": 3,
+              "name": "A Dark Web",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-09",
+              "episode": 2,
+              "name": "It's All Good",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-02",
+              "episode": 1,
+              "name": "Who Are You?",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2025-01-16",
+              "episode": 10,
+              "name": "Into the Fire",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2025-01-09",
+              "episode": 9,
+              "name": "The Safeguard",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2025-01-02",
+              "episode": 8,
+              "name": "The Book of Quinn",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-12-26",
+              "episode": 7,
+              "name": "The Dive",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-12-19",
+              "episode": 6,
+              "name": "Barricades",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-12-12",
+              "episode": 5,
+              "name": "Descent",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-12-05",
+              "episode": 4,
+              "name": "The Harmonium",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-11-26",
+              "episode": 3,
+              "name": "Solo",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-11-21",
+              "episode": 2,
+              "name": "Order",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2024-11-14",
+              "episode": 1,
+              "name": "The Engineer",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-06-29",
+              "episode": 10,
+              "name": "Outside",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-06-22",
+              "episode": 9,
+              "name": "The Getaway",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-06-15",
+              "episode": 8,
+              "name": "Hanna",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-06-08",
+              "episode": 7,
+              "name": "The Flamekeepers",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-06-01",
+              "episode": 6,
+              "name": "The Relic",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-25",
+              "episode": 5,
+              "name": "The Janitor's Boy",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-18",
+              "episode": 4,
+              "name": "Truth",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-11",
+              "episode": 3,
+              "name": "Machines",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-04",
+              "episode": 2,
+              "name": "Holston's Pick",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-04",
+              "episode": 1,
+              "name": "Freedom Day",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 38052,
+          "tmdb_first_air_date": null
+        },
+        {
+          "first_air_date": "2017-09-15",
+          "name": "Silo",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2017-10-06",
+              "episode": 4,
+              "name": "Episode 4",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2017-09-29",
+              "episode": 3,
+              "name": "Episode 3",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2017-09-22",
+              "episode": 2,
+              "name": "Episode 2",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2017-09-15",
+              "episode": 1,
+              "name": "Episode 1",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 1169683,
+          "tmdb_first_air_date": null
+        }
+      ],
+      "requested": "Silo"
+    },
+    {
+      "matched": [
+        {
+          "first_air_date": "2003-04-08",
+          "name": "Lucky",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2003-07-01",
+              "episode": 13,
+              "name": "It's in the Stars",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-06-24",
+              "episode": 12,
+              "name": "Money on Your Back",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-06-17",
+              "episode": 11,
+              "name": "The Dating Game",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-06-10",
+              "episode": 10,
+              "name": "Leaving Las Vegas",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-06-03",
+              "episode": 9,
+              "name": "Lie, Cheat, and Deal",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-05-27",
+              "episode": 8,
+              "name": "The Method",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-05-20",
+              "episode": 7,
+              "name": "Savant",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-05-13",
+              "episode": 6,
+              "name": "Something for Everyone",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-05-06",
+              "episode": 5,
+              "name": "The Tell",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-04-29",
+              "episode": 4,
+              "name": "Come Lie With Me",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-04-22",
+              "episode": 3,
+              "name": "Up the Steaks",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-04-15",
+              "episode": 2,
+              "name": "Calling Dr. Con",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2003-04-08",
+              "episode": 1,
+              "name": "Pilot",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 33867,
+          "tmdb_first_air_date": null
+        },
+        {
+          "first_air_date": "2022-12-27",
+          "name": "Lucky!",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2022-12-27",
+              "episode": 8,
+              "name": "And Then I Was Gone",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 7,
+              "name": "Ringmaster",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 6,
+              "name": "Four Kings",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 5,
+              "name": "The Show",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 4,
+              "name": "Enemy.  Friend.  Comrade.",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 3,
+              "name": "The Talented Mr Ferrari",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 2,
+              "name": "The Constructors",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2022-12-27",
+              "episode": 1,
+              "name": "Forged in War",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 66045,
+          "tmdb_first_air_date": null
+        },
+        {
+          "first_air_date": "2026-07-14",
+          "name": "Lucky",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2026-08-18",
+              "episode": 7,
+              "name": "All Good Things",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-11",
+              "episode": 6,
+              "name": "Wherever You Go, There You Are",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-04",
+              "episode": 5,
+              "name": "Are We Bad People?",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-28",
+              "episode": 4,
+              "name": "Too Close to See It",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-21",
+              "episode": 3,
+              "name": "Read the Room",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-14",
+              "episode": 2,
+              "name": "Make 'em Dance",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-07-14",
+              "episode": 1,
+              "name": "No Shortcuts",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 81228,
+          "tmdb_first_air_date": null
+        },
+        {
+          "first_air_date": "2007-11-04",
+          "name": "Lucky",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2008-08-10",
+              "episode": 41,
+              "name": "Episode 41",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-08-03",
+              "episode": 40,
+              "name": "Episode 40",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-07-27",
+              "episode": 39,
+              "name": "Episode 39",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-07-20",
+              "episode": 38,
+              "name": "Episode 38",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-07-13",
+              "episode": 37,
+              "name": "Episode 37",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-07-06",
+              "episode": 36,
+              "name": "Episode 36",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-06-29",
+              "episode": 35,
+              "name": "Episode 35",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-06-22",
+              "episode": 34,
+              "name": "Episode 34",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-06-15",
+              "episode": 33,
+              "name": "Episode 33",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-06-08",
+              "episode": 32,
+              "name": "Episode 32",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-06-01",
+              "episode": 31,
+              "name": "Episode 31",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-05-25",
+              "episode": 30,
+              "name": "Episode 30",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-05-18",
+              "episode": 29,
+              "name": "Episode 29",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-05-11",
+              "episode": 28,
+              "name": "Episode 28",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-05-04",
+              "episode": 27,
+              "name": "Episode 27",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-04-27",
+              "episode": 26,
+              "name": "Episode 26",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-04-20",
+              "episode": 25,
+              "name": "Episode 25",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-04-13",
+              "episode": 24,
+              "name": "Episode 24",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-04-06",
+              "episode": 23,
+              "name": "Episode 23",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-03-30",
+              "episode": 22,
+              "name": "Episode 22",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-03-23",
+              "episode": 21,
+              "name": "Episode 21",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-03-16",
+              "episode": 20,
+              "name": "Mannat ka Kuan Part 2",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-03-09",
+              "episode": 19,
+              "name": "Mannat ka Kuan Part 1",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-03-02",
+              "episode": 18,
+              "name": "Nagin Part 3",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-02-24",
+              "episode": 17,
+              "name": "Nagin Part 2",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-02-17",
+              "episode": 16,
+              "name": "Bhediya Part 4 and Nagin Part 1",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-02-10",
+              "episode": 15,
+              "name": "Bhediya Part 3",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-02-03",
+              "episode": 14,
+              "name": "Bhediya Part 2",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-01-27",
+              "episode": 13,
+              "name": "Bhediya Part 1",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2008-01-20",
+              "episode": 12,
+              "name": "Khushi ka Phool",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 1052315,
+          "tmdb_first_air_date": null
+        },
+        {
+          "first_air_date": "2021-11-04",
+          "name": "\u00abLucky\u00bb",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2021-12-16",
+              "episode": 8,
+              "name": "Episode 8",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-12-09",
+              "episode": 7,
+              "name": "Episode 7",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-12-02",
+              "episode": 6,
+              "name": "Episode 6",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-11-25",
+              "episode": 5,
+              "name": "Episode 5",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-11-18",
+              "episode": 4,
+              "name": "Episode 4",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-11-11",
+              "episode": 3,
+              "name": "Episode 3",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-11-04",
+              "episode": 2,
+              "name": "Episode 2",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-11-04",
+              "episode": 1,
+              "name": "Episode 1",
+              "offset_applied": 0,
+              "season": 1,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 1113696,
+          "tmdb_first_air_date": null
+        }
+      ],
+      "requested": "Lucky"
+    },
+    {
+      "matched": [
+        {
+          "first_air_date": "2020-08-14",
+          "name": "Ted Lasso",
+          "offsets": {},
+          "recent_episodes": [
+            {
+              "air_date": "2026-10-06",
+              "episode": 10,
+              "name": "Episode 10",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-09-29",
+              "episode": 9,
+              "name": "Episode 9",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-09-22",
+              "episode": 8,
+              "name": "Episode 8",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-09-15",
+              "episode": 7,
+              "name": "Episode 7",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-09-08",
+              "episode": 6,
+              "name": "Don't Jump Around Much Anymore",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-09-01",
+              "episode": 5,
+              "name": "Riches of Embarrassment",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-25",
+              "episode": 4,
+              "name": "Greyhounds' Day Off",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-18",
+              "episode": 3,
+              "name": "Richmond's Got Talent",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-11",
+              "episode": 2,
+              "name": "Curiouser and Curiouser!",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2026-08-04",
+              "episode": 1,
+              "name": "Home",
+              "offset_applied": 0,
+              "season": 4,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-30",
+              "episode": 12,
+              "name": "So Long, Farewell",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-23",
+              "episode": 11,
+              "name": "Mom City",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-16",
+              "episode": 10,
+              "name": "International Break",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-09",
+              "episode": 9,
+              "name": "La Locker Room Aux Folles",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-05-02",
+              "episode": 8,
+              "name": "We'll Never Have Paris",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-04-25",
+              "episode": 7,
+              "name": "The Strings That Bind Us",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-04-18",
+              "episode": 6,
+              "name": "Sunflowers",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-04-11",
+              "episode": 5,
+              "name": "Signs",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-04-04",
+              "episode": 4,
+              "name": "Big Week",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-03-28",
+              "episode": 3,
+              "name": "4-5-1",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-03-21",
+              "episode": 2,
+              "name": "(I Don't Want to Go to) Chelsea",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2023-03-14",
+              "episode": 1,
+              "name": "Smells Like Mean Spirit",
+              "offset_applied": 0,
+              "season": 3,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-10-08",
+              "episode": 12,
+              "name": "Inverting the Pyramid of Success",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-10-01",
+              "episode": 11,
+              "name": "Midnight Train to Royston",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-09-24",
+              "episode": 10,
+              "name": "No Weddings and a Funeral",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-09-17",
+              "episode": 9,
+              "name": "Beard After Hours",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-09-10",
+              "episode": 8,
+              "name": "Man City",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-09-03",
+              "episode": 7,
+              "name": "Headspace",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-08-27",
+              "episode": 6,
+              "name": "The Signal",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            },
+            {
+              "air_date": "2021-08-20",
+              "episode": 5,
+              "name": "Rainbow",
+              "offset_applied": 0,
+              "season": 2,
+              "tmdb_air_date": null
+            }
+          ],
+          "show_id": 44458,
+          "tmdb_first_air_date": null
+        }
+      ],
+      "requested": "Ted Lasso"
+    }
+  ],
+  "ticket": "NEU-1145"
+}
