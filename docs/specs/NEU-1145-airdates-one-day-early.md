@@ -338,13 +338,50 @@ that obligation, and NEU-1147 removed the TVmaze credit from the footer on
 2026-08-12. This ticket re-admits a TVmaze-derived value, so the credit returns.
 
 The extraction is deliberately minimised to match: we store **one integer per
-`(show, season)`** and never copy TVmaze's dates, titles, numbering or any other
-field. The catalog itself remains free of TV Maze rows, which is what NEU-1146
-is actually for — the operator's stated objection was 800k phantom rows, not
-attribution.
+`(show, season)`** — plus, since NEU-1148, **one show id per show** — and never
+copy TVmaze's dates, titles, numbering or any other field. The catalog itself
+remains free of TV Maze rows, which is what NEU-1146 is actually for — the
+operator's stated objection was 800k phantom rows, not attribution.
 
 The frontend half restores a trimmed TVmaze credit alongside the TMDB one. It is
 a separate ticket in a separate repo (§10).
+
+### 6.1 Amended by NEU-1148 — the cached show id
+
+[NEU-1148](NEU-1148-cache-the-tv-maze-show-id.md) caches the oracle's id for a
+show in `catalog.airdate_show_state`, so the nightly pass stops re-deriving it
+with a `/lookup/shows` request every night. That is a **second integer, per
+show**, taken from TVmaze, and the paragraph above is amended to say so rather
+than left contradicting the code. The amended position, in order of what it
+rests on:
+
+1. **The attribution condition is already satisfied.** The credit is in the SPA
+   footer. Even on the most conservative reading — that a share-alike obligation
+   attaches to an identifier — we are compliant, and nothing turns on the next
+   point.
+2. **A show id is an identifier, not creative expression.** It is a bare fact
+   about which record corresponds to which series, carrying none of the authored
+   content the licence exists to govern.
+3. **The extraction is still minimised, and the principle still binds.** One
+   offset per `(show, season)`, one id per show, and nothing else — no dates, no
+   titles, no numbering, no synopses, no images. The reason to keep minimising is
+   not licence compliance alone: NEU-1146 deleted 782k rows because the operator
+   objected to phantom rows in the catalog, and that objection is independent of
+   any licence.
+
+**The spine/sidecar distinction, made explicit.** "The catalog itself remains
+free of TV Maze rows" above now has two tables sitting awkwardly beside it. The
+line actually drawn — by ADR-0012, by NEU-1148 §2, and by `air_date_offset`
+before either — is:
+
+> `catalog.show`, `catalog.season` and `catalog.episode` hold no TV
+> Maze-derived value at any grain. Sidecar tables in the `catalog` schema
+> (`air_date_offset`, `airdate_show_state`) hold derived integers, and that is a
+> different thing from the catalog holding TV Maze rows.
+
+Making it explicit is what stops a later reader taking this section as "no TV
+Maze value may exist inside schema `catalog`" and either breaking the rule
+silently or being blocked by it wrongly.
 
 ---
 

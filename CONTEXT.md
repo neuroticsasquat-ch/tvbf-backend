@@ -44,6 +44,18 @@ _Avoid_: orphan, stale row
 Marking a mirrored row as gone upstream instead of removing it — `show.deleted_upstream_at`. A tombstoned show is hidden from discovery (browse, search) but stays fully functional for users already tracking it, and is resurrected if it reappears upstream. Not a synonym for phantom: a phantom is the situation, a tombstone is one of the two responses to it.
 _Avoid_: soft delete, archived, disabled
 
+**Spine** / **Sidecar**:
+The spine is `catalog.show`, `catalog.season` and `catalog.episode` — the three tables holding catalog *content*, sole-sourced from TMDB (ADR-0012). A sidecar is a table in the `catalog` schema holding derived facts *about* spine rows rather than content of its own: `air_date_offset`, `airdate_show_state`, `rate_budget`, `ingest_run`. The line is load-bearing rather than tidy: a value derived from a non-TMDB source may live in a sidecar and may never touch the spine, which is what lets the airdate correction exist without reopening what NEU-1146 closed.
+_Avoid_: main tables, metadata tables
+
+**Oracle**:
+A read-only third-party source consulted to answer one narrow question, and never mirrored. TV Maze is the airdate oracle: we ask it about a show's episode dates, keep one integer per `(show, season)` plus one cached show id per show, and store nothing else it returns. An oracle is not an upstream — no feed, no watermark, no delta, no pass, no rows in the spine — but it does share the rate budget, keyed by source like any other.
+_Avoid_: source, upstream, provider, second catalog
+
+**Airdate offset**:
+How many days a season's mirrored airdates are shifted from TMDB's, so `air_date` means the date a US Eastern viewer saw. One integer per `(show, season)`, established against the oracle by a nightly pass that refuses whenever the evidence is not unanimous — a refusal being the absence of a verdict, not a verdict of zero. `tmdb_air_date` holds the uncorrected upstream value and is NULL wherever no correction was applied.
+_Avoid_: timezone fix, date correction, airdate patch
+
 ### People and credits
 
 **Person**:
