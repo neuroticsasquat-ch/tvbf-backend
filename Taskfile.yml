@@ -152,6 +152,16 @@ tasks:
         curl -sk -X POST https://api.tvbf.localhost/admin/catalog-update
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  reconcile:airdates:
+    # The *manual* trigger. In prod this runs as a second Coolify scheduled
+    # task on the same shape as the catalog delta, with its own
+    # `HEALTHCHECK_AIRDATE_URL` deadman — never a shared one. Exit 0 = the pass
+    # ran and succeeded; there is no status route of its own, so poll the run
+    # through `task ingest:status -- <uuid>`.
+    desc: Establish per-season airdate offsets against the TV Maze oracle (idempotent; NEU-1145)
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.airdate_reconcile
+
   archive:watches:
     desc: Snapshot every watch and rating into app.watch_archive (idempotent)
     cmds:

@@ -11,6 +11,7 @@ import pytest
 from tvbf.rate_budget import (
     BUCKETS,
     TMDB_BUCKET,
+    TVMAZE_BUCKET,
     Bucket,
     Budget,
     DatabaseRateLimiter,
@@ -29,11 +30,12 @@ OTHER_BUDGET = Budget(18, 10.0)
 def second_source(monkeypatch):
     """Register a second upstream for the duration of one test.
 
-    TMDB has been the only registered source since NEU-1050 retired TV Maze, but
-    every per-source property here — a bucket of its own, a limiter of its own,
-    no divergence warning across sources — is about what happens when there are
-    two. A registry of one cannot assert any of them, and the next upstream to
-    be added is exactly when they have to still hold.
+    The registry holds TMDB and — since NEU-1145 re-registered it for the
+    airdate oracle — TV Maze, but every per-source property here (a bucket of
+    its own, a limiter of its own, no divergence warning across sources) is
+    about what happens when a source is *added*. Registering a fixture source
+    rather than leaning on whichever two happen to be live is what keeps these
+    assertions about the mechanism instead of about today's registry.
     """
     monkeypatch.setitem(
         BUCKETS, OTHER, Bucket(table="catalog.rate_budget", key_column="source", key=OTHER)
@@ -69,8 +71,14 @@ async def test_rate_limiter_acquires_n_slots_at_once():
 
 
 def test_every_registered_source_names_a_distinct_bucket():
-    """Two sources sharing a row would silently merge their ceilings."""
-    assert BUCKETS == {"tmdb": TMDB_BUCKET}
+    """Two sources sharing a row would silently merge their ceilings.
+
+    TMDB fills the mirror; TV Maze is read by the airdate oracle alone
+    (NEU-1145) and fills nothing. They are separate ceilings precisely because
+    they are separate upstreams, and a shared row would let a nightly oracle
+    pass eat a multi-hour ingest's budget.
+    """
+    assert BUCKETS == {"tmdb": TMDB_BUCKET, "tvmaze": TVMAZE_BUCKET}
     rows = {(b.table, b.key) for b in BUCKETS.values()}
     assert len(rows) == len(BUCKETS)
 

@@ -35,6 +35,19 @@ class Settings(BaseSettings):
     tmdb_rate_limit_window_seconds: int = Field(default=1, alias="TMDB_RATE_LIMIT_WINDOW_SECONDS")
     tmdb_retry_max_attempts: int = Field(default=5, alias="TMDB_RETRY_MAX_ATTEMPTS")
 
+    # TV Maze, which is not a mirror source any more (NEU-1050) and is read by
+    # exactly one thing: the airdate oracle (NEU-1145). Keyless and free — there
+    # is no credential to configure, which is half of why it was chosen over
+    # Trakt. 18 calls per 10 seconds is TV Maze's published ~20/10s with room to
+    # spare, and is the calibration ADR-0006 was validated at, restored token
+    # for token.
+    tvmaze_base_url: str = Field(default="https://api.tvmaze.com", alias="TVMAZE_BASE_URL")
+    tvmaze_rate_limit_requests: int = Field(default=18, alias="TVMAZE_RATE_LIMIT_REQUESTS")
+    tvmaze_rate_limit_window_seconds: int = Field(
+        default=10, alias="TVMAZE_RATE_LIMIT_WINDOW_SECONDS"
+    )
+    tvmaze_retry_max_attempts: int = Field(default=5, alias="TVMAZE_RETRY_MAX_ATTEMPTS")
+
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
     )
@@ -51,6 +64,10 @@ class Settings(BaseSettings):
     # running the other goes on covering for it silently. `HEALTHCHECK_DAILY_URL`
     # was the TV Maze daily's and went with it (NEU-1050).
     healthcheck_catalog_url: str | None = Field(default=None, alias="HEALTHCHECK_CATALOG_URL")
+    # The airdate reconciliation's own deadman (NEU-1145). Its own, for the rule
+    # stated above and for no other reason: one check fed by both scheduled
+    # tasks would let either keep it alive while the other quietly stopped.
+    healthcheck_airdate_url: str | None = Field(default=None, alias="HEALTHCHECK_AIRDATE_URL")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 

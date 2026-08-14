@@ -303,8 +303,23 @@ class Show(Base):
     # about one sample.
     in_production: Mapped[bool | None] = mapped_column(Boolean)
 
+    # **Dates as a US Eastern viewer saw them**, not raw upstream: TMDB's own
+    # values, corrected by `catalog.air_date_offset` where one applies
+    # (NEU-1145). `first_air_date` takes **season 1's** offset and
+    # `last_air_date` the offset of the season holding the last dated episode,
+    # because a show's seasons were not all entered by the same contributor —
+    # Ted Lasso's premiere is right and its last-aired date is a day early. See
+    # `catalog/offsets.py`, which owns both rules, and `AirDateOffset` below for
+    # what the offset means.
     first_air_date: Mapped[date | None] = mapped_column(Date)
     last_air_date: Mapped[date | None] = mapped_column(Date)
+    # The uncorrected upstream values, written **only when they differ** from
+    # the columns above — so NULL means "no correction was applied and the
+    # stored value is TMDB's own", which is true of all but a handful of rows.
+    # Same pairing as `Episode.tmdb_air_date`, and it is what makes the
+    # correction idempotent; the reasoning is written out there.
+    tmdb_first_air_date: Mapped[date | None] = mapped_column(Date)
+    tmdb_last_air_date: Mapped[date | None] = mapped_column(Date)
 
     # The browse `language` filter reads this (audit D3): it is the only one of
     # TMDB's three language concepts with exactly one value per show, which the
@@ -454,7 +469,15 @@ class Season(Base):
     name: Mapped[str | None] = mapped_column(Text)
     overview: Mapped[str | None] = mapped_column(Text)
     poster_path: Mapped[str | None] = mapped_column(Text)
+    # **The date this season premiered for a US Eastern viewer** — TMDB's own
+    # value corrected by this season's `catalog.air_date_offset` row where one
+    # applies (NEU-1145). It takes the offset at the same grain the offset is
+    # keyed at, so a corrected season premiere can never contradict the
+    # corrected date of its own first episode on the page that shows both.
     air_date: Mapped[date | None] = mapped_column(Date)
+    # The uncorrected upstream value, written only when it differs. Same pairing
+    # as `Episode.tmdb_air_date`, where the reasoning is written out.
+    tmdb_air_date: Mapped[date | None] = mapped_column(Date)
     vote_average: Mapped[Decimal | None] = mapped_column(Numeric(5, 3))
     # From `seasons[]` on the series payload, not from the season payload itself.
     episode_count: Mapped[int | None] = mapped_column(Integer)
@@ -466,6 +489,14 @@ class Episode(Base):
         UniqueConstraint("tmdb_id", name="uq_episode_tmdb_id"),
         Index("ix_episode_show_id_season_number", "show_id", "season_number"),
         Index("ix_episode_season_id", "season_id"),
+        # Partial, because the predicate it serves is "every row we altered" and
+        # that is a rounding error against ~6.5M episodes. It is what makes the
+        # verification in NEU-1145 §7 and the whole-feature undo cheap.
+        Index(
+            "ix_episode_tmdb_air_date_corrected",
+            "show_id",
+            postgresql_where=text("tmdb_air_date IS NOT NULL"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -489,9 +520,35 @@ class Episode(Base):
     episode_number: Mapped[int] = mapped_column(Integer, nullable=False)
     name: Mapped[str | None] = mapped_column(Text)
     overview: Mapped[str | None] = mapped_column(Text)
+    # **The date this episode became available to a US Eastern viewer** — TMDB's
+    # own `air_date`, corrected by `catalog.air_date_offset` where one applies
+    # (NEU-1145). Not raw upstream, and that is the whole of what this column
+    # means differently since that ticket: TMDB carries one contributor-entered
+    # calendar date per episode and no regional model at all, so a season whose
+    # dates were typed against the US west coast records the Pacific day and
+    # reads a day early for everyone else — measured on 198 Apple TV and 93
+    # Prime Video rows against TV Maze's pre-cutover snapshot.
+    #
+    # Read by Upcoming, Watch Next, the aired filter in `episode_repo` and the
+    # show / season / episode pages, all of which want the viewer's date.
+    #
     # A date and nothing more. TMDB carries no time component, so
     # `tvmaze.episode.airtime` has no counterpart and retires with it (audit §6).
     air_date: Mapped[date | None] = mapped_column(Date)
+    # The uncorrected upstream value, written **only when it differs** from
+    # `air_date` — so NULL means "no correction was applied and `air_date` is
+    # TMDB's own", which is true of essentially every one of the ~6.0M dated
+    # rows and keeps the coverage audit's claim literally true for them.
+    #
+    # It is what makes the correction idempotent rather than a one-way shift.
+    # Every writer sets the pair together from the raw value in hand, so
+    # `air_date = tmdb_air_date + offset` is the invariant: re-running an ingest
+    # cannot double-apply a shift, and a genuine upstream ±1 day change is
+    # picked up rather than mistaken for a correction already made — the failure
+    # a design that re-applied the offset to whatever it found stored has no way
+    # to distinguish. It also makes "every row we altered" an indexed predicate,
+    # and un-doing the feature one UPDATE per grain.
+    tmdb_air_date: Mapped[date | None] = mapped_column(Date)
     runtime: Mapped[int | None] = mapped_column(Integer)
     still_path: Mapped[str | None] = mapped_column(Text)
     production_code: Mapped[str | None] = mapped_column(Text)
@@ -506,6 +563,84 @@ class Episode(Base):
     # join to store one bit.
     screened_theatrically: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("false"), default=False
+    )
+
+
+class AirDateOffset(Base):
+    """How many days one season's mirrored airdates are shifted from TMDB's (NEU-1145).
+
+    TMDB models no regional airdate — measured: an episode object carries a
+    single `air_date` key, and it is identical under every `language` and
+    `region`. What it carries is a calendar date a contributor typed, and for a
+    simultaneous global release "the day it came out" has two defensible
+    answers: 9pm Pacific Thursday is midnight Eastern Friday. Some seasons were
+    entered one way and some the other, which is why the shift splits *within* a
+    single show — Ted Lasso's seasons 1-2 agree with the Eastern date and 3-4 do
+    not — and why nothing on the show row can predict it. A row here records the
+    answer for one season, established against an oracle by
+    `tvbf.airdates.reconcile`.
+
+    **Keyed on `(show_id, season_number)`**, the pair `catalog/seasons.py`
+    already treats as a season's read-path identity, and deliberately not on
+    `season.id`: `episode.season_id` is nullable (`ON DELETE SET NULL`, so a
+    pruned season leaves parentless episodes behind), and `catalog.season`
+    carries no `UNIQUE (show_id, season_number)`, so a doubled season would make
+    an offset keyed on the row ambiguous.
+
+    **A table of its own rather than a column on `catalog.season`**, which is
+    what makes "the TMDB ingest never writes an offset, it only reads one"
+    structural instead of a rule someone has to remember — the same reasoning
+    that keeps `RateBudget` and `IngestRun` in tables of their own.
+
+    `season_number IS NULL` is a show-wide default that any numbered row
+    overrides. **The reconciliation job never writes one**; it exists solely as
+    an operator escape hatch, which is what keeps the table's two possible
+    writers distinguishable by looking at it.
+    """
+
+    __tablename__ = "air_date_offset"
+    __table_args__ = (
+        UniqueConstraint(
+            "show_id",
+            "season_number",
+            name="uq_air_date_offset_show_season",
+            # `NULLS NOT DISTINCT` because the show-wide default *is* a NULL
+            # `season_number`. Under Postgres's default two of them would never
+            # conflict, so an idempotent upsert would insert a second default on
+            # every run and the override rule would stop being well defined.
+            postgresql_nulls_not_distinct=True,
+        ),
+        CheckConstraint(
+            # **Principled, not defensive.** The disagreement this table is
+            # authorised to correct is timezone-shaped, and a timezone artifact
+            # can only ever produce ±1 day. Any other delta is a different
+            # disagreement — an upstream numbering or scheduling error — and
+            # correcting it would make the mirror follow the oracle's schedule
+            # rather than fix TMDB's coast, which is scope creep with no bound.
+            # The job's trust rule refuses those, and this refuses them again at
+            # the one place an operator could enter one by hand.
+            "offset_days IN (-1, 1)",
+            name="ck_air_date_offset_days",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    # NULL is the show-wide default — see the class docstring.
+    season_number: Mapped[int | None] = mapped_column(Integer)
+    # Days to ADD to TMDB's value to get the date a US Eastern viewer saw.
+    offset_days: Mapped[int] = mapped_column(Integer, nullable=False)
+    # How many episodes the verdict rested on. Evidence rather than bookkeeping:
+    # the trust rule requires at least two agreeing episodes, and this is what
+    # lets a reader tell an offset established over 2 episodes from one
+    # established over 30 without re-running the pass. NULL on a hand-entered
+    # row, which is the second way the two writers stay distinguishable.
+    episodes_compared: Mapped[int | None] = mapped_column(Integer)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
     )
 
 
@@ -1223,12 +1358,13 @@ class IngestRun(Base):
             # see the migration, so they get an ordinary validated constraint
             # from here — and must not seed a `person_initial` row.
             #
-            # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034) and
-            # `catalog_update` its daily delta (NEU-1035) — the only two kinds
-            # any live code still writes.
+            # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034),
+            # `catalog_update` its daily delta (NEU-1035) and
+            # `airdate_reconcile` the nightly airdate pass (NEU-1145) — the only
+            # three kinds any live code still writes.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
             "'show_refresh', 'person_update', 'episode_credits_backfill', "
-            "'catalog_initial', 'catalog_update')",
+            "'catalog_initial', 'catalog_update', 'airdate_reconcile')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

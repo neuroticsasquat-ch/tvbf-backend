@@ -28,6 +28,12 @@ here no-ops on `None` rather than treating it as an empty list. Replacing a
 show's AKAs because the caller did not ask for them is the same failure
 `prune_seasons` exists to prevent.
 
+**Airdates are corrected as they are written, never afterwards.** Every date
+this module writes goes through `catalog/offsets.py`, which pairs the corrected
+value with the raw upstream one — see `upsert_series_payload`. It is the only
+value here that is not TMDB's own, and the pairing is what keeps a re-run from
+double-applying a shift.
+
 **Show credits are one entry to many rows; episode credits are one to one.**
 `aggregate_credits` nests `roles[]` / `jobs[]` under a person, so one cast entry
 becomes one `show_cast` row *per character* and one crew entry one `show_crew`
@@ -49,6 +55,13 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
+from tvbf.catalog.offsets import (
+    EMPTY,
+    FIRST_SEASON,
+    OffsetTable,
+    load_offsets_by_tmdb_id,
+    season_of_last_dated,
+)
 from tvbf.tmdb.api_payloads import (
     TMDBAggregateCredits,
     TMDBAggregateCrew,
@@ -295,7 +308,13 @@ def _company_rows(companies: Iterable[TMDBCompany]) -> list[dict[str, Any]]:
     ]
 
 
-async def upsert_show(session: AsyncSession, series: TMDBSeries) -> int:
+async def upsert_show(
+    session: AsyncSession,
+    series: TMDBSeries,
+    *,
+    offsets: OffsetTable = EMPTY,
+    last_dated_season: int | None = None,
+) -> int:
     """Write the series row, returning its **surrogate** id.
 
     `runtime` is absent because it is derived rather than sent: `refresh_runtime`
@@ -303,8 +322,16 @@ async def upsert_show(session: AsyncSession, series: TMDBSeries) -> int:
 
     `is_ended` is absent on purpose: it is a generated column, so writing it
     would be rejected, and that is what stops it drifting from `status`.
+
+    The two air dates take the offset of **the season they derive from** rather
+    than a per-show one — season 1 for the premiere, `last_dated_season` for the
+    last-aired date (NEU-1145 §4.6). Ted Lasso is why: its early seasons carry
+    the Eastern date and its later ones the Pacific, so a blanket per-show shift
+    would move a premiere that is already right.
     """
     ext = series.external_ids
+    first_air_date, tmdb_first_air_date = offsets.pair(series.first_air_date, FIRST_SEASON)
+    last_air_date, tmdb_last_air_date = offsets.pair(series.last_air_date, last_dated_season)
     values: dict[str, Any] = {
         "tmdb_id": series.tmdb_id,
         "name": series.name,
@@ -316,8 +343,10 @@ async def upsert_show(session: AsyncSession, series: TMDBSeries) -> int:
         "adult": series.adult,
         "status": series.status,
         "in_production": series.in_production,
-        "first_air_date": series.first_air_date,
-        "last_air_date": series.last_air_date,
+        "first_air_date": first_air_date,
+        "tmdb_first_air_date": tmdb_first_air_date,
+        "last_air_date": last_air_date,
+        "tmdb_last_air_date": tmdb_last_air_date,
         "original_language": series.original_language,
         "popularity": series.popularity,
         "vote_average": _dec(series.vote_average),
@@ -353,7 +382,7 @@ async def upsert_show(session: AsyncSession, series: TMDBSeries) -> int:
 
 
 async def upsert_seasons(
-    session: AsyncSession, *, show_id: int, series: TMDBSeries
+    session: AsyncSession, *, show_id: int, series: TMDBSeries, offsets: OffsetTable = EMPTY
 ) -> dict[int, int]:
     """Write the show's seasons from `seasons[]`, returning `{tmdb_id: surrogate id}`.
 
@@ -363,20 +392,23 @@ async def upsert_seasons(
     `get_tv_season` response has one. Seasons are therefore created here, and the
     detail blocks are matched to them by `season_number`.
     """
-    rows = [
-        {
-            "tmdb_id": s.tmdb_id,
-            "show_id": show_id,
-            "season_number": s.season_number,
-            "name": s.name,
-            "overview": s.overview,
-            "poster_path": s.poster_path,
-            "air_date": s.air_date,
-            "vote_average": _dec(s.vote_average),
-            "episode_count": s.episode_count,
-        }
-        for s in series.seasons
-    ]
+    rows = []
+    for s in series.seasons:
+        air_date, tmdb_air_date = offsets.pair(s.air_date, s.season_number)
+        rows.append(
+            {
+                "tmdb_id": s.tmdb_id,
+                "show_id": show_id,
+                "season_number": s.season_number,
+                "name": s.name,
+                "overview": s.overview,
+                "poster_path": s.poster_path,
+                "air_date": air_date,
+                "tmdb_air_date": tmdb_air_date,
+                "vote_average": _dec(s.vote_average),
+                "episode_count": s.episode_count,
+            }
+        )
     return await _upsert_by_tmdb_id(session, m.Season, rows)
 
 
@@ -435,6 +467,7 @@ async def upsert_episodes(
     show_id: int,
     episodes: Sequence[TMDBEpisode],
     screened_episode_ids: set[int] | None = None,
+    offsets: OffsetTable = EMPTY,
 ) -> dict[int, int]:
     """Write a show's episodes, returning `{tmdb_id: surrogate id}`.
 
@@ -474,6 +507,7 @@ async def upsert_episodes(
 
     values_list: list[dict[str, Any]] = []
     for ep in deduped.values():
+        air_date, tmdb_air_date = offsets.pair(ep.air_date, ep.season_number)
         row: dict[str, Any] = {
             "tmdb_id": ep.tmdb_id,
             "show_id": show_id,
@@ -482,7 +516,8 @@ async def upsert_episodes(
             "episode_number": ep.episode_number,
             "name": ep.name,
             "overview": ep.overview,
-            "air_date": ep.air_date,
+            "air_date": air_date,
+            "tmdb_air_date": tmdb_air_date,
             "runtime": ep.runtime,
             "still_path": ep.still_path,
             "production_code": ep.production_code,
@@ -1522,6 +1557,22 @@ async def _write_season_networks(
         await session.execute(insert(m.SeasonNetwork).values(list(rows.values())))
 
 
+def _last_dated_season(series: TMDBSeries, episodes: Sequence[TMDBEpisode]) -> int | None:
+    """Which season `show.last_air_date` takes its offset from (NEU-1145 §4.6).
+
+    Both sources are offered to the rule and the later date wins.
+    `last_episode_to_air` is TMDB's own answer and survives a narrow delta that
+    carries no season blocks at all; the payload's episodes cover the case where
+    it is absent, and are the more current of the two when both are present.
+    """
+    candidates = [(ep.season_number, ep.air_date) for ep in episodes]
+    if series.last_episode_to_air is not None:
+        candidates.append(
+            (series.last_episode_to_air.season_number, series.last_episode_to_air.air_date)
+        )
+    return season_of_last_dated(candidates)
+
+
 async def upsert_series_payload(
     session: AsyncSession,
     series: TMDBSeries,
@@ -1553,12 +1604,33 @@ async def upsert_series_payload(
        the runtime because it is a median over the mirrored episodes rather than
        over whatever this one call happened to carry.
 
+    **The airdate correction is applied here, on the way in** (NEU-1145 §4.3).
+    Every date written below is `catalog.air_date_offset`'s answer for the
+    season it belongs to, paired with the raw upstream value in the matching
+    `tmdb_*` column. Correcting at write time is what keeps every reader right
+    without threading a correction through browse, Upcoming, Watch Next, the
+    aired filter and three page types; pairing is what makes it idempotent, so a
+    re-run cannot double-apply and a genuine upstream ±1 day change is picked up
+    rather than swallowed. The offsets are read by `tmdb_id` because the
+    surrogate id they are keyed on is minted by the show write itself, and a
+    show nothing has mirrored yet cannot have one.
+
+    Nothing here ever *writes* an offset. That is `tvbf.airdates.reconcile`'s
+    job, and it being a different module against a different table is what makes
+    the separation structural.
+
     The caller owns the transaction.
     """
     details = _merged_season_details(series, seasons)
     episodes = [ep for detail in details for ep in detail.episodes]
 
-    show_id = await upsert_show(session, series)
+    offsets = await load_offsets_by_tmdb_id(session, tmdb_id=series.tmdb_id)
+    show_id = await upsert_show(
+        session,
+        series,
+        offsets=offsets,
+        last_dated_season=_last_dated_season(series, episodes),
+    )
 
     await _write_countries_and_languages(session, show_id=show_id, series=series)
     network_ids = await _write_lookup_joins(
@@ -1566,7 +1638,7 @@ async def upsert_series_payload(
     )
     await _write_namespaces(session, show_id=show_id, series=series, network_ids=network_ids)
 
-    season_ids = await upsert_seasons(session, show_id=show_id, series=series)
+    season_ids = await upsert_seasons(session, show_id=show_id, series=series, offsets=offsets)
     if prune_seasons:
         await prune_missing_seasons(session, show_id=show_id, payload_season_ids=set(season_ids))
 
@@ -1583,7 +1655,11 @@ async def upsert_series_payload(
     if series.screened_theatrically is not None:
         screened = {e.tmdb_id for e in series.screened_theatrically.results}
     episode_ids = await upsert_episodes(
-        session, show_id=show_id, episodes=episodes, screened_episode_ids=screened
+        session,
+        show_id=show_id,
+        episodes=episodes,
+        screened_episode_ids=screened,
+        offsets=offsets,
     )
     await _write_episode_credits(
         session, show_id=show_id, episodes=episodes, episode_ids=episode_ids
