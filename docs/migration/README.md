@@ -38,7 +38,8 @@ pointing at unmapped rows.
 | Episode-grain re-point (NEU-1126) | `task repoint:episodes` | **after NEU-1046**, before NEU-1047 | ✅ 2026-08-12 — 1,908,378 copied episodes deleted over 382 batches in ~7 min; re-pointed 8,387 watches, 77 ratings, 364 activity events; 0 blocked by collision. 189 user-touched episodes with no TMDB counterpart kept, as designed |
 | Post-repoint acceptance test (NEU-1125) | `task reconcile:verify -- --spine catalog` | **after NEU-1046 + NEU-1047**, gates NEU-1050 and NEU-1051 | ✅ 2026-08-13 — **GO**. Exit 1 with eight discrepancies, every one of them a *gain* traceable to one user's app use after the baseline was taken (11 watches, 2 ratings, 13 events); no `LOST` line, and the null-show bucket empty on both sides. Close-of-window state committed as `neu-1125-post-repoint-snapshot.json` |
 | Credits backfill (NEU-1127) | `task backfill:credits` | after the ingest; **before NEU-1051** | ✅ 2026-08-13 — run in production, confirmed by the operator. This row is the record NEU-1127 existed to create; the counts were not captured at the time, so `task backfill:credits:report` against prod is what would restate them |
-| `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy. `scripts/dump_tvmaze.sh` must have run and verified first; see below |
+| Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
+| `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
 
 
 ## Dropping `tvmaze` (NEU-1051)
@@ -67,8 +68,27 @@ is the only one where merging *is* the destructive act. It stands down below
 
 Everything runs on the prod host and the dump travels once, at the end. The
 script fails rather than reporting success unless the restored database matches
-the source **table-for-table on exact `count(*)`** and `show`, `episode`,
-`show_cast` and `episode_guest_cast` all come back non-empty.
+the source **table-for-table on exact `count(*)`**, `show`, `episode`,
+`show_cast` and `episode_guest_cast` all come back non-empty, and the fetched
+file matches prod's byte count exactly.
+
+**A `--schema=tvmaze` dump is not restorable on its own**, which the first real
+run of this script is how we found out. It carries the schema and nothing else,
+so four of its indexes reference `public` objects that do not travel with it —
+`pg_trgm` for `gin_trgm_ops`, and this repo's own `immutable_unaccent` wrapper
+(`sql_fold.py`, migration `c2e451aa1ec6`). Any restore, including a real
+recovery, needs these first:
+
+```sql
+CREATE EXTENSION IF NOT EXISTS pg_trgm;
+CREATE EXTENSION IF NOT EXISTS unaccent;
+CREATE OR REPLACE FUNCTION public.immutable_unaccent(text) RETURNS text
+  LANGUAGE sql IMMUTABLE STRICT AS $$ SELECT public.unaccent($1) $$;
+```
+
+The script runs them and then restores with `--exit-on-error`, because without it
+`pg_restore` reports "errors ignored on restore: 4" and exits having built no
+indexes — a dump that passes for good while being incomplete.
 
 Then, in order:
 

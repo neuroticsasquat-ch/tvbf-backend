@@ -43,7 +43,11 @@ mkdir -p "$OUT_DIR"
 STAMP=$(date -u +%Y%m%dT%H%M%SZ)
 DUMP_FILE="${OUT_DIR}/tvmaze-${STAMP}.dump"
 COUNTS_FILE="${OUT_DIR}/tvmaze-${STAMP}.counts.txt"
-VERIFY_DB="tvmaze_restore_check_${STAMP}"
+# Lowercased deliberately. `STAMP` carries ISO-8601's `T` and `Z`, and Postgres
+# folds an unquoted identifier to lower case — so `CREATE DATABASE` would make
+# `..._20260814t003038z` while `pg_restore -d` asks for the mixed-case name
+# verbatim as a connection parameter and is told it does not exist.
+VERIFY_DB="tvmaze_restore_check_$(printf '%s' "$STAMP" | tr '[:upper:]' '[:lower:]')"
 REMOTE_DUMP="/tmp/tvmaze-${STAMP}.dump"
 
 echo "→ Locating prod Postgres container on $PROD_SSH..."
@@ -82,7 +86,30 @@ echo "→ Test-restoring into a throwaway database on prod ($VERIFY_DB)..."
 ssh "$PROD_SSH" "docker exec -i $PROD_CONTAINER psql -v ON_ERROR_STOP=1 -U $PROD_PG_USER \
   -d postgres -c 'CREATE DATABASE $VERIFY_DB'" >/dev/null
 
-ssh "$PROD_SSH" "docker exec -i $PROD_CONTAINER pg_restore --no-owner --no-acl \
+CREATED=$(ssh "$PROD_SSH" "docker exec -i $PROD_CONTAINER psql -U $PROD_PG_USER -d postgres -tA \
+  -c \"SELECT count(*) FROM pg_database WHERE datname = '$VERIFY_DB'\"")
+if [[ "$CREATED" -ne 1 ]]; then
+  echo "ERROR: $VERIFY_DB was not created. Nothing has been dropped." >&2
+  exit 1
+fi
+
+# A `--schema=tvmaze` dump carries the schema and nothing else, so the throwaway
+# database has none of the `public` objects three of its indexes are built on:
+# `pg_trgm` supplies `gin_trgm_ops`, and `immutable_unaccent` is this repo's own
+# wrapper (see `sql_fold.py` and the `c2e451aa1ec6` migration). Creating them here
+# is not a workaround — it is the verification doing its job, because **a real
+# recovery needs exactly these three statements first**, and a restore that
+# skipped the indexes would be reported as fine while being incomplete.
+ssh "$PROD_SSH" "docker exec -i $PROD_CONTAINER psql -v ON_ERROR_STOP=1 -U $PROD_PG_USER -d $VERIFY_DB -c \"
+  CREATE EXTENSION IF NOT EXISTS pg_trgm;
+  CREATE EXTENSION IF NOT EXISTS unaccent;
+  CREATE OR REPLACE FUNCTION public.immutable_unaccent(text) RETURNS text
+    LANGUAGE sql IMMUTABLE STRICT AS \\\$\\\$ SELECT public.unaccent(\\\$1) \\\$\\\$;\"" >/dev/null
+
+# `--exit-on-error`, so the restore has to be clean rather than merely mostly
+# clean. Without it pg_restore reports "errors ignored" and carries on, which is
+# how a dump missing its indexes passes for a good one.
+ssh "$PROD_SSH" "docker exec -i $PROD_CONTAINER pg_restore --no-owner --no-acl --exit-on-error \
   -U $PROD_PG_USER -d $VERIFY_DB $REMOTE_DUMP"
 
 echo "→ Comparing the restore against the source, table by table..."
@@ -130,11 +157,21 @@ done
 
 echo "→ Fetching the verified dump (this is the one transfer)..."
 ssh "$PROD_SSH" "docker exec -i $PROD_CONTAINER cat $REMOTE_DUMP" > "$DUMP_FILE"
-if [[ ! -s "$DUMP_FILE" ]]; then
-  echo "ERROR: the fetched dump is empty." >&2
+
+# Exact byte count against what prod wrote, not merely non-empty. A truncated
+# transfer is the realistic failure of this step — the link drops, the pipe ends
+# early, and the file looks like a dump right up until the day it is needed.
+LOCAL_SIZE=$(wc -c < "$DUMP_FILE" | tr -d ' ')
+if [[ "$LOCAL_SIZE" -ne "$REMOTE_SIZE" ]]; then
+  echo "ERROR: fetched $LOCAL_SIZE bytes, prod wrote $REMOTE_SIZE. The transfer truncated." >&2
+  echo "  Do NOT set TVBF_TVMAZE_DUMP_VERIFIED and do NOT merge NEU-1051." >&2
   exit 1
 fi
-echo "  ✓ $(du -h "$DUMP_FILE" | cut -f1) at $DUMP_FILE"
+if [[ "$(head -c 5 "$DUMP_FILE")" != "PGDMP" ]]; then
+  echo "ERROR: $DUMP_FILE is not a pg_dump custom-format archive." >&2
+  exit 1
+fi
+echo "  ✓ $(du -h "$DUMP_FILE" | cut -f1) at $DUMP_FILE ($LOCAL_SIZE bytes, matches prod)"
 
 echo
 echo "✓ Dump taken, test-restored, and reconciled table-for-table."
