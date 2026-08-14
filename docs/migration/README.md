@@ -560,8 +560,38 @@ matcher rather than being it:
 | 3 | **Delete** | 659,294 | 108 |
 
 At row grain: **79 watch rows move; 112 watch rows and 1 rating are deleted** —
-94 a genuine loss and 19 a de-duplication a surviving twin already records — and
-**1 `user_show_watch` row is created**. 166 links proposed, 4 dropped for
+**95 a genuine loss and 18 a de-duplication** a surviving twin already records —
+and **1 `user_show_watch` row is created**.
+
+Each loss row carries a `basis`, and it is the field to triage on, because the
+two verdicts are not equally strong:
+
+| `basis` | Rows | Meaning |
+| -- | --: | -- |
+| `no_counterpart` | 94 | nothing to compare against — every one a synthetic special |
+| `position_only` | 16 | rests on position **and** air date; 15 de-duplications, 1 loss |
+| `matched_twin` | 3 | the pass itself paired the rows — proven redundant |
+
+**`position_only` is where a wrong "nothing was lost here" would hide**, so check
+those first. All 15 that read as de-duplications are visibly two-parters by title
+(`Part 2`, `(2)`, `(3)` — Friends, Lost, Parks, Brooklyn Nine-Nine), which is
+independent corroboration rather than the same inference restated.
+
+The one `position_only` **loss** is the row that made this field exist. The
+first report run called The Hook Up Plan `s2e7 "Plan Confiné.e.s"` a
+de-duplication: TMDB's season 2 ends at episode 6, all of it aired 2019-10-11,
+and the orphan is a lockdown special from 2020-08-26 whose positional neighbour
+is an unrelated finale the user watched independently. A merged two-parter airs
+in one slot, so the absorbing row carries the orphan's air date; requiring that
+separates a real merge from an orphan sitting past the end of a season. **The
+date is consulted there and nowhere else** — it is noise for matching (§2.4) and
+signal for this one question — and the asymmetry runs the safe way, reporting a
+loss that may not be one rather than the reverse.
+
+A blanket date test would have been wrong, which is what `matched_twin` records.
+Shrinking's `s3e12` carries a one-day skew (NEU-1145's Apple TV+ issue) but the
+matcher *paired* it with `s3e11` on identical titles, so its redundancy is proven
+and no date test applies. 166 links proposed, 4 dropped for
 carrying more than one candidate, and exactly **one carries user data**: Will &
 Grace `549 → 1064267`, offset 8, 17 user-touched. That is the only link needing
 review, per the reasoning above.
