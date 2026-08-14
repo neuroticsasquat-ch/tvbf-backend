@@ -14,8 +14,10 @@ This module used to be `tvbf/tvmaze/rate_budget.py` and served exactly one
 upstream. TMDB needed its own ceiling without disturbing TV Maze's, so the
 bucket became keyed: a `Bucket` says which row holds which budget, and
 `get_rate_limiter(source, ...)` resolves the source name to one (NEU-1027).
-TV Maze has since been retired (NEU-1050) and TMDB is the only registered
-source, but the keying is what makes the next one a row rather than a rewrite.
+The keying is what made the next upstream a row rather than a rewrite, and it
+has now been exercised twice in the same direction: NEU-1050 retired the TV Maze
+bucket with the mirror, and NEU-1145 re-registered it for the airdate oracle,
+which reads a handful of TV Maze endpoints without mirroring anything.
 """
 
 import asyncio
@@ -102,8 +104,13 @@ class Bucket:
 # `catalog.rate_budget` is keyed by source name, so every registered bucket
 # names the same table and differs only in its key.
 TMDB_BUCKET = Bucket(table="catalog.rate_budget", key_column="source", key="tmdb")
+# The airdate oracle (NEU-1145), which is the only thing that calls TV Maze
+# since the mirror was retired. Free, keyless and unfunded, so the budget is
+# etiquette rather than an enforced ceiling — which is a reason to keep it, not
+# to skip it: being blocked would take the airdate fix down with it.
+TVMAZE_BUCKET = Bucket(table="catalog.rate_budget", key_column="source", key="tvmaze")
 
-BUCKETS: dict[str, Bucket] = {"tmdb": TMDB_BUCKET}
+BUCKETS: dict[str, Bucket] = {"tmdb": TMDB_BUCKET, "tvmaze": TVMAZE_BUCKET}
 
 
 @dataclass(frozen=True, order=True)
