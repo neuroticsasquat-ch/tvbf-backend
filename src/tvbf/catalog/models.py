@@ -657,7 +657,11 @@ class AirdateShowState(Base):
     **Named for what the pass knows, not for the one column it holds.** A
     watermark about our own work — "when did we last reconcile this show?" —
     belongs here too, and would sit oddly under a name about the oracle's
-    identity for the show. One table for what the pass knows, not two.
+    identity for the show. One table for what the pass knows, not two. NEU-1149
+    is the ticket that added it: `last_reconciled_at` is what lets the nightly
+    work list ask *is tonight this show's night* rather than re-deriving every
+    offset from scratch, and it landed here rather than in a table of its own
+    exactly as this paragraph anticipated.
 
     **A table of its own rather than a column on `catalog.show`**, for the
     reason `AirDateOffset` above is one: ADR-0012 sole-sources the spine from
@@ -699,6 +703,10 @@ class AirdateShowState(Base):
     resolved_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), nullable=False
     )
+    # When this show's turn last completed without raising (NEU-1149). NULL is
+    # "never done" — the clause that puts a new or newly tracked show on
+    # tonight's list. Nullable because NEU-1148's rows predate the column.
+    last_reconciled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ShowGenre(Base):

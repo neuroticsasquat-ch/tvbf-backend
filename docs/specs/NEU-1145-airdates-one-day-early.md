@@ -232,11 +232,26 @@ weekday heuristic entirely, so there is no network allowlist and no Apple/Prime
 asymmetry in the code.
 
 **Work list:** shows tracked by any user **or** holding a future-dated episode.
-1,762 shows in production against 1,767 with a future episode and 560 tracked, so
-the two sets nearly coincide. ~3,500 requests, ~30 minutes per run at TVmaze's
-published ~20 calls/10s. No watermark — the full list runs every night, which is
-about 2% of one IP's daily allowance, and re-checking everything is what makes
-the job self-healing when a season's dates change upstream.
+~3,500 requests, ~30 minutes per run at TVmaze's published ~20 calls/10s.
+
+> **Corrected by [NEU-1149](NEU-1149-scope-the-airdate-work-list-to-change.md),
+> twice.** This paragraph originally read that the two halves "nearly coincide"
+> — 1,762 in scope against 1,767 with a future episode and 560 tracked. Measured
+> against production on 2026-08-14 they are nearly **disjoint**: 560 tracked,
+> 1,787 with a future episode, **27 in both**, union 2,320, of which 1,772 carry
+> an external id and are checkable. The number in scope was right; the overlap
+> was not, and what it hid is that the run is two populations doing two
+> different kinds of waste (NEU-1149 §1.1).
+>
+> It also read "**No watermark** — the full list runs every night, ... and
+> re-checking everything is what makes the job self-healing when a season's
+> dates change upstream." That was true when written and NEU-1149 makes it
+> false. There is now a per-show `last_reconciled_at`, and a show in scope is
+> reconciled only when something could have changed for it — it has never been
+> done, TMDB touched it since, it is still airing — or its sweep turn has come.
+> **The sweep is what buys the self-healing property back**, on a documented
+> weekly cadence, amortised by `show_id` bucket so no night spikes. See NEU-1149
+> §5.
 
 The scope predicate lives in one place. Widening it to the full 115,731 shows
 carrying an external id is a one-line change plus a resumable watermark, and was

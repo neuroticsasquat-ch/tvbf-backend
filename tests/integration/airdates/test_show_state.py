@@ -20,14 +20,22 @@ import respx
 from sqlalchemy import select
 
 from tvbf.airdates.client import TVMazeOracleClient
-from tvbf.airdates.reconcile import ReconcileResult, ShowToCheck
+from tvbf.airdates.reconcile import DueReasons, ReconcileResult, ShowToCheck
 from tvbf.airdates.show_state import RELOOKUP_MISSING_AFTER, oracle_episodes
 from tvbf.catalog import models as m
 from tvbf.rate_budget import RateLimiter
 
 BASE = "https://api.tvmaze.com"
 
-SHOW = ShowToCheck(show_id=900, name="Show 900", imdb_id="tt900", tvdb_id=None)
+# Why this show is due is not this module's subject — it caches a lookup for
+# whatever the work list handed it — so the reasons are arbitrary here.
+SHOW = ShowToCheck(
+    show_id=900,
+    name="Show 900",
+    imdb_id="tt900",
+    tvdb_id=None,
+    due=DueReasons(never=True, changed=False, airing=False, swept=False),
+)
 
 
 def _client() -> TVMazeOracleClient:

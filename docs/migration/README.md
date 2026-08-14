@@ -1701,3 +1701,60 @@ DELETE FROM catalog.airdate_show_state;
 DELETE FROM catalog.airdate_show_state WHERE tvmaze_id IS NULL;
 ```
 
+**Since NEU-1149 that `DELETE` clears the reconciliation watermark too.** The
+table now also carries `last_reconciled_at`, so a full reset makes every show
+read as never reconciled and the next run covers the whole scope rather than the
+change-bounded slice — one night at the old cost, then back to normal. That is
+correct behaviour for a "start over" hatch and not something to discover
+mid-incident.
+
+### The nightly work list (NEU-1149)
+
+The pass no longer reconciles everything in scope every night. A show is
+**due** when it has never been reconciled, when `catalog.show.tmdb_synced_at`
+has advanced since its `last_reconciled_at`, when it still holds a future-dated
+episode, or when its sweep turn has come — `show_id % 7`, one bucket a night,
+plus a floor for anything more than fourteen days behind. Two operational
+consequences.
+
+**Schedule the airdate task after the catalog delta.** Both are Coolify
+scheduled tasks with their own healthchecks, and that separation stays right —
+one check fed by two tasks would let either keep it alive while the other
+quietly stopped. But the change-driven clause reads `tmdb_synced_at`, so an
+airdate run that starts *before* the delta sees yesterday's value and picks the
+change up a night late. A delta is minutes, so a comfortable gap is enough; the
+two cannot contend, since they hold separate `catalog.rate_budget` rows against
+separate upstreams. **Nothing in the repo can enforce this** — if the times are
+never changed the behaviour degrades to a one-night lag on delta-driven changes
+for *finished* shows only, because airing shows are reconciled nightly
+regardless and the sweep bounds everything else at a week.
+
+**Read the shape of a night off its opening log line**, which now breaks the
+count down by clause:
+
+```
+airdate reconciliation: 1,790 show(s) due — 1,760 airing, 12 changed,
+3 never reconciled, 331 swept
+```
+
+**Measured against production on 2026-08-14**, before the pass had ever run
+there — 1,772 checkable shows in scope, of which 1,242 are airing and 530 are
+tracked and finished:
+
+| night | shows due |
+| -- | -- |
+| before | 1,772, every night |
+| after, per sweep bucket | 1,321 / 1,320 / 1,306 / 1,315 / 1,320 / 1,336 / 1,306 |
+
+The airing population is what the nightly number is now made of; the 530
+tracked-finished shows — the population that grows with the user base — cost
+about 76 a night instead of 530. The spread across buckets is 30 shows wide,
+which is the amortisation working: no night carries the sweep.
+
+The counters overlap by design (an airing show TMDB also touched counts in two),
+because the question they answer is which population is growing. A night whose
+`swept` count is far from a seventh of the scope, or whose `airing` count climbs
+steadily, is the one worth looking at. The first run after deploy is all
+`never reconciled` and costs what a pre-NEU-1149 run cost — same shape as
+NEU-1148's cold start, and no backfill is needed.
+
