@@ -1,5 +1,69 @@
 # Release notes
 
+## 0.3.0 — 2026-08-14
+
+### Catalog
+
+- Index the show->episode air FKs so cascaded deletes do not seq scan ([NEU-1066](https://linear.app/neuroticsasquatch/issue/NEU-1066))
+- Repoint browse, search, /me and credits reads to catalog ([NEU-1047](https://linear.app/neuroticsasquatch/issue/NEU-1047))
+- Backfill the credits the ingest mirrored before the writers existed ([NEU-1127](https://linear.app/neuroticsasquatch/issue/NEU-1127))
+- Drop the tvmaze schema and relocate ingest_run ([NEU-1051](https://linear.app/neuroticsasquatch/issue/NEU-1051)) ([#252](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/252))
+- Retire the TV Maze orphan rows from the catalog spine ([NEU-1146](https://linear.app/neuroticsasquatch/issue/NEU-1146))
+- Keep specials out of the tier 2 season offset ([NEU-1146](https://linear.app/neuroticsasquatch/issue/NEU-1146))
+- Separate proven from inferred de-duplications in the loss list ([NEU-1146](https://linear.app/neuroticsasquatch/issue/NEU-1146))
+
+### General
+
+- Run the daily update as a CLI entrypoint on a Coolify schedule ([NEU-1008](https://linear.app/neuroticsasquatch/issue/NEU-1008))
+- Create the catalog schema and wire it through migrations, db:init and tests ([NEU-1026](https://linear.app/neuroticsasquatch/issue/NEU-1026))
+- Create the catalog schema in CI too, the fifth hand-enumerated site ([NEU-1026](https://linear.app/neuroticsasquatch/issue/NEU-1026))
+- Key request budgets by source and lease blocks ([NEU-1027](https://linear.app/neuroticsasquatch/issue/NEU-1027))
+- Add the TMDB API client with bearer auth and a measured append cap ([NEU-1028](https://linear.app/neuroticsasquatch/issue/NEU-1028))
+- Snapshot every watch and rating into app.watch_archive ([NEU-1029](https://linear.app/neuroticsasquatch/issue/NEU-1029))
+- Add the per-user, per-show reconciliation harness ([NEU-1030](https://linear.app/neuroticsasquatch/issue/NEU-1030))
+- Add catalog table definitions for the full TMDB surface ([NEU-1032](https://linear.app/neuroticsasquatch/issue/NEU-1032))
+- Parse TMDB payloads and upsert them into catalog ([NEU-1033](https://linear.app/neuroticsasquatch/issue/NEU-1033))
+- Copy tvmaze into catalog with ids preserved ([NEU-1042](https://linear.app/neuroticsasquatch/issue/NEU-1042))
+- Map catalog rows onto tmdb_id in three tiers ([NEU-1043](https://linear.app/neuroticsasquatch/issue/NEU-1043))
+- Mirror TMDB's whole catalog from the daily id export ([NEU-1034](https://linear.app/neuroticsasquatch/issue/NEU-1034))
+- Size the catalog pass from measurement and split its failure counts ([NEU-1034](https://linear.app/neuroticsasquatch/issue/NEU-1034))
+- Keep the catalog current with a daily /tv/changes delta ([NEU-1035](https://linear.app/neuroticsasquatch/issue/NEU-1035))
+- Tombstone series absent from the TMDB id export ([NEU-1036](https://linear.app/neuroticsasquatch/issue/NEU-1036))
+- Add catalog credit tables for person, character, cast and crew ([NEU-1038](https://linear.app/neuroticsasquatch/issue/NEU-1038))
+- Apply pre-ship review findings on the catalog credit tables ([NEU-1038](https://linear.app/neuroticsasquatch/issue/NEU-1038))
+- Apply pre-ship review findings on the episode credit writer ([NEU-1040](https://linear.app/neuroticsasquatch/issue/NEU-1040))
+- Apply pre-ship review findings on the human matching queue ([NEU-1044](https://linear.app/neuroticsasquatch/issue/NEU-1044))
+- Apply pre-ship review findings on the episode-grain mapping ([NEU-1045](https://linear.app/neuroticsasquatch/issue/NEU-1045))
+- Compose TMDB image URLs in the API response ([NEU-1063](https://linear.app/neuroticsasquatch/issue/NEU-1063))
+- Adopt TMDB's genre vocabulary verbatim at cutover ([NEU-1064](https://linear.app/neuroticsasquatch/issue/NEU-1064))
+- Close the review gaps in the genre queries ([NEU-1064](https://linear.app/neuroticsasquatch/issue/NEU-1064))
+- Add season_name to the friends feed payload ([NEU-1132](https://linear.app/neuroticsasquatch/issue/NEU-1132))
+- Exclude special episodes from watch progress ([NEU-1062](https://linear.app/neuroticsasquatch/issue/NEU-1062))
+- Un-marking a season must not skip copied specials ([NEU-1062](https://linear.app/neuroticsasquatch/issue/NEU-1062))
+- Keep a special's feed event when its season or show is bulk-marked ([NEU-1062](https://linear.app/neuroticsasquatch/issue/NEU-1062))
+- Correct mirrored airdates with a per-season offset ([NEU-1145](https://linear.app/neuroticsasquatch/issue/NEU-1145))
+- Read the TV Maze lookup's id from its 301 Location header ([NEU-1145](https://linear.app/neuroticsasquatch/issue/NEU-1145))
+- Cache the TV Maze show id so the airdate pass stops re-resolving it ([NEU-1148](https://linear.app/neuroticsasquatch/issue/NEU-1148))
+- Correct the cached link's counters and its two dead-end paths ([NEU-1148](https://linear.app/neuroticsasquatch/issue/NEU-1148))
+- Scope the nightly airdate work list to change ([NEU-1149](https://linear.app/neuroticsasquatch/issue/NEU-1149))
+
+### Migration
+
+- Add the human matching queue for unresolved user-touched shows ([NEU-1044](https://linear.app/neuroticsasquatch/issue/NEU-1044))
+- Map the copied episode rows onto TMDB ids ([NEU-1045](https://linear.app/neuroticsasquatch/issue/NEU-1045))
+- Deduplicate the season grain against the TMDB ingest ([NEU-1119](https://linear.app/neuroticsasquatch/issue/NEU-1119))
+- Prune the unmatched copied shows the ingest duplicated ([NEU-1066](https://linear.app/neuroticsasquatch/issue/NEU-1066))
+- Add the pre-cutover catalog coverage go/no-go gate ([NEU-1048](https://linear.app/neuroticsasquatch/issue/NEU-1048))
+- Close the gate on unconfirmed tier-3 guesses ([NEU-1048](https://linear.app/neuroticsasquatch/issue/NEU-1048))
+- Repoint the app foreign keys onto catalog ([NEU-1046](https://linear.app/neuroticsasquatch/issue/NEU-1046))
+- Re-point user history onto the ingested episode rows ([NEU-1126](https://linear.app/neuroticsasquatch/issue/NEU-1126))
+
+### Tmdb
+
+- Mirror show cast and crew from aggregate_credits ([NEU-1039](https://linear.app/neuroticsasquatch/issue/NEU-1039))
+- Mirror episode guest cast and crew from the season payload ([NEU-1040](https://linear.app/neuroticsasquatch/issue/NEU-1040))
+- An episode credit with no person no longer fails the series payload ([NEU-1128](https://linear.app/neuroticsasquatch/issue/NEU-1128))
+
 ## 0.2.2 — 2026-08-07
 
 ### Scripts
