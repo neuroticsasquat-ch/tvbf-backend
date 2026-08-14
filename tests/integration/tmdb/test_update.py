@@ -19,11 +19,10 @@ from sqlalchemy import select, update
 
 from tests.integration.tmdb.test_ingest import BASE, _run_row, _show, mock_series
 from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run, finalize_run
 from tvbf.config import get_settings
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.update import date_to_cursor, run_catalog_update, run_catalog_update_job
-from tvbf.tvmaze import models as tvm
-from tvbf.tvmaze.runs import create_run, finalize_run
 
 TODAY = date(2026, 8, 10)
 
@@ -191,9 +190,9 @@ async def test_a_single_day_past_the_page_cap_fails_the_run(session):
     live = (
         (
             await session.execute(
-                select(tvm.IngestRun)
-                .where(tvm.IngestRun.kind == "catalog_update")
-                .order_by(tvm.IngestRun.started_at.desc())
+                select(m.IngestRun)
+                .where(m.IngestRun.kind == "catalog_update")
+                .order_by(m.IngestRun.started_at.desc())
                 .execution_options(populate_existing=True)
             )
         )
@@ -336,8 +335,8 @@ async def test_the_first_delta_bootstraps_from_the_full_pass(session):
     hour could have changed in its eighth."""
     pass_id = await create_run(session, kind="catalog_initial")
     await session.execute(
-        update(tvm.IngestRun)
-        .where(tvm.IngestRun.id == pass_id)
+        update(m.IngestRun)
+        .where(m.IngestRun.id == pass_id)
         .values(started_at=datetime(2026, 8, 3, 6, 0, tzinfo=UTC))
     )
     await finalize_run(session, pass_id, status="succeeded")
@@ -364,7 +363,7 @@ async def test_the_bootstrap_covers_a_resumed_pass_from_its_first_attempt(sessio
     ):
         run_id = await create_run(session, kind="catalog_initial")
         await session.execute(
-            update(tvm.IngestRun).where(tvm.IngestRun.id == run_id).values(started_at=started)
+            update(m.IngestRun).where(m.IngestRun.id == run_id).values(started_at=started)
         )
         await finalize_run(session, run_id, status=status)
     await session.commit()
@@ -381,8 +380,8 @@ async def test_a_pass_that_never_succeeded_does_not_bootstrap_the_delta(session,
     would claim coverage it never achieved."""
     run_id = await create_run(session, kind="catalog_initial")
     await session.execute(
-        update(tvm.IngestRun)
-        .where(tvm.IngestRun.id == run_id)
+        update(m.IngestRun)
+        .where(m.IngestRun.id == run_id)
         .values(started_at=datetime(2026, 8, 1, 3, 0, tzinfo=UTC))
     )
     await finalize_run(session, run_id, status="failed")

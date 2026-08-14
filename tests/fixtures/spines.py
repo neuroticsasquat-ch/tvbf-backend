@@ -1,26 +1,11 @@
-"""Give the seeded `tvmaze` rows a `catalog` row of the same id.
+"""Stand one `app` -> `catalog` foreign key down for a block.
 
-Since NEU-1046 the four `app.user_*` foreign keys reference `catalog.show` and
-`catalog.episode`, so a test that seeds a show into `tvmaze` and then tracks it
-as a user has seeded only half of what the constraint needs. In production the
-other half is NEU-1042's id-preserving copy, which ran once over the whole
-mirror; here it is this helper, and the premise is identical — `catalog.show.id`
-for a migrated show simply *is* its old `tvmaze.show.id` (ADR-0008).
-
-It is deliberately **not** autouse. A handful of tests exist precisely to prove
-what happens to a row the copy never mirrored (`human_queue`'s
-`unmirrored_user_touched_shows`, `episode_map`'s `unmirrored_watches`), and an
-automatic mirror would quietly delete those tests' subject matter. Call it where
-a test needs the premise; leave it out where the absence is the point.
-
-It is also not `tvmaze.catalog_copy.copy_to_catalog`, though it means the same
-thing. That job walks the show-id space in blocks of 5,000 to keep the real
-3.5M-episode copy off one statement, and test ids sit up around 9,400,000 — so
-reusing it would spend ~1,900 queries per call to move four rows.
-
-Only shows and episodes are mirrored, because those are the only two tables
-`app` references. Seasons are left out along with `catalog.episode.season_id`,
-which is nullable by design.
+The module was named for a two-spine world: it also held `mirror_spine`, which
+gave every seeded `tvmaze` row a `catalog` row of the same id, standing in for
+NEU-1042's id-preserving copy. NEU-1051 dropped `tvmaze`, so tests seed
+`catalog` directly and there is nothing left to mirror from. The name stays
+because the concept it guards — which spine a user row resolves against — is
+still what this file is about.
 """
 
 from collections.abc import AsyncIterator
@@ -28,40 +13,6 @@ from contextlib import asynccontextmanager
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-
-_MIRROR_SHOWS = text("""
-    INSERT INTO catalog.show (id, name, status, type, first_air_date, last_air_date)
-    SELECT s.id, s.name, s.status, s.type, s.premiered, s.ended
-    FROM tvmaze.show s
-    ON CONFLICT (id) DO NOTHING
-""")
-
-# `catalog.episode.episode_number` is NOT NULL where `tvmaze.episode.number` is
-# nullable for a special, so a null is synthesised negative — the same signal
-# the production copy uses to say the value was invented, minus its
-# within-season ordinal, which nothing here reads.
-_MIRROR_EPISODES = text("""
-    INSERT INTO catalog.episode (
-        id, show_id, season_number, episode_number, name, air_date, runtime
-    )
-    SELECT e.id, e.show_id, e.season, coalesce(e.number, -e.id), e.name, e.airdate, e.runtime
-    FROM tvmaze.episode e
-    WHERE EXISTS (SELECT 1 FROM catalog.show cs WHERE cs.id = e.show_id)
-    ON CONFLICT (id) DO NOTHING
-""")
-
-
-async def mirror_spine(session: AsyncSession) -> None:
-    """Mirror every `tvmaze` show and episode into `catalog`, id preserved.
-
-    Idempotent, so it is safe to call after each seeding step and safe on a test
-    that has already written its own `catalog` rows — those are left exactly as
-    they are, which is what `ON CONFLICT (id) DO NOTHING` buys the real copy too.
-    """
-    await session.execute(_MIRROR_SHOWS)
-    await session.execute(_MIRROR_EPISODES)
-    await session.flush()
-
 
 # The four `app` -> `catalog` foreign keys, by the table they sit on. Only the
 # constraint name and the column are named here: the *definition* is read back
@@ -83,14 +34,15 @@ _APP_FKS: dict[str, tuple[str, str]] = {
 async def without_catalog_fk(session: AsyncSession, table: str) -> AsyncIterator[None]:
     """Drop one `app` -> `catalog` foreign key for the duration of the block.
 
-    Several passes exist to *find* rows this constraint makes impossible — the
-    coverage gate's `fk_targets_resolve` criterion, `human_queue`'s
-    `unmirrored_user_touched_shows`, `episode_map`'s `unmirrored_watches`. That
-    is not redundant with the constraint: every one of them runs **before** the
-    repoint, on a database where the FK still points at `tvmaze` and a watch
-    whose episode the copy never mirrored is an ordinary row. Their tests have
-    to reconstruct that state, which since NEU-1046 means standing the
-    constraint down first.
+    Two reports exist to *find* rows this constraint makes impossible —
+    `human_queue`'s `unmirrored_user_touched_shows` and `episode_map`'s
+    `unmirrored_watches`. That was not redundant with the constraint: both ran
+    **before** the repoint, on a database where the FK still pointed at `tvmaze`
+    and a watch whose episode the copy never mirrored was an ordinary row. The
+    state is unreachable now, so their tests have to reconstruct it, which since
+    NEU-1046 means standing the constraint down first. (The coverage gate's
+    `fk_targets_resolve` criterion asked the same question and went with the
+    `tvmaze` schema in NEU-1051.)
 
     The definition is **snapshotted with `pg_get_constraintdef` and replayed**,
     never retyped. `scripts/refresh_db.sh` does the same thing for the same

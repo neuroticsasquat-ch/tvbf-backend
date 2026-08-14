@@ -38,8 +38,6 @@ from tvbf.tmdb.episode_map import (
     build_report,
     map_episode_ids,
 )
-from tvbf.tvmaze.models import Episode as MazeEpisode
-from tvbf.tvmaze.models import Show as MazeShow
 
 BASE = "https://api.themoviedb.org/3"
 
@@ -102,7 +100,6 @@ def mock_series(tmdb_id: int, seasons: dict[int, list[int]]) -> dict[int, respx.
 async def _seed_show(session, *, tmdb_id: int | None, name: str = "Mapped Show") -> int:
     """One show, in both spines, sharing an id."""
     show_id = _next_id()
-    session.add(MazeShow(id=show_id, name=name, tvmaze_updated=1))
     session.add(cm.Show(id=show_id, name=name, tmdb_id=tmdb_id))
     await session.flush()
     await session.commit()
@@ -120,7 +117,6 @@ async def _seed_episode(
 ) -> int:
     """A copied episode: the `tvmaze` row user data points at, and its catalog twin."""
     episode_id = _next_id()
-    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=season, number=number))
     session.add(
         cm.Episode(
             id=episode_id,
@@ -495,16 +491,17 @@ async def test_a_watched_special_is_reported_as_synthetic(session, make_user):
 
 
 async def test_a_watch_the_copy_never_mirrored_is_reported_loudly(session, make_user):
-    """The daily keeps adding episodes after `copy:catalog` ran, and they are watchable.
+    """A watch whose episode has no `catalog.episode` row at all.
 
     Such a row is invisible to every other query here, all of which read *from*
     `catalog.episode` — so without this it would read as a clean report while a
-    user's watch had no catalog row at all.
+    user's watch had no catalog row at all. The state arose before cutover, when
+    the TV Maze daily kept adding watchable episodes after `copy:catalog` had
+    run; since NEU-1051 there is one spine and the foreign key forbids it, which
+    is why the constraint has to come down to reconstruct it here.
     """
     user = await make_user(email="em7@example.com")
-    show_id = await _seed_show(session, tmdb_id=1396)
     episode_id = _next_id()
-    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=2, number=1))
     await session.flush()
     async with without_catalog_fk(session, "user_episode_watch"):
         session.add(UserEpisodeWatch(user_id=user.id, episode_id=episode_id))

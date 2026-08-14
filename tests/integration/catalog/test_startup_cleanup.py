@@ -2,8 +2,8 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
 from tvbf.main import run_startup_cleanup
-from tvbf.tvmaze import models as m
 
 
 async def test_startup_cleanup_cancels_stale_running_runs(session):

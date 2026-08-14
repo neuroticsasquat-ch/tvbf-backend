@@ -7,7 +7,6 @@ import pytest
 from sqlalchemy import func, select, text
 from sqlalchemy.exc import DBAPIError
 
-from tests.fixtures.spines import mirror_spine
 from tvbf.app.models import (
     UserEpisodeRating,
     UserEpisodeWatch,
@@ -16,7 +15,7 @@ from tvbf.app.models import (
     WatchArchive,
 )
 from tvbf.app.services import watch_archive_service
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 async def _seed_show(
@@ -29,14 +28,12 @@ async def _seed_show(
     show = Show(
         id=show_id,
         name=name,
-        tvmaze_updated=1,
-        premiered=premiered,
-        externals_imdb="tt0944947",
-        externals_tvdb=121361,
+        first_air_date=premiered,
+        imdb_id="tt0944947",
+        tvdb_id=121361,
     )
     session.add(show)
     await session.flush()
-    await mirror_spine(session)
     return show
 
 
@@ -46,21 +43,20 @@ async def _seed_episode(
     show_id: int,
     episode_id: int,
     season: int = 1,
-    number: int | None = 1,
+    number: int = 1,
     name: str | None = "Winter Is Coming",
     airdate: date | None = date(2011, 4, 17),
 ) -> Episode:
     ep = Episode(
         id=episode_id,
         show_id=show_id,
-        season=season,
-        number=number,
+        season_number=season,
+        episode_number=number,
         name=name,
-        airdate=airdate,
+        air_date=airdate,
     )
     session.add(ep)
     await session.flush()
-    await mirror_spine(session)
     return ep
 
 
@@ -279,8 +275,16 @@ async def test_snapshot_tolerates_a_show_without_a_premiere_date(session, make_u
 
 
 @pytest.mark.asyncio
-async def test_snapshot_tolerates_an_unnumbered_episode(session, make_user):
-    """TV Maze leaves 27k specials unnumbered; the title carries the identity."""
+async def test_snapshot_carries_a_copied_specials_invented_number(session, make_user):
+    """The 27k specials TV Maze left unnumbered, as `catalog` actually holds them.
+
+    `catalog.episode.episode_number` is NOT NULL, so NEU-1042 numbered those rows
+    negatively within their season to say the value was invented. The archive
+    stores what the spine says rather than second-guessing it — the title is
+    still what carries the identity, which is the property this test is really
+    about, and a negative number is a readable signal to whoever reads the
+    archive by hand rather than a number that could be mistaken for a real one.
+    """
     user = await make_user(email="wa9@example.com")
     show = await _seed_show(session, show_id=9100110)
     ep = await _seed_episode(
@@ -288,7 +292,7 @@ async def test_snapshot_tolerates_an_unnumbered_episode(session, make_user):
         show_id=show.id,
         episode_id=9100210,
         season=0,
-        number=None,
+        number=-1,
         name="A Special",
     )
     session.add(UserEpisodeWatch(user_id=user.id, episode_id=ep.id))
@@ -297,7 +301,7 @@ async def test_snapshot_tolerates_an_unnumbered_episode(session, make_user):
     await watch_archive_service.snapshot(session)
 
     (row,) = await _rows(session, "episode_watch")
-    assert row.episode_number is None
+    assert row.episode_number == -1
     assert row.episode_title == "A Special"
     assert row.season_number == 0
 

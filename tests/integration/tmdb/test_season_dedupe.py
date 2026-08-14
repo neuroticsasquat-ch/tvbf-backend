@@ -25,8 +25,6 @@ from tvbf.tmdb.season_dedupe import (
     build_report,
     dedupe_seasons,
 )
-from tvbf.tvmaze.models import Episode as MazeEpisode
-from tvbf.tvmaze.models import Show as MazeShow
 
 # Well clear of the browse fixtures' catalog, so every assertion can name exact ids.
 _ID = 9_800_000
@@ -119,7 +117,6 @@ async def test_a_watched_episode_keeps_a_season_that_exists(session, make_user):
     """The same, said in terms of the thing the migration is protecting."""
     user = await make_user(email=f"sd{_next_id()}@example.com")
     show_id = _next_id()
-    session.add(MazeShow(id=show_id, name="Watched", tvmaze_updated=1))
     session.add(cm.Show(id=show_id, name="Watched", tmdb_id=1396))
     await session.flush()
 
@@ -127,7 +124,6 @@ async def test_a_watched_episode_keeps_a_season_that_exists(session, make_user):
     ingested = await _season(session, show_id, 1, tmdb_id=3572)
 
     episode_id = _next_id()
-    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=1, number=4))
     session.add(
         cm.Episode(
             id=episode_id,
@@ -325,7 +321,6 @@ async def test_report_counts_each_population(session):
 async def test_report_counts_episodes_carrying_user_data(session, make_user):
     user = await make_user(email=f"sd{_next_id()}@example.com")
     show_id = _next_id()
-    session.add(MazeShow(id=show_id, name="Counted", tvmaze_updated=1))
     session.add(cm.Show(id=show_id, name="Counted", tmdb_id=1396))
     await session.flush()
 
@@ -333,7 +328,6 @@ async def test_report_counts_episodes_carrying_user_data(session, make_user):
     await _season(session, show_id, 1, tmdb_id=3572)
 
     watched_id = _next_id()
-    session.add(MazeEpisode(id=watched_id, show_id=show_id, season=1, number=1))
     session.add(
         cm.Episode(
             id=watched_id, show_id=show_id, season_id=copied, season_number=1, episode_number=1

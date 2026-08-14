@@ -8,14 +8,14 @@ from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run, finalize_run, find_live_run
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.deps import get_session, require_admin
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import run_catalog_ingest
 from tvbf.tmdb.update import run_catalog_update_job
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import create_run, finalize_run, find_live_run
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"], dependencies=[Depends(require_admin)])
@@ -72,9 +72,10 @@ async def _start_run(
 async def _background_catalog_ingest(run_id: UUID, settings: Settings) -> None:
     """The TMDB full-catalog pass (NEU-1034).
 
-    A background task rather than a CLI, unlike `catalog_copy` and
-    `tmdb_enrichment`: those are minutes-to-hours one-shots with nothing to
-    poll, where this is a multi-hour pass whose progress an operator watches.
+    A background task rather than a CLI, unlike `tmdb_enrichment` (and
+    `catalog_copy`, until NEU-1051 deleted it): those are minutes-to-hours
+    one-shots with nothing to poll, where this is a multi-hour pass whose
+    progress an operator watches.
     """
     try:
         async with TMDBClient(
@@ -118,8 +119,9 @@ async def get_run_status(run_id: UUID, session: AsyncSession = Depends(get_sessi
     Its path outlived the `POST /admin/ingest` it was named for (NEU-1050). It
     stays because it is what a run with no status route of its own is polled
     through — `catalog_update` today — and because run ids from the retired
-    TV Maze passes are still readable here while `tvmaze.ingest_run` stands.
-    Renaming it would break both for nothing.
+    TV Maze passes stay readable through it: NEU-1051 moved the table into
+    `catalog` with `SET SCHEMA`, so those rows outlived the schema they were
+    written in. Renaming it would break both for nothing.
     """
     row = (
         await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))

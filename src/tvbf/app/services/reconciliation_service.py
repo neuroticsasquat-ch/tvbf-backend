@@ -40,12 +40,15 @@ ARTIFACT_VERSION = 1
 # Which catalog schema supplies `episode.show_id`. The value is interpolated into
 # SQL, so — exactly as with `rate_budget.BUCKETS` — it may only ever come from
 # this module-level registry, never from a caller's string.
+# One entry since NEU-1051 dropped `tvmaze`. It stays a registry rather than
+# collapsing to a constant for the reason `rate_budget.BUCKETS` stays one with a
+# single source registered: the guard is that the value cannot come from a
+# caller, and that property is worth keeping whatever the registry's size.
 SPINES = {
-    "tvmaze": "tvmaze",
     "catalog": "catalog",
 }
 
-DEFAULT_SPINE = "tvmaze"
+DEFAULT_SPINE = "catalog"
 
 # Every metric is per (user, show). `tracked_shows` is 0 or 1 per show and is
 # counted the same way as the rest so one comparison loop covers all five.

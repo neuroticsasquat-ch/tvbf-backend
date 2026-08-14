@@ -557,7 +557,7 @@ _WATCHED_TOTALS = text("""
 # query above, which all read *from* that table — and it reads as a clean report,
 # which is the one wrong answer this thing must not give. It happens for real, and
 # nightly: the TV Maze daily keeps adding episodes right up to cutover, and every
-# one added after `task copy:catalog` ran is watchable while having nothing to
+# one added after the copy ran was watchable while having nothing to
 # map. Same failure mode, same shape and same fix as
 # `human_queue.unmirrored_user_touched_shows` — re-run the copy — so it is
 # reported here rather than repaired.

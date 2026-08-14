@@ -92,8 +92,9 @@ async def _report() -> int:
     # other number below is silently computed without them.
     if report.unmirrored_watches:
         log.error(
-            "%d watched episode(s) have no catalog.episode row and are NOT counted below "
-            "— re-run `task copy:catalog`, then this: %s",
+            "%d watched episode(s) have no catalog.episode row and are NOT counted below; "
+            "the copy that would have created them went with the tvmaze schema in "
+            "NEU-1051, so these need authoring by hand: %s",
             len(report.unmirrored_watches),
             ", ".join(str(row["episode_id"]) for row in report.unmirrored_watches),
         )

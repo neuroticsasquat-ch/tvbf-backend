@@ -6,8 +6,10 @@ shows carrying it, AND semantics across repeated parameters survive, and a show
 TMDB never matched — which therefore has no genres at all — filters and
 serialises like any other.
 
-That genres are *only* ever TMDB's is `tests/integration/tvmaze/test_catalog_copy.py`'s
-to prove; it is the reason the empty case below is ordinary rather than exotic.
+That genres are *only* ever TMDB's was the copy's test to prove, and both went
+with the `tvmaze` schema in NEU-1051; it remains the reason the empty case below
+is ordinary rather than exotic — `catalog.genre` is keyed on `tmdb_id` and the
+copy deliberately carried none across.
 """
 
 from tvbf.catalog import genres as q

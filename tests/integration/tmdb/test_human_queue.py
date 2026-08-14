@@ -19,7 +19,7 @@ import pytest
 import respx
 from sqlalchemy import select, text
 
-from tests.fixtures.spines import mirror_spine, without_catalog_fk
+from tests.fixtures.spines import without_catalog_fk
 from tvbf.app.models import (
     ActivityEvent,
     UserEpisodeRating,
@@ -38,8 +38,6 @@ from tvbf.tmdb.human_queue import (
     reject,
     unmirrored_user_touched_shows,
 )
-from tvbf.tvmaze.models import Episode as MazeEpisode
-from tvbf.tvmaze.models import Show as MazeShow
 
 BASE = "https://api.themoviedb.org/3"
 
@@ -55,9 +53,7 @@ def _next_id() -> int:
 
 
 async def _seed_show(session, *, name: str = "Queue Show", **catalog_kwargs) -> int:
-    """One show, in both spines, sharing an id."""
     show_id = _next_id()
-    session.add(MazeShow(id=show_id, name=name, tvmaze_updated=1))
     session.add(cm.Show(id=show_id, name=name, **catalog_kwargs))
     await session.flush()
     await session.commit()
@@ -66,9 +62,8 @@ async def _seed_show(session, *, name: str = "Queue Show", **catalog_kwargs) -> 
 
 async def _seed_episode(session, show_id: int) -> int:
     episode_id = _next_id()
-    session.add(MazeEpisode(id=episode_id, show_id=show_id, season=1, number=1))
+    session.add(cm.Episode(id=episode_id, show_id=show_id, season_number=1, episode_number=1))
     await session.flush()
-    await mirror_spine(session)
     return episode_id
 
 
@@ -221,14 +216,16 @@ async def test_queue_leads_with_the_rows_that_carry_history(session, make_user):
 async def test_a_show_the_copy_never_mirrored_is_reported_separately(session, make_user):
     """The one way the queue could read empty while a user's show has no mapping.
 
-    The TV Maze daily keeps adding shows until cutover, so anything added after
-    `copy:catalog` ran exists in `tvmaze` and not in `catalog` — invisible to a
-    query that reads *from* `catalog.show`.
+    A show a user has touched that has no `catalog.show` row at all is invisible
+    to a query that reads *from* `catalog.show`. That state was reachable before
+    cutover, when the TV Maze daily kept adding shows the copy had not seen; it
+    is unreachable now that `catalog` is the only spine and the foreign key is
+    enforced, which is exactly why the test has to stand the constraint down to
+    reconstruct it. The report still earns its place: it is what would name the
+    rows if one ever appeared.
     """
     user = await make_user(email="hq18@example.com")
     show_id = _next_id()
-    session.add(MazeShow(id=show_id, name="Added After The Copy", tvmaze_updated=1))
-    await session.flush()
     async with without_catalog_fk(session, "user_show_watch"):
         session.add(UserShowWatch(user_id=user.id, show_id=show_id))
         await session.commit()
