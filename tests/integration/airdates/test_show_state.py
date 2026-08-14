@@ -246,6 +246,9 @@ class TestAStaleLink:
         assert found is not None and len(found) == 1
         assert (gone.call_count, lookup.call_count, moved.call_count) == (1, 1, 1)
         assert (result.links_invalidated, result.lookups_spent) == (1, 1)
+        # `links_reused` means "resolved from a cached row, no request". This
+        # show spent two, so it is not one of them.
+        assert result.links_reused == 0
         link = await _link(session, 900)
         assert link is not None and link[0] == 7
 
@@ -268,8 +271,14 @@ class TestAStaleLink:
         assert link is not None and link[0] is None
 
     @respx.mock
-    async def test_the_re_lookup_happens_once_not_in_a_loop(self, session, show):
-        """A show whose new id also 404s costs three requests and stops there."""
+    async def test_an_id_that_resolves_but_serves_nothing_is_stored_as_a_negative(
+        self, session, show
+    ):
+        """A show whose re-resolved id also 404s costs three requests that night
+        and **one a month** thereafter. Storing the id instead would bank a link
+        every night's first request proves dead — and only negatives expire, so
+        the three-request dance would repeat forever, which is worse than the
+        two requests the cache replaced."""
         await _seed_link(session, 900, 5, age=timedelta(days=1))
         gone = _episodes_route(5, carried=False)
         lookup = _lookup(tvmaze_id=7)
@@ -278,5 +287,8 @@ class TestAStaleLink:
 
         async with _client() as client:
             assert await oracle_episodes(session, client, show, result) is None
+        await session.commit()
 
         assert (gone.call_count, lookup.call_count, also_gone.call_count) == (1, 1, 1)
+        link = await _link(session, 900)
+        assert link is not None and link[0] is None

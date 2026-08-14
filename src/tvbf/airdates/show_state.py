@@ -34,9 +34,12 @@ fetch 404s instead — which, if it read as an empty list, would make every seas
 judge `no_overlap`, leave every offset alone by design, and end the show's
 reconciliation forever while counting only toward a number that is already large
 and ordinary. So `get_show_episodes` answers `None` for a 404 and `[]` for a show
-upstream genuinely carries with no episodes, and on `None` this module clears the
-link, re-resolves once and re-fetches: three requests for that show that night,
-one thereafter.
+upstream genuinely carries with no episodes, and on `None` this module
+re-resolves once and re-fetches, replacing the stored link with whatever that
+answered: three requests for that show that night, one thereafter. A re-lookup
+that finds nothing — or that finds an id serving no episodes — stores the
+negative, so a show upstream has genuinely lost is asked about once a month
+rather than three times a night.
 
 **The module both reads a table and calls the client, and is deliberately not a
 pure repository.** The cache exists *only* to avoid a request, so a module that
@@ -114,12 +117,13 @@ async def _record_link(session: AsyncSession, show_id: int, tvmaze_id: int | Non
     expired negative and one after an invalidated id are the same write, and
     `resolved_at` moves either way because its meaning is "when we last asked".
     """
+    now = datetime.now(UTC)
     await session.execute(
         insert(m.AirdateShowState)
-        .values(show_id=show_id, tvmaze_id=tvmaze_id, resolved_at=datetime.now(UTC))
+        .values(show_id=show_id, tvmaze_id=tvmaze_id, resolved_at=now)
         .on_conflict_do_update(
             index_elements=[m.AirdateShowState.show_id],
-            set_={"tvmaze_id": tvmaze_id, "resolved_at": datetime.now(UTC)},
+            set_={"tvmaze_id": tvmaze_id, "resolved_at": now},
         )
     )
 
@@ -136,7 +140,7 @@ def _usable(link: _Link, relookup_missing_after: timedelta) -> bool:
     return datetime.now(UTC) - link.resolved_at < relookup_missing_after
 
 
-class _ShowIdentity(Protocol):
+class ShowIdentity(Protocol):
     """The four fields of a show this module needs. `ShowToCheck` satisfies it.
 
     Structural and read-only — properties rather than attributes, which is what
@@ -161,7 +165,7 @@ class _ShowIdentity(Protocol):
 async def oracle_episodes(
     session: AsyncSession,
     client: TVMazeOracleClient,
-    show: _ShowIdentity,
+    show: ShowIdentity,
     counters: SpendCounters,
     *,
     relookup_missing_after: timedelta = RELOOKUP_MISSING_AFTER,
@@ -180,11 +184,16 @@ async def oracle_episodes(
     link = await _load_link(session, show.show_id)
 
     if link is not None and _usable(link, relookup_missing_after):
-        counters.links_reused += 1
         if link.tvmaze_id is None:
+            counters.links_reused += 1
             return None
         episodes = await client.get_show_episodes(link.tvmaze_id)
         if episodes is not None:
+            # Counted only where the row actually stood in for a request and
+            # worked. A stale link falls through to `links_invalidated` and a
+            # lookup, and counting it here too would make the counter whose
+            # meaning is "no request" describe a show that spent two.
+            counters.links_reused += 1
             return episodes
         # The link has gone stale: TV Maze no longer serves that id. Counted
         # rather than merely retried, so a run quietly re-resolving many shows
@@ -199,7 +208,27 @@ async def oracle_episodes(
 
     tvmaze_id = await client.lookup_show(imdb_id=show.imdb_id, tvdb_id=show.tvdb_id)
     counters.lookups_spent += 1
-    await _record_link(session, show.show_id, tvmaze_id)
     if tvmaze_id is None:
+        await _record_link(session, show.show_id, None)
         return None
-    return await client.get_show_episodes(tvmaze_id)
+
+    episodes = await client.get_show_episodes(tvmaze_id)
+    if episodes is None:
+        # The lookup still answers, but the id it answers with serves no
+        # episodes — upstream disagreeing with itself. Recording the id would
+        # bank a link every night's first request proves dead, and only
+        # negatives expire, so the three-request dance would repeat forever.
+        # A dated negative is the honest answer and re-expires in the ordinary
+        # way.
+        log.info(
+            "show %d (%s): TV Maze id %d resolves but serves no episodes — "
+            "recording no counterpart",
+            show.show_id,
+            show.name,
+            tvmaze_id,
+        )
+        await _record_link(session, show.show_id, None)
+        return None
+
+    await _record_link(session, show.show_id, tvmaze_id)
+    return episodes
