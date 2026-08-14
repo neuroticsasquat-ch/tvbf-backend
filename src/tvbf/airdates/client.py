@@ -20,10 +20,20 @@ is where most of the shift is.
 `/shows/{id}/episodes` that carries the whole series. Against a work list of
 ~1,800 shows that is ~3,500 requests a night — about 2% of one IP's daily
 allowance, which is the number that decided the work list's scope.
+
+**The lookup answers `301`, and the id is in the `Location` header.** Measured
+against the live API on 2026-08-14: `/lookup/shows?imdb=tt2356777` returns
+`301 Moved Permanently` to `https://api.tvmaze.com/shows/5`, and a miss returns
+`404`. `follow_redirects` is deliberately left off — httpx would follow
+internally, spending a second HTTP request that the limiter never sees, which
+both breaks the two-requests-per-show budget above and understates our real
+rate against an API that is free, keyless and unfunded. The redirect target is
+the show object we do not need; the id we do need is already in the header.
 """
 
 import asyncio
 import logging
+import re
 
 import httpx
 
@@ -35,6 +45,9 @@ log = logging.getLogger(__name__)
 # The source name this client's budget is registered under in
 # `tvbf.rate_budget.BUCKETS`.
 SOURCE = "tvmaze"
+
+# What the lookup's `Location` header points at — `https://api.tvmaze.com/shows/5`.
+_SHOW_PATH = re.compile(r"/shows/(\d+)")
 
 
 def _budget(rate_calls: int, rate_window: float) -> Budget:
@@ -88,7 +101,9 @@ class TVMazeOracleClient:
     async def __aexit__(self, *exc) -> None:
         await self._client.aclose()
 
-    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response | None:
+    async def _request(
+        self, method: str, url: str, *, redirect_ok: bool = False, **kwargs
+    ) -> httpx.Response | None:
         """Perform one request. `None` means upstream answered 404.
 
         A 404 is the ordinary answer to "does TV Maze know this show?", not a
@@ -97,6 +112,11 @@ class TVMazeOracleClient:
         `None` keeps that out of the caller's exception handling, where it would
         be counted against the consecutive-failure abort and eventually stop a
         run that is working perfectly.
+
+        `redirect_ok` hands a 3xx back to the caller instead of raising, which
+        only `lookup_show` wants: a redirect is that endpoint's *success*
+        answer, and its `Location` carries the whole result. Everywhere else a
+        redirect is unexpected and should still surface.
 
         Everything else follows the retired client's shape: timeouts and network
         errors retry, a 429 waits without spending the retry budget, a 5xx
@@ -116,6 +136,9 @@ class TVMazeOracleClient:
 
             if resp.status_code == 404:
                 return None
+
+            if redirect_ok and resp.is_redirect:
+                return resp
 
             if resp.status_code == 429:
                 retry_after = resp.headers.get("Retry-After")
@@ -139,6 +162,25 @@ class TVMazeOracleClient:
             resp.raise_for_status()
             return resp
 
+    @staticmethod
+    def _show_id_from(resp: httpx.Response) -> int | None:
+        """The TV Maze show id, from whichever shape the lookup answered in.
+
+        Both are handled because the endpoint has already changed once: it is
+        documented as returning the show object and currently answers `301` to
+        `/shows/{id}` instead. Reading the id out of `Location` costs no extra
+        request; falling back to the body means a revert upstream is not an
+        outage here.
+        """
+        if resp.is_redirect:
+            location = resp.headers.get("Location", "")
+            match = _SHOW_PATH.search(location)
+            if match is None:
+                log.warning("TV Maze lookup redirected somewhere unexpected: %r", location)
+                return None
+            return int(match.group(1))
+        return TVMazeShowRef.model_validate(resp.json()).tvmaze_id
+
     async def lookup_show(self, *, imdb_id: str | None, tvdb_id: int | None) -> int | None:
         """This show's TV Maze id, by external id. `None` when neither resolves.
 
@@ -153,10 +195,16 @@ class TVMazeOracleClient:
             if value is None:
                 continue
             resp = await self._request(
-                "GET", f"{self._base_url}/lookup/shows", params={param: value}
+                "GET",
+                f"{self._base_url}/lookup/shows",
+                params={param: value},
+                redirect_ok=True,
             )
-            if resp is not None:
-                return TVMazeShowRef.model_validate(resp.json()).tvmaze_id
+            if resp is None:
+                continue
+            show_id = self._show_id_from(resp)
+            if show_id is not None:
+                return show_id
         return None
 
     async def get_show_episodes(self, show_id: int) -> list[TVMazeEpisode]:
