@@ -72,9 +72,10 @@ async def _start_run(
 async def _background_catalog_ingest(run_id: UUID, settings: Settings) -> None:
     """The TMDB full-catalog pass (NEU-1034).
 
-    A background task rather than a CLI, unlike `catalog_copy` and
-    `tmdb_enrichment`: those are minutes-to-hours one-shots with nothing to
-    poll, where this is a multi-hour pass whose progress an operator watches.
+    A background task rather than a CLI, unlike `tmdb_enrichment` (and
+    `catalog_copy`, until NEU-1051 deleted it): those are minutes-to-hours
+    one-shots with nothing to poll, where this is a multi-hour pass whose
+    progress an operator watches.
     """
     try:
         async with TMDBClient(

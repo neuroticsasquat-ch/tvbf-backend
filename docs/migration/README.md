@@ -50,22 +50,49 @@ and equally no chance to take the dump afterwards. It goes 3.5M episodes,
 484k people and 2.67M guest-cast rows, and no upstream can put the TV Maze
 originals back.
 
+### The migration refuses to run without the dump
+
+`upgrade()` raises `DumpNotVerified` when `tvmaze.show` holds real rows and
+`TVBF_TVMAZE_DUMP_VERIFIED` is not set to `yes`. That guard exists because a
+runbook sentence is not a control: every other one-shot pass here refuses
+structurally (`show_prune`'s `IngestNotRun`, then `episode_repoint`'s), and this
+is the only one where merging *is* the destructive act. It stands down below
+1,000 rows, so a fresh `db:init && migrate`, CI and the test suite never see it.
+
 ### Before merging
 
 ```bash
-./scripts/dump_tvmaze.sh                    # dumps, then test-restores on prod
+./scripts/dump_tvmaze.sh                    # dump, test-restore, reconcile — all on prod
 ```
 
-The script refuses to report success unless the restore reconciles table-for-table
-against the source and `show`, `episode`, `show_cast` and `episode_guest_cast`
-all come back non-empty. Copy both output files **off the VM** — a dump sitting
-on the machine whose loss it insures against is not a backup. Only then merge.
+Everything runs on the prod host and the dump travels once, at the end. The
+script fails rather than reporting success unless the restored database matches
+the source **table-for-table on exact `count(*)`** and `show`, `episode`,
+`show_cast` and `episode_guest_cast` all come back non-empty.
 
-The other preconditions the ticket names are matters of judgement rather than
-commands, and were satisfied as follows: the go/no-go passed 2026-08-12
-(`neu-1048-coverage-baseline.json`), the post-repoint reconciliation passed
-2026-08-13 (`neu-1125-post-repoint-snapshot.json`, gains only), `app.watch_archive`
-holds 9,359 verified rows, and the credits backfill ran 2026-08-13.
+Then, in order:
+
+1. Copy `tvmaze-<stamp>.dump` and `.counts.txt` **off the VM**. A dump sitting on
+   the machine whose loss it insures against is not a backup.
+2. Re-run the reconciliation against the live database **on the day**, which the
+   ticket asks for and the 2026-08-13 NEU-1125 run does not satisfy — that one
+   predates this change flipping `DEFAULT_SPINE` to `catalog`:
+   ```bash
+   ssh $PROD_SSH 'docker exec <tvbf-backend> python -m tvbf.jobs.reconcile capture' \
+     | task reconcile:verify -- --baseline -
+   ```
+   Gains are expected (users keep using the app); a `LOST` line is a stop.
+3. Set `TVBF_TVMAZE_DUMP_VERIFIED=yes` in Coolify.
+4. Merge. The deploy applies the migration and the schema goes.
+
+The remaining preconditions are matters of judgement rather than commands, and
+were satisfied as follows: the go/no-go passed 2026-08-12
+(`neu-1048-coverage-baseline.json`), `app.watch_archive` holds 9,359 verified
+rows, and the credits backfill ran 2026-08-13.
+
+**Take `TVBF_TVMAZE_DUMP_VERIFIED` back out of Coolify once the deploy has
+landed.** It has done its job, and a variable left set is one that cannot refuse
+anything next time.
 
 ### What the drop is safe against
 

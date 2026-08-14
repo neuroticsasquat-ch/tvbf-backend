@@ -20,10 +20,11 @@ rows while spending ~62,000 TMDB requests — 1,909,367 collide and 760,254 have
 counterpart. This is the same wall NEU-1119 hit at season grain and NEU-1066 at
 show grain, and the same answer: retire the copy in favour of the ingested row.
 
-## What makes this pass different from its two siblings
+## What makes this pass different from its siblings
 
-`season_dedupe` and `show_prune` both go out of their way *not* to touch `app`.
-This one has to: the user rows are the whole point. Three consequences, and each
+`season_dedupe` goes out of its way *not* to touch `app`, and so did
+`show_prune` before NEU-1051 deleted it. This one has to: the user rows are the
+whole point. Three consequences, and each
 is a place the pass could quietly cost somebody their history.
 
 **Three write sites, not two.** `app.user_episode_watch` and
@@ -85,13 +86,14 @@ explicit: a batch that fails leaves the cursor behind it, so **the resumption
 point is a re-run from the start**, not the cursor. That is cheap, because a
 re-run only sees what is genuinely still there — the re-pointed rows are gone.
 
-## Reverting takes two statements, and neither is `copy:catalog` alone
+## Reverting took two statements, and there is no first one any more
 
-`task copy:catalog` puts the deleted episode rows back under their original ids —
-its anti-join verification demands a catalog row per `tvmaze.episode`. It does
-**not** put the user rows back, because it never touches `app`. While `tvmaze`
-stands (NEU-1051 has not run), the second statement re-derives the pairing in
-reverse:
+`task copy:catalog` put the deleted episode rows back under their original ids —
+its anti-join verification demanded a catalog row per `tvmaze.episode`. It did
+**not** put the user rows back, because it never touched `app`. NEU-1051 deleted
+that pass with the `tvmaze` schema, so the first statement is gone and only the
+pre-drop dump can supply it. The second, recorded because it is what a restore
+would still need, re-derives the pairing in reverse:
 
     UPDATE app.user_episode_watch w
        SET episode_id = c.id

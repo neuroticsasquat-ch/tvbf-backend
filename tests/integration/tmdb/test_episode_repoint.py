@@ -414,7 +414,7 @@ async def test_batching_walks_the_whole_work_list(session, make_user):
 async def test_it_refuses_to_run_before_the_ingest(session):
     """Before the ingest almost no copy has a twin, so the pass would report a
     clean grain having moved nothing — and the report is what somebody decides
-    on. `show_prune` draws the same line for the same reason."""
+    on. `show_prune` drew the same line for the same reason, until NEU-1051."""
     await _pair(session)
     await session.commit()
 

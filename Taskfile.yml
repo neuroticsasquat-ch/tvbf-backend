@@ -62,9 +62,23 @@ tasks:
       - "{{.EXEC}} alembic revision --autogenerate -m \"{{.CLI_ARGS}}\""
 
   db:refresh:
+    # `catalog` replaces the `tvmaze` mode this target carried until NEU-1051, so
+    # `task db:refresh` still means "refresh the catalog, keep my app data" and
+    # nobody's muscle memory now drops the wrong schema. It moves far more data
+    # than the old mirror did.
+    desc: 'Refresh local tvbf with prod catalog schema (preserves local app data)'
+    cmds:
+      - 'scripts/refresh_db.sh catalog'
+
+  db:refresh:app:
     desc: 'Refresh local tvbf with prod app schema (anonymizes by default; ANONYMIZE=0 to opt out)'
     cmds:
       - 'scripts/refresh_db.sh app'
+
+  db:refresh:both:
+    desc: 'Refresh local tvbf with both prod schemas (anonymizes app by default; ANONYMIZE=0 to opt out)'
+    cmds:
+      - 'scripts/refresh_db.sh both'
 
   db:set-password:
     desc: 'Reset a local user password (task db:set-password -- email [password], default: localdev)'

@@ -7,9 +7,11 @@ place the two catalogues are ever reconciled.
 **Transitional scaffolding, and that is a design constraint rather than a
 caveat.** There is no scheduled job here, no monthly re-sweep and no delta —
 map once, resolve the residue through NEU-1044's human queue, verify, cut over.
-It runs *after* `tvbf.jobs.catalog_copy` and *before* the full TMDB ingest
-(NEU-1034); the copy's docstring explains why that order is the one that needs
-no special handling anywhere.
+It ran *after* `tvbf.jobs.catalog_copy` and *before* the full TMDB ingest
+(NEU-1034), which is the order that needed no special handling anywhere. Both
+that copy and the window are gone — NEU-1051 deleted the copy with the `tvmaze`
+schema it read — so this pass is spent; `tvbf-backend/docs/migration/README.md`
+holds the account of what it did.
 
 ## The three tiers
 

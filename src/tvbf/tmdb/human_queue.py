@@ -119,7 +119,7 @@ TOUCHED_SHOWS = f"""
 # below, which reads *from* `catalog.show` — and it reads as an empty queue,
 # which is the one wrong answer this thing must not give. It happens for real:
 # the TV Maze daily keeps adding shows right up to cutover, and every one added
-# after `task copy:catalog` ran is trackable by a user while having nothing to
+# after the copy ran was trackable by a user while having nothing to
 # map. The fix is operational (re-run the copy), so this is reported rather than
 # repaired here — but it is reported loudly, because the alternative is a queue
 # that says "empty" while a user's show has no mapping at all.
@@ -278,9 +278,11 @@ async def unmirrored_user_touched_shows(db: AsyncSession) -> list[int]:
     """Shows a user has touched that the copy never put into `catalog` — see `_UNMIRRORED`.
 
     Separate from `build_queue` because it is a different problem with a
-    different fix: these rows need `task copy:catalog` re-run, not a person's
-    judgement. Public so the cutover gate can assert it is empty alongside the
-    queue itself.
+    different fix: the row is missing rather than unmapped, so no amount of a
+    person's judgement helps. The fix used to be re-running `task copy:catalog`;
+    NEU-1051 deleted that pass with the schema it read, so such a row would now
+    have to be authored by hand. It was public for the cutover gate, which went
+    the same way; it stays public because the CLI reports it.
     """
     return [row.show_id for row in (await db.execute(_UNMIRRORED)).all()]
 

@@ -3,15 +3,16 @@
     python -m tvbf.jobs.episode_repoint repoint [--limit N]
     python -m tvbf.jobs.episode_repoint report
 
-A CLI for the same reason `season_dedupe` and `show_prune` are: a migration-window
-operation run by hand a handful of times, with no cursor to advance and nothing to
-poll. The process *is* the run, so the exit code is the result.
+A CLI for the same reason `season_dedupe` is: a migration-window operation run
+by hand a handful of times, with no cursor to advance and nothing to poll. The
+process *is* the run, so the exit code is the result.
 `tvbf.tmdb.episode_repoint` holds the pass and the report; this is argparse over
 them. It needs no TMDB credential — every question here is answered in Postgres.
 
-**This is the one migration pass that writes to `app`.** `season_dedupe` and
-`show_prune` both deliberately avoid it; this one moves 6,948 watch, rating and
-activity rows onto the ingested episode they should have pointed at all along. Run
+**This is the one migration pass that writes to `app`.** `season_dedupe`
+deliberately avoids it, as `show_prune` did before NEU-1051 deleted it; this one
+moves 6,948 watch, rating and activity rows onto the ingested episode they should
+have pointed at all along. Run
 `report` first, and read `user_touched_repointable` and `user_touched_kept` before
 spending it.
 
@@ -21,11 +22,12 @@ so the update would be rejected against the old constraint. And it has to land
 before the read paths move, or the duplicated grain is visible to users on every
 show and season page.
 
-**`task copy:catalog` does not undo this on its own.** It restores the deleted
-episode rows under their original ids but never touches `app`, so the revert is a
-second statement per write site — see the module docstring of
-`tvbf.tmdb.episode_repoint`, which is what keeps the work reversible while
-`tvmaze` stands (NEU-1051 has not run).
+**This is no longer reversible.** The revert began with `task copy:catalog`,
+which restored the deleted episode rows under their original ids but never
+touched `app` — so it always needed a second statement per write site, recorded
+in `tvbf.tmdb.episode_repoint`'s module docstring. NEU-1051 deleted that pass with
+the `tvmaze` schema, leaving the pre-drop dump as the only source for the first
+half.
 
 **Exit codes: 0 = the pass completed, 1 = it aborted, raised, or refused to run
 before the full TMDB ingest.** Episodes left
@@ -68,9 +70,9 @@ async def _repoint(limit: int | None) -> int:
         try:
             result = await repoint_episodes(session, limit=limit)
         except IngestNotRun as exc:
-            # A readable line rather than a stack trace, as `show_prune` does:
-            # the operator's next move is to run the ingest, not to read a
-            # traceback.
+            # A readable line rather than a stack trace, as `show_prune` did
+            # before NEU-1051 deleted it: the operator's next move is to run the
+            # ingest, not to read a traceback.
             log.error("%s", exc)
             return 1
         report = await build_report(session)
