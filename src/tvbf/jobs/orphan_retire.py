@@ -63,6 +63,7 @@ from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
 from tvbf.tmdb.orphan_retire import (
+    LOSS_BASIS_POSITION_ONLY,
     LOSS_DEDUPLICATION,
     LOSS_GENUINE,
     MIN_INGESTED_SHOWS,
@@ -204,6 +205,12 @@ async def _report() -> int:
     if genuine or deduped:
         # Loud, and split: folding the two together over-reports the loss by the
         # count of two-parter halves a surviving twin already records.
+        inferred = sum(
+            1
+            for loss in report.losses
+            if loss["basis"] == LOSS_BASIS_POSITION_ONLY
+            and loss["disposition"] == LOSS_DEDUPLICATION
+        )
         log.warning(
             "%d user row(s) would be deleted rather than moved: %d a genuine loss, %d a "
             "de-duplication a surviving twin already records. Read `losses` before running "
@@ -212,6 +219,15 @@ async def _report() -> int:
             genuine,
             deduped,
         )
+        if inferred:
+            # `basis` is the reviewer's handle on which verdicts rest on evidence
+            # and which on inference — the inferred ones are where a wrong "no
+            # loss here" would hide.
+            log.warning(
+                "%d of those de-duplications rest on position and air date rather than on a "
+                "match the pass itself made (`basis: position_only`) — check those rows first",
+                inferred,
+            )
     if report.show_watches_to_create:
         log.info(
             "%d My Shows row(s) would be created for history moving to a series the user "

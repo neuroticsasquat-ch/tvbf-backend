@@ -32,6 +32,8 @@ from tvbf.app.models import (
 )
 from tvbf.catalog import models as cm
 from tvbf.tmdb.orphan_retire import (
+    LOSS_BASIS_MATCHED_TWIN,
+    LOSS_BASIS_POSITION_ONLY,
     LOSS_DEDUPLICATION,
     LOSS_GENUINE,
     TIER_EXACT_KEY,
@@ -563,8 +565,24 @@ async def test_an_orphan_with_no_counterpart_is_deleted_with_its_user_rows(sessi
 
 
 @pytest.mark.asyncio
-async def test_a_two_parter_half_is_reported_as_a_deduplication_not_a_loss(session, make_user):
-    """§6 — the classifier asks what absorbed this position, never the adjacent number."""
+async def test_without_air_dates_a_collapse_is_reported_as_a_loss_it_may_not_be(session, make_user):
+    """Both loss bases in one case, and the conservative half of the same-day rule.
+
+    `Part 1` sits on the ingested episode's exact key, so the matcher pairs them
+    and the collision that follows is **proven** redundant — no date is
+    consulted. `Part 2` has no twin, so its verdict rests on which ingested
+    episode occupies its position, and with no air date on either side there is
+    no evidence that one broadcast became one row. The inference is refused and
+    it reads as a genuine loss, even though this *is* the two-parter shape.
+
+    That asymmetry is deliberate and runs the safe way: telling a reviewer
+    something was lost when it was not costs them a look at `app.watch_archive`,
+    where the converse tells them nothing was lost when it was — before a pass
+    that cannot be undone.
+
+    The dated version, where the inference succeeds, is
+    `test_a_two_parter_sharing_its_air_date_is_still_a_deduplication`.
+    """
     user = await make_user(email="or10@example.com")
     show = await _show(session, tmdb_id=_next_id(), name="Friends")
     kept = await _episode(
@@ -592,10 +610,17 @@ async def test_a_two_parter_half_is_reported_as_a_deduplication_not_a_loss(sessi
 
     report = await build_report(session, min_ingested=_NO_FLOOR)
 
-    # Both halves collapse into the ingested episode the user already holds, so
-    # neither is a loss — the asymmetry §6 flagged in the probe is gone.
-    assert report.loss_summary == {LOSS_DEDUPLICATION: 2}
-    assert {loss["absorbed_by_episode_id"] for loss in report.losses} == {kept}
+    # §6's asymmetry is gone in the way that matters: the original probe called
+    # `Part 1` a de-duplication and `Part 2` a loss on the strength of which
+    # adjacent number it happened to check. Here the two verdicts differ for a
+    # reason the report states — one is proven, the other inferred and refused.
+    assert report.loss_summary == {LOSS_DEDUPLICATION: 1, LOSS_GENUINE: 1}
+    assert {loss["basis"] for loss in report.losses} == {
+        LOSS_BASIS_MATCHED_TWIN,
+        LOSS_BASIS_POSITION_ONLY,
+    }
+    proven = next(x for x in report.losses if x["basis"] == LOSS_BASIS_MATCHED_TWIN)
+    assert proven["episode_number"] == 24 and proven["absorbed_by_episode_id"] == kept
 
     await retire_orphans(session, min_ingested=_NO_FLOOR)
     assert await _watch_targets(session, user.id) == [kept]
@@ -900,3 +925,115 @@ async def test_a_special_does_not_poison_the_season_offset(session, make_user):
 
     await retire_orphans(session, min_ingested=_NO_FLOOR)
     assert await _watch_targets(session, user.id) == [twin]
+
+
+@pytest.mark.asyncio
+async def test_an_orphan_past_the_end_of_the_season_is_a_loss_not_a_deduplication(
+    session, make_user
+):
+    """The Hook Up Plan's shape, found on the first production report run.
+
+    TMDB's season ends at 6; the orphan is a lockdown special from ten months
+    later. The episode occupying its position is an unrelated finale the user
+    watched independently, so calling it "absorbed" told the reviewer nothing was
+    lost when something was. A merged two-parter airs in one slot, so the
+    absorbing row carries the orphan's air date — that is what separates the two.
+    """
+    user = await make_user(email="or17@example.com")
+    show = await _show(session, tmdb_id=_next_id(), name="The Hook Up Plan")
+    finale = await _episode(
+        session,
+        show,
+        tmdb_id=_next_id(),
+        season=2,
+        number=6,
+        name="The Love Plan",
+        air_date=date(2019, 10, 11),
+    )
+    orphan = await _episode(
+        session,
+        show,
+        tmdb_id=None,
+        season=2,
+        number=7,
+        name="Plan Confines",
+        air_date=date(2020, 8, 26),
+    )
+    await _watch(session, user.id, finale)
+    await _watch(session, user.id, orphan)
+
+    report = await build_report(session, min_ingested=_NO_FLOOR)
+
+    assert report.loss_summary == {LOSS_GENUINE: 1}
+    assert [loss["basis"] for loss in report.losses] == [LOSS_BASIS_POSITION_ONLY]
+
+
+@pytest.mark.asyncio
+async def test_a_two_parter_sharing_its_air_date_is_still_a_deduplication(session, make_user):
+    """The other side of the same rule: one broadcast really did become one row."""
+    user = await make_user(email="or18@example.com")
+    show = await _show(session, tmdb_id=_next_id(), name="Friends")
+    merged = await _episode(
+        session,
+        show,
+        tmdb_id=_next_id(),
+        season=6,
+        number=23,
+        name="The One with the Proposal",
+        air_date=date(2000, 5, 18),
+    )
+    for number, title in ((24, "The One With the Proposal, Part 1"), (25, "Part 2")):
+        orphan = await _episode(
+            session,
+            show,
+            tmdb_id=None,
+            season=6,
+            number=number,
+            name=title,
+            air_date=date(2000, 5, 18),
+        )
+        await _watch(session, user.id, orphan)
+    await _watch(session, user.id, merged)
+
+    report = await build_report(session, min_ingested=_NO_FLOOR)
+
+    assert report.loss_summary == {LOSS_DEDUPLICATION: 2}
+    assert {loss["basis"] for loss in report.losses} == {LOSS_BASIS_POSITION_ONLY}
+
+
+@pytest.mark.asyncio
+async def test_a_collision_on_a_matched_twin_is_proven_not_inferred(session, make_user):
+    """Shrinking's shape: the matcher paired the rows, so no date test applies.
+
+    Its TMDB and TV Maze air dates differ by a day (NEU-1145), and a blanket
+    "dates must agree" rule would have turned a proven redundancy into a reported
+    loss.
+    """
+    user = await make_user(email="or19@example.com")
+    show = await _show(session, tmdb_id=_next_id(), name="Shrinking")
+    twin = await _episode(
+        session,
+        show,
+        tmdb_id=_next_id(),
+        season=3,
+        number=11,
+        name="And That's Our Time",
+        air_date=date(2026, 4, 7),
+    )
+    orphan = await _episode(
+        session,
+        show,
+        tmdb_id=None,
+        season=3,
+        number=12,
+        name="And That's Our Time",
+        air_date=date(2026, 4, 8),
+    )
+    await _watch(session, user.id, twin)
+    await _watch(session, user.id, orphan)
+
+    report = await build_report(session, min_ingested=_NO_FLOOR)
+
+    assert report.by_tier[TIER_SAME_SHOW_TITLE] == 1
+    assert report.loss_summary == {LOSS_DEDUPLICATION: 1}
+    assert [loss["basis"] for loss in report.losses] == [LOSS_BASIS_MATCHED_TWIN]
