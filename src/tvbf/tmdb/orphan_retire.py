@@ -412,6 +412,16 @@ def classify_rejection(
     return REJECT_NO_COUNTERPART
 
 
+def _is_special(row: EpisodeRow) -> bool:
+    """Either kind of special, decided the way `catalog/episodes.py` decides it.
+
+    TMDB's season 0, or the negative `episode_number` NEU-1042 invented for a
+    TV Maze special. The SQL definitions are `IS_SPECIAL` / `IS_COPIED_SPECIAL`
+    there; this is the row-object half, kept in step with them.
+    """
+    return row.season_number == 0 or row.episode_number < 0
+
+
 def _evidence_pairs(
     orphans: Sequence[EpisodeRow], candidates: Sequence[EpisodeRow]
 ) -> list[tuple[EpisodeRow, EpisodeRow]]:
@@ -465,10 +475,11 @@ def resolve_link(
     sibling still links, which is the only thing that can reach a show carrying
     no episodes to produce evidence from (Discretion).
 
-    The offset is required to be **consistent** across the evidence pairs.
-    Nothing anywhere resolves an inconsistent offset by taking the commonest —
-    an anthology counterpart legitimately has none, and tier 2b is what handles
-    it.
+    The offset is required to be **consistent** across the evidence pairs that
+    can speak to it — which excludes specials, for the reason given at the
+    computation. Nothing anywhere resolves a genuinely inconsistent offset by
+    taking the commonest: an anthology counterpart legitimately has none, and
+    tier 2b is what handles that.
     """
     with_evidence: list[tuple[int, list[tuple[EpisodeRow, EpisodeRow]]]] = []
     for sibling in siblings:
@@ -481,7 +492,25 @@ def resolve_link(
 
     if len(with_evidence) == 1:
         to_show_id, pairs = with_evidence[0]
-        offsets = {o.season_number - t.season_number for o, t in pairs}
+        # **Specials are excluded from the offset, and this is not a tolerance
+        # for outliers.** NEU-1042 numbered a TV Maze special negative *within
+        # its original season* while TMDB parks specials in season 0, so a
+        # special's season relationship is precisely the one that does not
+        # follow the series'. Feeding it in is a category error, and one such
+        # pair is enough to make a unanimous offset look inconsistent.
+        #
+        # Measured against production 2026-08-14, Will & Grace: 47 evidence
+        # pairs give offset 8 and one — orphan `s11e-1` against TMDB's `s0e1` —
+        # gives 11. Including it collapsed the offset to `None`, dropped the
+        # show to the title fallback, and rescued 16 of 17 user-touched rows.
+        # That is the exact outcome the acceptance criteria name as a failure.
+        # Excluding specials leaves `{8}` unanimous, so the consistency rule
+        # stays strict — nothing here takes the commonest offset.
+        offsets = {
+            o.season_number - t.season_number
+            for o, t in pairs
+            if not _is_special(o) and not _is_special(t)
+        }
         return LinkResolution(
             link=ShowLink(
                 from_show_id=from_show_id,

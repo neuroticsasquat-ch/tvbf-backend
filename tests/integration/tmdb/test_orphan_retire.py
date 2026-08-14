@@ -853,3 +853,50 @@ async def test_an_orphan_show_referenced_by_import_staging_is_kept_and_named(ses
     assert result.shows_kept_referenced == (orphan_show,)
     await session.execute(text("DROP TABLE import_ne.show_resolution"))
     await session.commit()
+
+
+@pytest.mark.asyncio
+async def test_a_special_does_not_poison_the_season_offset(session, make_user):
+    """Production's Will & Grace shape: 47 pairs at offset 8, one special at 11.
+
+    NEU-1042 numbered a TV Maze special negative *within its original season*
+    while TMDB parks specials in season 0, so a special's season relationship is
+    the one that does not follow the series'. Letting it into the offset made a
+    unanimous 8 look inconsistent, collapsed the offset to `None`, and dropped
+    the whole show to the title fallback — which rescues 16 of the 17
+    user-touched rows and is named in the acceptance criteria as a failure.
+    """
+    user = await make_user(email="or16@example.com")
+    original, revival, orphan, twin = await _will_and_grace(session)
+    # The poison pair: a copied special in season 11 whose title and air date
+    # match a TMDB special in season 0. Offset 11, against the series' 8.
+    await _episode(
+        session,
+        original,
+        tmdb_id=None,
+        season=11,
+        number=-1,
+        name="Behind the Scenes",
+        air_date=date(2020, 4, 23),
+    )
+    await _episode(
+        session,
+        revival,
+        tmdb_id=_next_id(),
+        season=0,
+        number=1,
+        name="Behind the Scenes",
+        air_date=date(2020, 4, 23),
+    )
+    await _watch(session, user.id, orphan)
+
+    report = await build_report(session, min_ingested=_NO_FLOOR)
+
+    assert [link["season_offset"] for link in report.links] == [8]
+    # The premiere moves on the offset key, not the title fallback — which is
+    # the whole point, since its title does not fold equal to the twin's.
+    assert report.by_tier_user_touched[TIER_LINK_OFFSET_KEY] == 1
+    assert report.by_tier_user_touched[TIER_LINK_TITLE] == 0
+
+    await retire_orphans(session, min_ingested=_NO_FLOOR)
+    assert await _watch_targets(session, user.id) == [twin]
