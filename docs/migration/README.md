@@ -41,7 +41,7 @@ pointing at unmapped rows.
 | On-the-day reconciliation (NEU-1051) | `reconcile verify` in the prod container | **before** the drop | ✅ 2026-08-14 — **GO**. Exit 1 with 8 discrepancies, every one a *gain* from one user's app use after the baseline (Ted Lasso +1 watch +1 rating, Lucky +1 watch +1 rating, Arrested Development +9 watches, +13 activity events total); no `LOST` line |
 | Pre-drop dump (NEU-1051) | `scripts/dump_tvmaze.sh` | **before** the drop | ✅ 2026-08-14 — 261,153,828 bytes, test-restored on prod and reconciled table-for-table across all 18 tables (3,533,911 episodes, 2,681,043 guest-cast, 485,271 people, 89,082 shows). Artifact `tvmaze-20260814T003446Z.dump` + `.counts.txt` |
 | `tvmaze` drop (NEU-1051) | migration `a7e3c8d15f42`, applied on deploy | **after the credits backfill and the dump**; last of the migration | ⬜ merging the PR *is* the run — Coolify applies migrations on deploy, and the migration refuses without `TVBF_TVMAZE_DUMP_VERIFIED=yes` |
-| Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ⬜ **report run 2026-08-14** (artifact `neu-1146-pre-run-report.json`, and it caught the tier-2 special-offset bug fixed in #255); **the pass itself has not run.** Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
+| Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ✅ **2026-08-14 — criterion 7 met, catalog is TMDB-sourced throughout.** 0 `tmdb_id IS NULL` rows at all three grains, verified by query. Reconciliation matched the prediction **exactly** on all six metrics; 30 discrepancies, every one enumerated in advance, no unlisted `LOST` line. Needed `neu-1146-import-ne-remediation.sql` between two runs. Earlier note: report run 2026-08-14 (artifact `neu-1146-pre-run-report.json`, and it caught the tier-2 special-offset bug fixed in #255); **the pass itself has not run.** Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
 
 
 ## Dropping `tvmaze` (NEU-1051)
@@ -700,6 +700,75 @@ produce a `LOST` line on the original and a `GAINED` line on the revival. Nothin
 is lost — it is the same 17 rows under the show TMDB models them as belonging to
 — but a reader scanning for `LOST` will find it, and it is the single largest one
 in the diff. Check that the two sides balance before reading it as anything else.
+
+### What the run actually did — 2026-08-14
+
+Two runs, with a hand-applied remediation between them.
+
+**First run.** Cleared both lower grains completely — 0 orphan episodes, 0 orphan
+seasons — and stopped at the show grain, exiting 1:
+
+    kept 2 orphan show(s) still referenced by import_ne staging rows or still
+    holding catalog rows: 63900, 87519
+    2 orphan row(s) remain — 0 episode(s), 0 season(s), 2 show(s)
+
+Both were empty husks by then: 0 episodes, 0 seasons, **0 user rows of any kind**
+— the show-grain links had already moved every `user_show_watch` onto its
+counterpart. The sole blocker was one `import_ne.show_resolution` row apiece, and
+`show_resolution_show_id_fkey` is the **only NO ACTION foreign key into
+`catalog.show`**; the other 23 all CASCADE. That exit code is the design working:
+the pass will not rewrite another subsystem's records, so it reported and
+refused rather than cascading over them.
+
+**The remediation.** `neu-1146-import-ne-remediation.sql` re-points those two
+staging rows onto the linked shows, guarded by preconditions that refuse unless
+the database is in exactly the state described. Applied 2026-08-14.
+
+**Second run.** Deleted the two shows and exited 0 — *"no orphan rows remain at
+any grain — the catalog is TMDB-sourced throughout"*. Confirmed independently
+rather than taken on the pass's word:
+
+```sql
+SELECT 'episode', count(*) FROM catalog.episode WHERE tmdb_id IS NULL
+UNION ALL SELECT 'season', count(*) FROM catalog.season WHERE tmdb_id IS NULL
+UNION ALL SELECT 'show',   count(*) FROM catalog.show   WHERE tmdb_id IS NULL;
+-- 0 | 0 | 0
+```
+
+### The reconciliation matched the prediction exactly
+
+30 discrepancies, and **every one was enumerated before the run**:
+
+| Metric | Net | Predicted |
+| -- | --: | --: |
+| `episode_watches` | −112 | −112 |
+| `episode_ratings` | −1 | −1 |
+| `activity_events` | −7 | −7 |
+| `tracked_shows` | +1 | +1 |
+| `show_ratings` | 0 | 0 |
+
+**No unlisted `LOST` line** — criterion 4 holds. Every show's loss matches the
+committed pre-run list row for row: Saturday Night Live 60, Parks 15, Friends 12,
+Lost 8, Brooklyn Nine-Nine 4, and each single-row tail down to And Just Like
+That. The three shapes flagged in advance all behaved as described: Will & Grace
+showed `LOST 17` on `549` against `GAINED 17` on `1064267` (the move, balanced);
+the seven activity events were exactly the seven predicted; and `tracked_shows`
+netted +1 from two moves plus the one row §4.3 creates.
+
+### One thing to not misattribute later
+
+**323 episodes across 15 shows carry a null `season_id`, and this pass created 2
+of them.** The rest predate it. The pass counts what it does here directly —
+`episodes_left_without_season`, taken after the re-point and before the delete —
+and reported 2, which is an orphan season having no ingested counterpart of that
+number for its episodes to inherit.
+
+None of the 323 carries a user watch or rating, and 229 of them still have a
+season row for their number, so the read paths are unaffected either way:
+`catalog/seasons.py` builds the season list from `catalog.season`, and an episode
+keeps its `show_id` and `season_number` regardless. The remaining 94 are a
+pre-existing data-quality question worth its own ticket, not evidence about this
+one.
 
 ## Credits backfill (NEU-1127)
 
