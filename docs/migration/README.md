@@ -475,8 +475,35 @@ decision that permits it.
 **Read the report first. It is not optional, and it is the artifact of record.**
 
 ```bash
-# safe against production: writes nothing, needs no TMDB credential
-task retire:orphans:report > neu-1146-report-$(date -u +%Y%m%dT%H%M%SZ).json
+# local
+task retire:orphans:report
+
+# production — writes nothing, needs no TMDB credential, safe to run any time
+ssh tom@ssh.neuroticsasquat.ch \
+  'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.orphan_retire report' \
+  > docs/migration/neu-1146-pre-run-report.json
+```
+
+**The `task` targets run `docker compose exec` against the *local* container and
+never touch production** — that is true of every target in this repo, and it is
+worth saying once here because this is the pass where running the wrong one
+matters least (it refuses locally, the dev database being far below the ingest
+floor) and reading the wrong output matters most. Every figure below came from
+the `ssh` form.
+
+Coolify names the container with a random suffix that **changes on every
+deploy**, so resolve it rather than hardcoding it:
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch "docker ps --format '{{.Names}}' | grep '^tvbf-backend'"
+```
+
+Check the image tag is the commit you expect while you are there — the tag *is*
+the SHA, which is the only proof the deploy carrying your fix has actually
+landed:
+
+```bash
+ssh tom@ssh.neuroticsasquat.ch "docker ps --format '{{.Image}}\t{{.Status}}' | grep tvbf-backend"
 ```
 
 Three things in it decide whether to proceed:
@@ -486,11 +513,13 @@ Three things in it decide whether to proceed:
    `deduplication` means the user already holds a row on the surviving twin, so
    one viewing keeps one row and **nothing is lost**; `genuine_loss` means TMDB
    does not model that content as an episode of that series. Folding the two
-   together over-reports the loss by roughly the count of two-parter halves — the
-   2026-08-14 measurement was 109 deleted watch rows of which only ~95 were real.
-   Diff this list against the spec's §6 and **commit the copy the run printed**,
-   not the spec's; the figures move as deltas land.
-2. **`links`** — every show link tier 2 would make, worst first. There were 130
+   together over-reports the loss by the count of two-parter halves — the
+   2026-08-14 run deleted 112 watch rows and 1 rating, of which 95 were real
+   losses and 18 were de-duplications. Read `basis` alongside it (below): it says
+   which verdicts the pass proved and which it inferred. Diff the list against
+   the spec's §6 and **commit the copy the run printed**, not the spec's; the
+   figures move as deltas land.
+2. **`links`** — every show link tier 2 would make, worst first. There were 166
    against production, which is more than anyone will review by hand and does not
    need to be: for an orphan carrying no user rows, tier 2 and tier 3 end in the
    same place (the row is deleted either way), so **only rows with
@@ -503,10 +532,25 @@ Three things in it decide whether to proceed:
 Then capture a fresh reconciliation baseline, run a smoke pass, and run it:
 
 ```bash
-task reconcile:capture > neu-1146-pre-run-baseline.json   # immediately before
-task retire:orphans -- --limit 100                        # smoke run
-task retire:orphans
+# production, and there is no useful local equivalent for any of this
+BE=$(ssh tom@ssh.neuroticsasquat.ch "docker ps --format '{{.Names}}' | grep '^tvbf-backend'")
+
+# the baseline, immediately before — read-only
+ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.reconcile capture" \
+  > docs/migration/neu-1146-pre-run-baseline.json
+
+# smoke run, then the pass
+ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire --limit 100"
+ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire"
+
+# the verdict, baseline back in on stdin
+ssh tom@ssh.neuroticsasquat.ch \
+  "docker exec -i $BE python -m tvbf.jobs.reconcile verify --baseline -" \
+  < docs/migration/neu-1146-pre-run-baseline.json
 ```
+
+Note `--limit 100` takes no `--` here: that separator is go-task's way of
+forwarding `{{.CLI_ARGS}}` and means nothing to the module.
 
 `--limit` rounds **up to a show boundary** — a show is one transaction and one
 link resolution — so a limit of 100 landing on Saturday Night Live retires all 89
