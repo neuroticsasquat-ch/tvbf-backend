@@ -483,6 +483,196 @@ class WatchArchive(Base):
     )
 
 
+# The four terminal states one weekly-pass attempt for one user can end in
+# (project spec §9). Three of them look identical from outside the database —
+# never ran, ran and resolved nothing, ran and failed — and at 3-5 users nobody
+# is going to file a bug, so the set row is the only place a failure becomes
+# visible at all.
+#
+# The vocabulary is ours rather than an upstream value, so a CHECK constraint is
+# the right guard, on `ck_show_match_method`'s precedent: a typo'd status is a
+# bug in our own writer, not a value somebody else changed on us.
+SET_STATUS_SUCCEEDED = "succeeded"
+SET_STATUS_FAILED = "failed"
+SET_STATUS_NO_MATCHES = "no_matches"
+SET_STATUS_INSUFFICIENT_HISTORY = "insufficient_history"
+
+RECOMMENDATION_SET_STATUSES: tuple[str, ...] = (
+    SET_STATUS_SUCCEEDED,
+    SET_STATUS_FAILED,
+    SET_STATUS_NO_MATCHES,
+    SET_STATUS_INSUFFICIENT_HISTORY,
+)
+
+# Which resolution tier turned a model-authored title + year into a
+# `catalog.show` surrogate id (project spec §8): the show's own folded name, or
+# one of its AKAs. It ports NEU-1043's `match_method` for the reason that column
+# exists there — it makes one tier retractable as a batch, a `WHERE` clause
+# rather than a re-run of every user.
+MATCHED_VIA_NAME = "name"
+MATCHED_VIA_AKA = "aka"
+
+RECOMMENDATION_MATCHED_VIA: tuple[str, ...] = (MATCHED_VIA_NAME, MATCHED_VIA_AKA)
+
+
+def _one_of(column: str, values: tuple[str, ...]) -> str:
+    """Render `col IN ('a', 'b')` from the tuple above.
+
+    It keeps the constraint `create_all` builds and the constant the writers
+    import in step with each other. **The migration holds the same list written
+    out**, on the `watch_archive_no_mutation` trigger's terms: declared twice on
+    purpose, so a value added here has to be added there too, in the same commit
+    and as an `ALTER ... DROP CONSTRAINT` / `ADD CONSTRAINT` pair. Nothing can
+    check that for you — the test suite builds these tables from the models and
+    never sees the migration's copy.
+    """
+    return "{} IN ({})".format(column, ", ".join(f"'{value}'" for value in values))
+
+
+class UserRecommendationSet(Base):
+    """One generated batch of recommendations for one user.
+
+    **This row is what makes the weekly swap atomic and non-destructive**
+    (project spec §9): the pass inserts a new set with its rows, and the
+    previous set simply stops being the newest. Nothing is deleted ahead of a
+    write that might fail, so a provider outage at 4am on Sunday leaves last
+    week's recommendations standing rather than blanking the section — which is
+    the single most important property of this table. A set is superseded,
+    never mutated; reads take the newest row per user carrying
+    `status = 'succeeded'`.
+
+    It is also the run record. There is deliberately no `ingest_run` row and no
+    run table of any kind for this job (project spec §10): a set already carries
+    status, timing, tokens and the raw response per user, and a second home for
+    run rows would mean a second stale-run cleanup, a second liveness guard and
+    a second status route for a job that finishes in seconds.
+
+    `compiled_payload` and `raw_response` together are how a bad recommendation
+    gets diagnosed — what the model was told *and* what it said. ~12KB for the
+    heaviest user and ~52 rows per user per year, so nothing prunes them. That
+    does put a second copy of the user's watch history here, which is why
+    `user_id` cascades: it is what keeps account deletion complete, deliberately
+    unlike `watch_archive` above, which carries no foreign key at all.
+    """
+
+    __tablename__ = "user_recommendation_set"
+    __table_args__ = (
+        CheckConstraint(
+            _one_of("status", RECOMMENDATION_SET_STATUSES),
+            name="ck_user_recommendation_set_status",
+        ),
+        # Every read of this table is "the newest rows for one user", which the
+        # spec's own is: reads take the newest row per user carrying
+        # `status = 'succeeded'` (§9). Postgres scans a btree backwards, so one
+        # ascending index serves that without a DESC term, and the status filter
+        # falls out of a handful of rows rather than needing a term of its own —
+        # a user accrues ~52 sets a year.
+        #
+        # Which set the regeneration gate compares its hash against is NEU-1108's
+        # to decide and deliberately not settled here. It is not free either way:
+        # a `failed` set carries a `payload_hash` like any other, so a gate
+        # reading the newest set of *any* status would skip an unchanged user
+        # forever after one provider outage.
+        Index("ix_user_recommendation_set_user_generated", "user_id", "generated_at"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+
+    # The regeneration gate (project spec §9.1) compares this against the hash of
+    # the payload it just compiled; identical means skip the call. It covers the
+    # payload, `prompt_version` and `model` — which is why those two are stored
+    # beside it rather than inferred from whatever the code holds today, since a
+    # prompt edit has to re-run everybody exactly once and that is only
+    # observable against the version the set was generated under.
+    #
+    # NOT NULL at every status, because all four are reached *after* the payload
+    # is compiled: `insufficient_history` from the floor, `failed` from the call,
+    # `no_matches` from resolution, `succeeded` from a set that resolved.
+    payload_hash: Mapped[str] = mapped_column(Text, nullable=False)
+    prompt_version: Mapped[str] = mapped_column(Text, nullable=False)
+    model: Mapped[str] = mapped_column(Text, nullable=False)
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+
+    # Cost recorded at the point of spend, which is what makes "does this scale"
+    # answerable at all. Nullable because a call that never returned reports no
+    # usage, and one that was never made spends nothing.
+    input_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    output_tokens: Mapped[int | None] = mapped_column(Integer, nullable=True)
+
+    compiled_payload: Mapped[dict] = mapped_column(JSONB, nullable=False)
+    # Nullable for the same reason the token counts are: there is no response to
+    # record when the provider failed or was never asked.
+    raw_response: Mapped[dict | None] = mapped_column(JSONB, nullable=True)
+
+
+class UserRecommendation(Base):
+    """One resolved suggestion inside a set.
+
+    The pass asks the model for 25 and the surface displays 12 (project spec
+    §7): the headroom absorbs resolution failures, the never-recommend filter,
+    and the tombstone/adult filtering that happens at *read* time, since a set
+    generated in March can name a show tombstoned in June.
+
+    `reason` is the first LLM-authored prose TVBF shows users. It renders as
+    plain text, never markup, and it can assert things about a show that are
+    untrue.
+    """
+
+    __tablename__ = "user_recommendation"
+    __table_args__ = (
+        CheckConstraint(
+            _one_of("matched_via", RECOMMENDATION_MATCHED_VIA),
+            name="ck_user_recommendation_matched_via",
+        ),
+        # The model's own ordering is the only ordering there is, so a set holds
+        # each rank once. Its leading column is also the index every read of a
+        # set uses, so `set_id` needs no index of its own.
+        UniqueConstraint("set_id", "rank", name="uq_user_recommendation_set_rank"),
+        # Not for reading. `show_id` is an `ON DELETE CASCADE` FK into
+        # `catalog.show`, and Postgres has to find the referencing rows every
+        # time a show is deleted — the tombstone pass and `orphan_retire` both
+        # do that in bulk. `ix_user_show_rating_show_id` exists for the same
+        # reason.
+        Index("ix_user_recommendation_show_id", "show_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=func.gen_random_uuid(),
+    )
+    set_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user_recommendation_set.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    # Named explicitly, like every other `app` -> `catalog` foreign key, because
+    # the test suite builds these tables with `create_all` and production builds
+    # them with Alembic, and the two have to agree on the constraint's name.
+    show_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("catalog.show.id", ondelete="CASCADE", name="fk_user_recommendation_show"),
+        nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    matched_via: Mapped[str] = mapped_column(Text, nullable=False)
+
+
 # The append-only trigger rides the table's own create event so the two ways this
 # table comes into being — `alembic upgrade` in dev and prod, `create_all` in the
 # test suite — produce the same object. Wiring it only into the migration would

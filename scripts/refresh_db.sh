@@ -164,7 +164,15 @@ UPDATE app."user" SET
 -- local copy. It cannot be UPDATEd -- the append-only trigger forbids that --
 -- and TRUNCATE is the right answer anyway: the archive is a production
 -- artifact, and `task archive:watches` regenerates a local one on demand.
-TRUNCATE app.session, app.login_attempt, app.invite, app.watch_archive CASCADE;
+-- `user_recommendation_set.compiled_payload` is the same problem one table over
+-- (NEU-1106): it is a second copy of the user's watch history, and anonymising
+-- `app."user"` renames the account without touching what the set holds about
+-- them. `raw_response` carries the model's prose about that history too. The
+-- sets are cheap to regenerate and worthless out of their own week, so they
+-- truncate rather than being rewritten; `user_recommendation` goes with them on
+-- the CASCADE.
+TRUNCATE app.session, app.login_attempt, app.invite, app.watch_archive,
+         app.user_recommendation_set CASCADE;
 SQL
   if [[ -n "$ADMIN_EMAIL_VAL" ]]; then
     echo "  ✓ Admin user preserved: log in as $ADMIN_EMAIL_VAL / 'localdev'."
