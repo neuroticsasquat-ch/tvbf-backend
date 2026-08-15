@@ -1,0 +1,31 @@
+{
+  "service_tier": "default",
+  "id": "chatcmpl-Rn3o2TqN8Kzc3y94Q1RRjzFF",
+  "object": "chat.completion",
+  "created": 1786827637,
+  "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"recommendations\": [{\"title\": \"The Shield\", \"release_year\": 2002, \"reason\": \"A gritty, morally complex crime drama with intense performances and serialized storytelling akin to The Wire.\"}, {\"title\": \"Boardwalk Empire\", \"release_year\": 2010, \"reason\": \"A period crime saga with rich character development and political intrigue, similar to The Sopranos.\"}, {\"title\": \"Fargo\", \"release_year\": 2014, \"reason\": \"Darkly comic crime anthology with meticulous plotting and memorable villains, appealing to fans of Breaking Bad.\"}, {\"title\": \"True Detective\", \"release_year\": 2014, \"reason\": \"A brooding, atmospheric crime anthology with deep character studies and philosophical undertones.\"}, {\"title\": \"Ozark\", \"release_year\": 2017, \"reason\": \"A tense drama about a family drawn into money laundering, echoing the desperation and moral decay of Breaking Bad.\"}, {\"title\": \"Halt and Catch Fire\", \"release_year\": 2014, \"reason\": \"A character-driven period piece about ambition and innovation, with the same slow-burn intensity as Mad Men.\"}, {\"title\": \"The Americans\", \"release_year\": 2013, \"reason\": \"A layered spy drama about identity and loyalty, offering the same psychological depth as The Sopranos.\"}, {\"title\": \"Justified\", \"release_year\": 2010, \"reason\": \"A modern western crime series with sharp dialogue and a charismatic antihero, reminiscent of Deadwood.\"}, {\"title\": \"Peaky Blinders\", \"release_year\": 2013, \"reason\": \"A stylish period gangster saga with family power struggles and violent ambition, similar to Boardwalk Empire.\"}, {\"title\": \"Narcos\", \"release_year\": 2015, \"reason\": \"A fast-paced crime drama about drug cartels and law enforcement, capturing the sprawling scope of The Wire.\"}, {\"title\": \"Mindhunter\", \"release_year\": 2017, \"reason\": \"A slow-burning psychological thriller about criminal profiling, with the meticulous realism of Better Call Saul.\"}, {\"title\": \"The Deuce\", \"release_year\": 2017, \"reason\": \"A gritty exploration of the rise of the porn industry in 1970s New York, sharing The Wire's social realism.\"}, {\"title\": \"Treme\", \"release_year\": 2010, \"reason\": \"From the creator of The Wire, this ensemble drama about post-Katrina New Orleans offers rich community storytelling.\"}, {\"title\": \"Succession\", \"release_year\": 2018, \"reason\": \"A sharp, darkly funny study of power and family dysfunction, appealing to fans of Mad Men's corporate intrigue.\"}, {\"title\": \"Rectify\", \"release_year\": 2013, \"reason\": \"A quiet, deeply character-focused drama about a man released from death row, with the emotional weight of Better Call Saul.\"}, {\"title\": \"The Leftovers\", \"release_year\": 2014, \"reason\": \"A philosophical, emotionally intense series about loss and meaning, for viewers who appreciate The Sopranos' existential themes.\"}, {\"title\": \"Dead Like Me\", \"release_year\": 2003, \"reason\": \"A darkly humorous take on mortality and bureaucracy, with the offbeat tone that some Mad Men fans enjoy.\"}, {\"title\": \"Banshee\", \"release_year\": 2013, \"reason\": \"A pulpy, violent crime drama about an ex-con assuming a sheriff's identity, with the adrenaline of Breaking Bad.\"}, {\"title\": \"The Knick\", \"release_year\": 2014, \"reason\": \"A period medical drama with unflinching realism and a brilliant central performance, directed by Steven Soderbergh.\"}, {\"title\": \"Mr. Inbetween\", \"release_year\": 2018, \"reason\": \"A darkly comic Australian crime series about a hitman balancing work and family, with deadpan wit and sudden violence.\"}, {\"title\": \"Gomorrah\", \"release_year\": 2014, \"reason\": \"A brutally realistic Italian crime saga about the Camorra, matching The Wire's unromantic view of organized crime.\"}, {\"title\": \"The Night Of\", \"release_year\": 2016, \"reason\": \"A meticulous limited series about a murder case and the criminal justice system, with the moral complexity of The Wire.\"}, {\"title\": \"Hannibal\", \"release_year\": 2013, \"reason\": \"A visually stunning psychological thriller with a cat-and-mouse dynamic, for fans of the tension in Breaking Bad.\"}, {\"title\": \"Chernobyl\", \"release_year\": 2019, \"reason\": \"A harrowing, meticulously researched miniseries about institutional failure, echoing the systemic critique of The Wire.\"}, {\"title\": \"The Bureau\", \"release_year\": 2015, \"reason\": \"A French spy drama praised for its realism and slow-burn plotting, comparable to The Americans.\"}]}",
+        "reasoning_content": null,
+        "name": null,
+        "tool_calls": []
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 229,
+    "total_tokens": 1286,
+    "completion_tokens": 1057,
+    "estimated_cost": 0.0030459,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": null
+    }
+  }
+}
