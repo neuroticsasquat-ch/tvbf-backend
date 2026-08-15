@@ -518,8 +518,13 @@ RECOMMENDATION_MATCHED_VIA: tuple[str, ...] = (MATCHED_VIA_NAME, MATCHED_VIA_AKA
 def _one_of(column: str, values: tuple[str, ...]) -> str:
     """Render `col IN ('a', 'b')` from the tuple above.
 
-    The constraint and the constant the writers import are then the same object
-    said twice, so a value added to one cannot go missing from the other.
+    It keeps the constraint `create_all` builds and the constant the writers
+    import in step with each other. **The migration holds the same list written
+    out**, on the `watch_archive_no_mutation` trigger's terms: declared twice on
+    purpose, so a value added here has to be added there too, in the same commit
+    and as an `ALTER ... DROP CONSTRAINT` / `ADD CONSTRAINT` pair. Nothing can
+    check that for you — the test suite builds these tables from the models and
+    never sees the migration's copy.
     """
     return "{} IN ({})".format(column, ", ".join(f"'{value}'" for value in values))
 
@@ -556,10 +561,18 @@ class UserRecommendationSet(Base):
             _one_of("status", RECOMMENDATION_SET_STATUSES),
             name="ck_user_recommendation_set_status",
         ),
-        # Both readers ask the same question — the newest row for one user, the
-        # regeneration gate over any status and the API over `succeeded` alone.
-        # Postgres scans a btree backwards, so one ascending index serves the
-        # descending read without a DESC term.
+        # Every read of this table is "the newest rows for one user", which the
+        # spec's own is: reads take the newest row per user carrying
+        # `status = 'succeeded'` (§9). Postgres scans a btree backwards, so one
+        # ascending index serves that without a DESC term, and the status filter
+        # falls out of a handful of rows rather than needing a term of its own —
+        # a user accrues ~52 sets a year.
+        #
+        # Which set the regeneration gate compares its hash against is NEU-1108's
+        # to decide and deliberately not settled here. It is not free either way:
+        # a `failed` set carries a `payload_hash` like any other, so a gate
+        # reading the newest set of *any* status would skip an unchanged user
+        # forever after one provider outage.
         Index("ix_user_recommendation_set_user_generated", "user_id", "generated_at"),
         {"schema": "app"},
     )
