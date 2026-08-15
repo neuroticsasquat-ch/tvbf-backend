@@ -17,9 +17,15 @@ class TestEndpoints:
     def test_nothing_watched_is_zero(self):
         assert pct(0, 20) == 0
 
-    def test_nothing_aired_is_zero(self):
+    def test_nothing_aired_and_nothing_watched_is_zero(self):
         """A show announced but not started: the user cannot be behind on it."""
         assert pct(0, 0) == 0
+
+    def test_nothing_aired_but_something_watched_is_a_hundred(self):
+        """Every episode undated, so the denominator is zero and no percentage is
+        computable. Saturating says "they watched what there was"; the other
+        answer would leave a finished show one stale gap from NOT LIKED."""
+        assert pct(3, 0) == 100
 
     def test_every_aired_episode_watched_is_a_hundred(self):
         assert pct(20, 20) == 100
@@ -36,6 +42,7 @@ class TestEndpoints:
         assert pct(1, 500) == 1
 
     def test_one_episode_short_is_not_a_hundred(self):
+        """Flooring reserves the top end on its own — no clamp does this."""
         assert pct(499, 500) == 99
 
 

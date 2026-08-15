@@ -20,6 +20,7 @@ FUTURE = TODAY + timedelta(days=30)
 
 SHOW_ID = 963_000
 OTHER_SHOW_ID = 963_100
+UNDATED_SHOW_ID = 963_200
 
 REG_E1, REG_E2 = SHOW_ID + 1, SHOW_ID + 2
 UNAIRED = SHOW_ID + 3
@@ -104,6 +105,32 @@ class TestTheDenominator:
         assert rows[SHOW_ID].watched_episodes == 0
         assert rows[SHOW_ID].aired_episodes == 2
         assert rows[SHOW_ID].pct == 0
+
+    async def test_an_undated_episode_is_countable_by_nobody(self, session, make_user, when):
+        """The only show shape with a zero denominator: watch it and it reads
+        100, because there is nothing left that has aired."""
+        user = await make_user()
+        session.add(Show(id=UNDATED_SHOW_ID, name="Undated", status="Planned"))
+        await session.flush()
+        session.add(
+            Episode(
+                id=UNDATED_SHOW_ID + 1,
+                show_id=UNDATED_SHOW_ID,
+                season_number=1,
+                episode_number=1,
+                air_date=None,
+            )
+        )
+        await session.flush()
+        await _watch(session, user.id, [UNDATED_SHOW_ID + 1], when=when)
+
+        rows = await completion_for_shows(
+            session, user_id=user.id, show_ids=[UNDATED_SHOW_ID], today=TODAY
+        )
+
+        assert rows[UNDATED_SHOW_ID].aired_episodes == 0
+        assert rows[UNDATED_SHOW_ID].watched_episodes == 1
+        assert rows[UNDATED_SHOW_ID].pct == 100
 
     async def test_an_episode_airing_today_counts(self, session, make_user):
         user = await make_user()

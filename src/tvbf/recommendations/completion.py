@@ -19,12 +19,25 @@ is why nothing caches it.
 
 ## 0 and 100 are reserved for the endpoints
 
-`completion_pct` never rounds *into* either. A user one episode short of a
-500-episode run is 99, not 100, and a user one episode into it is 1, not 0 —
-otherwise "finished" and "never started", the two values the tier rules actually
-lean on, would both be claims the data does not support. Everything in between
-rounds **down**, so a percentage never overstates how far through somebody is and
-`pct >= 50` means at least half.
+`completion_pct` never rounds *into* either: a user one episode short of a
+500-episode run is 99, and a user one episode into it is 1. Otherwise "finished"
+and "never started" — the two values the tier rules actually lean on — would both
+be claims the data does not support.
+
+Only the lower end needs a term in the code. Flooring already reserves 100 (below
+100% of a run, `100 * w // a` cannot reach it), and flooring is the right rule in
+its own right: a percentage should not overstate how far through somebody is, so
+`pct >= 50` means at least half. The `max(1, ...)` is the one place that rule is
+knowingly broken, in the direction that keeps 0 meaning nothing at all.
+
+## A show with nothing aired is 100 once anything is watched
+
+`aired_episodes` counts only episodes with an air date on or before today, so a
+show whose episodes are entirely undated has a denominator of zero and no
+percentage is computable. Both available answers are inventions; 100 is the safer
+one. The user *did* watch it, and §5.1's LIKED tier already reads "in My Shows
+with >= 1 episode watched" — reporting 0 instead would leave a show somebody
+finished one 180-day gap away from NOT LIKED.
 
 ## Specials count in neither half, but any watch counts as recency
 
@@ -38,6 +51,12 @@ specials or not.
 person last engage with this show", which the 180-day abandonment clause reads,
 and watching a special last week is engagement. It is `latest_watched_per_show`,
 already `EXCLUDE_NOTHING` in the ledger for that reason.
+
+The asymmetry is visible in the output and consumers have to expect it: somebody
+who has watched *only* specials reads `watched_episodes = 0` beside a non-null
+`last_watched_at`. That is the right pair of facts — no regular episode moved,
+but they were here last week — and it is why "zero episodes watched" and "never
+touched this show" are not the same test.
 
 ## Why this composes repo functions instead of running one query
 
@@ -60,20 +79,19 @@ from tvbf.app.repos import episode_repo, episode_watch_repo
 def completion_pct(*, watched_episodes: int, aired_episodes: int) -> int:
     """Percent of the show's aired episodes the user has watched, 0-100.
 
-    Rounds down, and reserves both endpoints (see the module docstring). A show
-    with nothing aired yet is 0 rather than undefined — the user cannot be behind
-    on episodes that do not exist, and no tier rule distinguishes it from a show
-    they have not started.
+    Rounds down, and reserves both endpoints (see the module docstring).
 
     `watched_episodes` can exceed `aired_episodes`: marking an unaired episode
     watched is permitted, and an episode with no air date at all is watchable but
-    uncounted in the denominator. Both saturate at 100 rather than overflowing it.
+    uncounted in the denominator. Both saturate at 100 rather than overflowing
+    it — which is also what answers the zero denominator, so the order of these
+    two branches is the whole of that decision.
     """
-    if aired_episodes <= 0 or watched_episodes <= 0:
+    if watched_episodes <= 0:
         return 0
     if watched_episodes >= aired_episodes:
         return 100
-    return min(99, max(1, (100 * watched_episodes) // aired_episodes))
+    return max(1, (100 * watched_episodes) // aired_episodes)
 
 
 @dataclass(frozen=True, slots=True)
