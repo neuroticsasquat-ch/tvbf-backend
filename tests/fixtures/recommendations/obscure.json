@@ -1,0 +1,31 @@
+{
+  "service_tier": "default",
+  "id": "chatcmpl-RmWIsZ0yQLG40LuZQ76QIUix",
+  "object": "chat.completion",
+  "created": 1786827643,
+  "model": "deepseek-ai/DeepSeek-V4-Pro-0813",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "{\"recommendations\": [{\"title\": \"The Leftovers\", \"release_year\": 2014, \"reason\": \"It shares the same mysterious, existential tone and eerie atmosphere as Dark and Les Revenants.\"}, {\"title\": \"The Returned\", \"release_year\": 2015, \"reason\": \"An American adaptation that offers a similar unnerving resurrection mystery to the French original.\"}, {\"title\": \"Chernobyl\", \"release_year\": 2019, \"reason\": \"A tense, grim, and morally complex drama that will appeal to fans of Dark and Gomorra.\"}, {\"title\": \"Suburra: Blood on Rome\", \"release_year\": 2017, \"reason\": \"A gritty Italian crime saga with political corruption and criminal underworld tension akin to Gomorra.\"}, {\"title\": \"Money Heist: Korea - Joint Economic Area\", \"release_year\": 2022, \"reason\": \"It reimagines the heist concept with the same high-stakes planning and character-driven twists as La casa de papel.\"}, {\"title\": \"Katla\", \"release_year\": 2021, \"reason\": \"An Icelandic mystery about doppelgangers and a volcanic town that echoes the somber tone of Dark and Les Revenants.\"}, {\"title\": \"The Rain\", \"release_year\": 2018, \"reason\": \"A Scandinavian post-apocalyptic thriller with survival tension and family secrets like Dark.\"}, {\"title\": \"ZeroZeroZero\", \"release_year\": 2019, \"reason\": \"A global crime epic about a cocaine shipment that has the violent realism and scope of Gomorra.\"}, {\"title\": \"The Innocents\", \"release_year\": 2018, \"reason\": \"A supernatural teen drama with hidden identities that mirrors the eerie character dynamics of Les Revenants and Dark.\"}, {\"title\": \"Fortitude\", \"release_year\": 2015, \"reason\": \"A remote Arctic town harbors dark secrets and murder, blending crime with the strange atmosphere you enjoy.\"}, {\"title\": \"The Bridge\", \"release_year\": 2011, \"reason\": \"A Nordic noir crime series with moral ambiguity and complex investigations akin to Babylon Berlin and Gomorra.\"}, {\"title\": \"Twin Peaks: The Return\", \"release_year\": 2017, \"reason\": \"A surreal, nonlinear mystery with supernatural elements that fans of Dark often appreciate.\"}, {\"title\": \"Fringe\", \"release_year\": 2008, \"reason\": \"It explores parallel worlds and scientific mysteries with the same intellectual sci-fi appeal as Dark.\"}, {\"title\": \"The OA\", \"release_year\": 2016, \"reason\": \"A cryptic, emotionally charged supernatural drama with resurrection themes similar to Les Revenants and Dark.\"}, {\"title\": \"Into the Night\", \"release_year\": 2020, \"reason\": \"A Belgian apocalyptic thriller with urgent survival and mystery like The Rain and Dark.\"}, {\"title\": \"Top Boy\", \"release_year\": 2011, \"reason\": \"A raw London crime drama about drug networks and loyalty that appeals to Gomorra fans.\"}, {\"title\": \"McMafia\", \"release_year\": 2018, \"reason\": \"A sleek international crime thriller with organized crime and moral compromises reminiscent of Gomorra.\"}, {\"title\": \"The Forest\", \"release_year\": 2017, \"reason\": \"A French mystery about a missing girl with small-town secrets and melancholy tone similar to Les Revenants.\"}, {\"title\": \"Glitch\", \"release_year\": 2015, \"reason\": \"An Australian series about dead people returning to life with an eerie, emotional mystery akin to Les Revenants.\"}, {\"title\": \"Deadwind\", \"release_year\": 2018, \"reason\": \"A Finnish noir crime series with a brooding detective and atmospheric tension like Dark and Gomorra.\"}, {\"title\": \"The Mist\", \"release_year\": 2017, \"reason\": \"A horror mystery about a town trapped by a strange mist that parallels the claustrophobic dread of Dark.\"}, {\"title\": \"Requiem\", \"release_year\": 2018, \"reason\": \"A psychological supernatural thriller with dark family secrets and a haunting atmosphere like Les Revenants.\"}, {\"title\": \"The Chalet\", \"release_year\": 2018, \"reason\": \"A French mystery thriller with an isolated setting and time-jumping structure that fans of Dark will enjoy.\"}, {\"title\": \"Trapped\", \"release_year\": 2015, \"reason\": \"An Icelandic crime drama with a small-town murder investigation and grim atmosphere similar to Gomorra and Dark.\"}, {\"title\": \"Luna Nera\", \"release_year\": 2020, \"reason\": \"An Italian fantasy drama about witches and persecution with the same dark, mythic tone as Kaos.\"}]}",
+        "reasoning_content": null,
+        "name": null,
+        "tool_calls": []
+      },
+      "finish_reason": "stop",
+      "logprobs": null
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 218,
+    "total_tokens": 1233,
+    "completion_tokens": 1015,
+    "estimated_cost": 0.0029223999999999995,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": null
+    }
+  }
+}
