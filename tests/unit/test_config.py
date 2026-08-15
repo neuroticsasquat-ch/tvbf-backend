@@ -28,6 +28,8 @@ def test_settings_has_sensible_defaults(monkeypatch):
         "TMDB_READ_ACCESS_TOKEN",
         "TMDB_RATE_LIMIT_REQUESTS",
         "TMDB_RATE_LIMIT_WINDOW_SECONDS",
+        "DEEPINFRA_RATE_LIMIT_REQUESTS",
+        "DEEPINFRA_RATE_LIMIT_WINDOW_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
     s = Settings()  # type: ignore[call-arg]
@@ -40,6 +42,10 @@ def test_settings_has_sensible_defaults(monkeypatch):
     # Optional on purpose — an app serving reads out of `catalog` needs no
     # credential. TMDBClient raises when it is missing.
     assert s.tmdb_read_access_token is None
+    # Ours rather than the provider's, and deliberately far above a workload of
+    # one call per changed user per week (NEU-1099).
+    assert s.deepinfra_rate_limit_requests == 5
+    assert s.deepinfra_rate_limit_window_seconds == 1
     assert s.ingest_consecutive_failure_threshold == 10
     assert s.ingest_stale_run_minutes == 15
     assert s.log_level == "INFO"

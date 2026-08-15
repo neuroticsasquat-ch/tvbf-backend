@@ -15,9 +15,12 @@ upstream. TMDB needed its own ceiling without disturbing TV Maze's, so the
 bucket became keyed: a `Bucket` says which row holds which budget, and
 `get_rate_limiter(source, ...)` resolves the source name to one (NEU-1027).
 The keying is what made the next upstream a row rather than a rewrite, and it
-has now been exercised twice in the same direction: NEU-1050 retired the TV Maze
-bucket with the mirror, and NEU-1145 re-registered it for the airdate oracle,
-which reads a handful of TV Maze endpoints without mirroring anything.
+has now been exercised three times in the same direction: NEU-1050 retired the
+TV Maze bucket with the mirror, NEU-1145 re-registered it for the airdate
+oracle, which reads a handful of TV Maze endpoints without mirroring anything,
+and NEU-1099 added DeepInfra, which is not a catalog source at all — it is a
+model provider the weekly recommendations pass calls. A source is a ceiling to
+respect, not a thing we mirror.
 """
 
 import asyncio
@@ -109,8 +112,20 @@ TMDB_BUCKET = Bucket(table="catalog.rate_budget", key_column="source", key="tmdb
 # etiquette rather than an enforced ceiling — which is a reason to keep it, not
 # to skip it: being blocked would take the airdate fix down with it.
 TVMAZE_BUCKET = Bucket(table="catalog.rate_budget", key_column="source", key="tvmaze")
+# DeepInfra, which serves the model the weekly recommendations pass asks for
+# JSON (NEU-1099). At one call per changed user per week this budget will never
+# bind, and it is registered anyway: this codebase has twice shipped a bare
+# per-process limiter and twice paid for the doubled rate (NEU-955, then
+# ADR-0006), and the pass is specified to grow a bounded semaphore somewhere
+# around 100–200 users (project spec §10). Registering now is what makes that
+# change a number rather than a rewrite.
+DEEPINFRA_BUCKET = Bucket(table="catalog.rate_budget", key_column="source", key="deepinfra")
 
-BUCKETS: dict[str, Bucket] = {"tmdb": TMDB_BUCKET, "tvmaze": TVMAZE_BUCKET}
+BUCKETS: dict[str, Bucket] = {
+    "tmdb": TMDB_BUCKET,
+    "tvmaze": TVMAZE_BUCKET,
+    "deepinfra": DEEPINFRA_BUCKET,
+}
 
 
 @dataclass(frozen=True, order=True)

@@ -66,6 +66,18 @@ class Settings(BaseSettings):
     # provider reaches the SPA.
     deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
     recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
+    # This ceiling is **ours, not the provider's** (NEU-1099). DeepInfra's own
+    # published limit was not measured, and one asserted from memory would be a
+    # number that reads as a provider fact while being a guess. 5 per second is
+    # deliberately conservative: the pass is sequential and makes one call per
+    # changed user per week, so nothing today comes within three orders of
+    # magnitude of it, and it exists to bound the bounded-semaphore change the
+    # spec schedules for ~100–200 users (§10) rather than to pace anything now.
+    # Raising it is a measurement, not an edit.
+    deepinfra_rate_limit_requests: int = Field(default=5, alias="DEEPINFRA_RATE_LIMIT_REQUESTS")
+    deepinfra_rate_limit_window_seconds: int = Field(
+        default=1, alias="DEEPINFRA_RATE_LIMIT_WINDOW_SECONDS"
+    )
 
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
