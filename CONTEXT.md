@@ -152,3 +152,31 @@ _Avoid_: friend, follow, relationship
 
 **Invite code**:
 A single-use code required to sign up. Never expires; consumed on use.
+
+### Recommendations
+
+**Recommendation set**:
+One generated batch of suggestions for one user, written whole by a single run of the weekly pass. A set is **superseded, never mutated**: a new run inserts a new set and its rows, and the previous set simply stops being the newest. Reads take the newest set whose `status` is `succeeded`, so a run that fails or resolves nothing leaves last week's suggestions standing rather than blanking the surface.
+
+A set is also the per-user run record — it carries the timing, the token counts, the compiled payload and the raw response, which is why the pass has no run table of its own. Its `status` distinguishes four outcomes that look identical from outside: `succeeded`, `failed`, `no_matches` (ran, resolved nothing) and `insufficient_history` (too little to generate from). Only the first is ever read.
+_Avoid_: cache, prediction, batch
+
+**Taste signal**:
+A show's **LIKED / NOT LIKED / INTERESTED** classification for one user. Derived from that user's rating, completion and My Shows membership, **in that order** — a rating overrides behaviour, completion overrides membership, and the middle of the star range deliberately overrides nothing.
+
+It is a label, not a magnitude: there is no ranking layer downstream that a number could feed, and the three values are what the model is told. INTERESTED exists because My Shows is a watchlist as much as a library, so membership alone cannot mean "liked".
+_Avoid_: score, weight
+
+**Taste payload**:
+The compiled JSON describing one user's watch behaviour, sent to the model as its entire input. **Columnar** — one header naming the fields, then rows grouped by taste signal — so the label and the field names are paid for once rather than once per show. One object doing **three jobs**: it is the model's input, it is the input to the regeneration hash, and it is the exclusion list, since every row in it names a show the user already has a record for.
+
+Being the model's *entire* input is what makes the regeneration gate provably rather than approximately correct: identical bytes mean identical output. The exclusion job is the loosest of the three — the payload caps its INTERESTED rows, so it is what the prompt is told rather than the guarantee, and a post-resolution filter is what actually enforces the rule.
+_Avoid_: prompt, profile, feature vector
+
+**Resolution**:
+Turning a model-authored `title` + `release_year` into a `catalog.show` surrogate id. Entirely local — fold-exact on the show name within ±1 year, then the same against its AKAs, then drop — so no upstream call is involved at any point (ADR-0002), and no fuzzy threshold either.
+
+A resolution failure is an outcome, not a defect: an unresolved title is either a hallucination or a genuine catalog gap, and both are logged rather than mapped onto whatever scored closest. An *ambiguity*, though, resolves to the more popular row rather than to nothing — the reverse of NEU-1043, deliberately, because there a wrong pick silently misattached real watch history and here it shows a less-likely card.
+
+That contrast is why this is **not** called matching: in this codebase matching means NEU-1043's `match_method`, a different problem with the opposite cost asymmetry.
+_Avoid_: matching, lookup
