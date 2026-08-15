@@ -11,7 +11,6 @@ one that exits 1.
 """
 
 import json
-import os
 import uuid
 
 import pytest
@@ -20,40 +19,32 @@ from tvbf.app.models import UserShowWatch
 from tvbf.catalog.models import Show
 from tvbf.config import get_settings
 from tvbf.jobs.weekly_recommendations import _parse_args, run
-from tvbf.recommendations.payload import GENERATION_FLOOR, build_payload
+from tvbf.recommendations.payload import GENERATION_FLOOR, INTERESTED_CAP, build_payload
 
 MODEL = "deepseek-ai/DeepSeek-V4-Pro-0813"
 FIRST_SHOW = 966_000
 
 
 @pytest.fixture
-def model():
+def model(monkeypatch):
     """Pin `RECOMMENDATION_MODEL`, and leave no cached `Settings` behind.
 
-    Written against `os.environ` rather than `monkeypatch` on purpose: this
-    fixture is used alongside the session-scoped `session` fixture, and CLAUDE.md
-    records that mixing `monkeypatch` into that teardown order is how the admin
-    tests broke once already.
+    `get_settings` is `lru_cache`d, so a test that sets the env without clearing
+    it either reads a stale value or hands one to whatever runs next
+    (`tests/unit/catalog/test_images.py`).
     """
-    previous = os.environ.get("RECOMMENDATION_MODEL")
-    os.environ["RECOMMENDATION_MODEL"] = MODEL
+    monkeypatch.setenv("RECOMMENDATION_MODEL", MODEL)
     get_settings.cache_clear()
     yield MODEL
-    if previous is None:
-        os.environ.pop("RECOMMENDATION_MODEL", None)
-    else:
-        os.environ["RECOMMENDATION_MODEL"] = previous
     get_settings.cache_clear()
 
 
 @pytest.fixture
-def no_model():
+def no_model(monkeypatch):
     """The unset case, which is `config.py`'s deliberate default."""
-    previous = os.environ.pop("RECOMMENDATION_MODEL", None)
+    monkeypatch.delenv("RECOMMENDATION_MODEL", raising=False)
     get_settings.cache_clear()
     yield
-    if previous is not None:
-        os.environ["RECOMMENDATION_MODEL"] = previous
     get_settings.cache_clear()
 
 
@@ -123,6 +114,19 @@ class TestWhatItPrints:
         assert "payload hash" in report
         assert "tokens" in report
         assert f"{GENERATION_FLOOR} interested" in report
+
+    async def test_the_report_says_what_the_interested_cap_dropped(
+        self, session, make_user, shows, model, caplog
+    ):
+        """A tier at exactly 50 rows reads the same whether the user bookmarked
+        50 shows or 300, so the rows alone cannot check the cap."""
+        user = await make_user()
+        await _track(session, user.id, shows)
+
+        with caplog.at_level("INFO"):
+            assert await run(_args(user.id)) == 0
+
+        assert f"of {GENERATION_FLOOR} before the {INTERESTED_CAP}-row cap" in caplog.text
 
     async def test_an_account_below_the_floor_still_exits_zero_and_says_so(
         self, session, make_user, shows, model, capsys, caplog

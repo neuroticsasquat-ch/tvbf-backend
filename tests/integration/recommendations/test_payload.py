@@ -215,6 +215,9 @@ class TestTheInterestedCap:
 
         assert payload.interested_count == INTERESTED_CAP
         assert len(document["interested"]) == INTERESTED_CAP
+        # What the cap dropped, which the rows alone cannot report: a tier at
+        # exactly 50 reads the same however many were bookmarked (NEU-1105).
+        assert payload.interested_before_cap == INTERESTED_CAP + 10
         # Added n days ago, so 0..49 survive and 50..59 are dropped.
         assert {row[0] for row in document["interested"]} == {
             f"Show {n:03d}" for n in range(INTERESTED_CAP)

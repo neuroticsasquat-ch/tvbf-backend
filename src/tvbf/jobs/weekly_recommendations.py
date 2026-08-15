@@ -60,6 +60,7 @@ from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
 from tvbf.recommendations.payload import (
     GENERATION_FLOOR,
+    INTERESTED_CAP,
     LIKED_WEIGHT,
     PROMPT_VERSION,
     TastePayload,
@@ -98,10 +99,17 @@ def _report(user_id: UUID, model: str, payload: TastePayload) -> None:
         # `not_liked` is read off the document rather than through an accessor
         # because nothing but this report wants it: it is exclusion signal and
         # contributes nothing to the floor (spec §5.4).
-        "%d liked, %d not liked, %d interested; %d shows excluded from recommendations",
+        #
+        # INTERESTED reports what the cap dropped, because the rows cannot say:
+        # exactly 50 reads the same whether the user bookmarked 50 shows or 300,
+        # and the cap is one of the rules this run exists to check.
+        "%d liked, %d not liked, %d interested (of %d before the %d-row cap); "
+        "%d shows excluded from recommendations",
         payload.liked_count,
         len(document["not_liked"]),
         payload.interested_count,
+        payload.interested_before_cap,
+        INTERESTED_CAP,
         len(payload.excluded_show_ids),
     )
     verdict = "meets" if payload.meets_floor else "below"

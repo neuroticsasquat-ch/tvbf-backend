@@ -128,6 +128,14 @@ class TastePayload:
     hash: str
     liked_count: int
     interested_count: int
+    interested_before_cap: int
+    """How many shows reached INTERESTED before `INTERESTED_CAP` was applied.
+
+    The rows alone cannot answer it: a payload carrying exactly 50 reads the same
+    whether the user bookmarked 50 shows or 300. `--dry-run` (NEU-1105) is where
+    the cap gets checked against a real account, and a rule whose effect is
+    invisible is one nobody can check.
+    """
     excluded_show_ids: frozenset[int]
 
     @property
@@ -186,7 +194,7 @@ async def build_payload(
     )
     excluded = frozenset(signals) | frozenset(episode_rated_show_ids)
 
-    grouped = _group(signals)
+    grouped, interested_before_cap = _group(signals)
     titles = await show_repo.titles_for_ids(
         db, sorted({sid for ids in grouped.values() for sid in ids})
     )
@@ -201,17 +209,22 @@ async def build_payload(
         ),
         liked_count=len(rows[TasteLabel.LIKED]),
         interested_count=len(rows[TasteLabel.INTERESTED]),
+        interested_before_cap=interested_before_cap,
         excluded_show_ids=excluded,
     )
 
 
-def _group(signals: dict[int, TasteSignal]) -> dict[TasteLabel, list[int]]:
+def _group(signals: dict[int, TasteSignal]) -> tuple[dict[TasteLabel, list[int]], int]:
     """Show ids per tier, with INTERESTED capped to the most recently added.
 
     The cap selects by recency and the rows are then ordered by title, so the two
     are separate questions: `added_at` decides *which* 50, `_rows` decides how
     they read. The show id breaks an `added_at` tie so the selection is total —
     two shows added in the same transaction share a timestamp.
+
+    The second element is how many reached INTERESTED before the cap, counted
+    here rather than re-derived by a caller so that the cap and the number
+    describing it cannot drift apart.
     """
     grouped: dict[TasteLabel, list[int]] = {label: [] for label in TasteLabel}
     for show_id, signal in signals.items():
@@ -221,7 +234,7 @@ def _group(signals: dict[int, TasteSignal]) -> dict[TasteLabel, list[int]]:
     interested = grouped[TasteLabel.INTERESTED]
     interested.sort(key=lambda sid: (_added_at_key(signals[sid]), sid), reverse=True)
     grouped[TasteLabel.INTERESTED] = interested[:INTERESTED_CAP]
-    return grouped
+    return grouped, len(interested)
 
 
 def _added_at_key(signal: TasteSignal) -> datetime:
