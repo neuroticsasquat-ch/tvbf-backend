@@ -48,6 +48,25 @@ class Settings(BaseSettings):
     )
     tvmaze_retry_max_attempts: int = Field(default=5, alias="TVMAZE_RETRY_MAX_ATTEMPTS")
 
+    # DeepInfra, which serves the DeepSeek model the weekly recommendations pass
+    # asks for JSON (project spec §6). Optional rather than required for the
+    # reason the TMDB token is: an app serving reads needs no credential, and
+    # only the recommendations job does. `OpenAICompatClient` raises when either
+    # of these is missing, so the failure surfaces at the call site rather than
+    # at import, where it would take the whole process down.
+    #
+    # There is no `DEEPINFRA_BASE_URL`: a base URL is a property of the provider
+    # rather than of a deployment, so it is a constant in `llm/registry.py`. The
+    # model id is the knob that actually gets turned, which is why it is here.
+    #
+    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**. The exact
+    # DeepSeek id available on DeepInfra is NEU-1100's to measure against the
+    # live catalog; asserting one from memory buys a non-retryable 404 in
+    # production that looks like an outage. Server-side only — nothing about the
+    # provider reaches the SPA.
+    deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
+    recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
+
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
     )
