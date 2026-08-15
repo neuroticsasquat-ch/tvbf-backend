@@ -5,7 +5,7 @@ from uuid import UUID
 
 from pydantic import BaseModel, EmailStr, Field, field_validator
 
-from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
+from tvbf.catalog.schemas import EpisodeOut, ShowSummary
 
 MyShowsSort = Literal[
     "recent_activity",
@@ -339,7 +339,10 @@ class EpisodeMini(BaseModel):
     id: int
     name: str | None
     season: int
-    number: int
+    # `None` for a copied special, which has no real episode number.
+    # `EpisodeOut.number` has always been nullable for the same reason; this one
+    # rendered `0` instead until NEU-1062, which is a number no episode has.
+    number: int | None
 
 
 class FeedItem(BaseModel):
@@ -349,6 +352,10 @@ class FeedItem(BaseModel):
     show: ShowMini | None
     episode: EpisodeMini | None
     season_number: int | None
+    # The season's own name, for the `watched_season` roll-up (NEU-1132). Null on
+    # every other kind (they carry no `season_number`) and null when upstream
+    # never named the season, so the SPA falls back to the number either way.
+    season_name: str | None
     rollup_count: int | None
     stars: float | None
     occurred_at: datetime

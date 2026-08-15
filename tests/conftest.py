@@ -20,9 +20,9 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 )
 
 from tvbf.app import models as _app_models  # noqa: F401, E402 -- register tables
+from tvbf.catalog import models as _catalog_models  # noqa: F401, E402 -- register tables
 from tvbf.db import Base  # noqa: E402
-from tvbf.tvmaze import models as _tvmaze_models  # noqa: F401, E402 -- register tables
-from tvbf.tvmaze.client import reset_rate_limiters  # noqa: E402
+from tvbf.rate_budget import reset_rate_limiters  # noqa: E402
 
 
 @pytest.fixture(scope="session")
@@ -30,10 +30,10 @@ async def test_engine():
     url = os.environ["TEST_DATABASE_URL"]
     engine = create_async_engine(url, pool_pre_ping=True)
     async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS tvmaze CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
-        await conn.execute(text("CREATE SCHEMA tvmaze"))
+        await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
         await conn.execute(text("CREATE SCHEMA app"))
+        await conn.execute(text("CREATE SCHEMA catalog"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS citext"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS pgcrypto"))
         await conn.execute(text("CREATE EXTENSION IF NOT EXISTS unaccent"))
@@ -49,8 +49,8 @@ async def test_engine():
         await conn.run_sync(Base.metadata.create_all)
     yield engine
     async with engine.begin() as conn:
-        await conn.execute(text("DROP SCHEMA IF EXISTS tvmaze CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
+        await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
     await engine.dispose()
 
 
@@ -96,38 +96,42 @@ def _stub_outbound_email():
 
 @pytest.fixture(autouse=True)
 def _reset_rate_limiter():
-    """Hand every test a fresh, in-process TV Maze rate limiter.
+    """Hand every test a fresh, in-process rate limiter for every source.
 
     Two things happen here.
 
     `get_rate_limiter` is `@cache`d so all clients in a process share one
-    budget (NEU-955). Left alone, its bucket would carry across tests and make
-    a later test wait off an earlier test's requests, and the second-budget
-    warning (NEU-957) would fire on whichever test happened to ask for a
-    different budget second.
+    budget per source (NEU-955). Left alone, its bucket would carry across tests
+    and make a later test wait off an earlier test's requests, and the
+    second-budget warning (NEU-957) would fire on whichever test happened to ask
+    for a different budget second.
 
-    It also returns a `DatabaseRateLimiter` in production, because the budget
-    now spans processes (ADR-0006). Swapping in the in-process `RateLimiter`
-    keeps `tests/unit` free of a database — ~50 client constructions across the
-    suite do not pass `limiter=`, and making each one a DB round-trip per
-    request would buy nothing: the shared bucket has its own integration tests
-    in `tests/integration/tvmaze/test_rate_budget.py`.
+    It also builds a `DatabaseRateLimiter` in production, because the budget
+    now spans processes (ADR-0006). Swapping `build_limiter` for one returning
+    the in-process `RateLimiter` keeps `tests/unit` free of a database — ~50
+    client constructions across the suite do not pass `limiter=`, and making
+    each one a DB round-trip per request would buy nothing: the shared buckets
+    have their own integration tests in `tests/integration/test_rate_budget.py`.
 
     Like `_stub_outbound_email`, this deliberately does not request
     `monkeypatch` — an autouse fixture that does would run its teardown after
     the `session` fixture's and break the admin tests' `asyncio.create_task`
     patching.
     """
-    from tvbf.tvmaze import client as client_module
+    from tvbf import rate_budget as rate_budget_module
 
-    original = client_module.DatabaseRateLimiter
-    client_module.DatabaseRateLimiter = client_module.RateLimiter  # type: ignore[assignment]
+    original = rate_budget_module.build_limiter
+
+    def _in_process(bucket, budget):
+        return rate_budget_module.RateLimiter(budget.calls, budget.window_seconds)
+
+    rate_budget_module.build_limiter = _in_process  # type: ignore[assignment]
     reset_rate_limiters()
     try:
         yield
     finally:
         reset_rate_limiters()
-        client_module.DatabaseRateLimiter = original  # type: ignore[assignment]
+        rate_budget_module.build_limiter = original  # type: ignore[assignment]
 
 
 @pytest.fixture
@@ -140,7 +144,7 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
         result = await conn.execute(
             text(
                 "SELECT schemaname || '.' || tablename FROM pg_tables "
-                "WHERE schemaname IN ('tvmaze', 'app')"
+                "WHERE schemaname IN ('app', 'catalog')"
             )
         )
         tables = [r[0] for r in result]

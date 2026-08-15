@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User, UserEpisodeWatch, UserShowWatch
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 def _json_default(obj: Any) -> Any:
@@ -82,8 +82,8 @@ async def stream_export(db: AsyncSession, *, user: User) -> AsyncIterator[str]:
         select(
             UserEpisodeWatch.episode_id,
             Episode.show_id,
-            Episode.season,
-            Episode.number,
+            Episode.season_number,
+            Episode.episode_number,
             UserEpisodeWatch.watched_at,
         )
         .join(Episode, Episode.id == UserEpisodeWatch.episode_id)

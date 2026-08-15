@@ -55,7 +55,7 @@ WITH joined AS (
         END AS resolved_show_id
     FROM app.activity_event e
     JOIN app.user u ON u.id = e.actor_id AND u.activity_feed_enabled = TRUE
-    LEFT JOIN tvmaze.episode ep
+    LEFT JOIN catalog.episode ep
         ON e.target_type = 'episode' AND ep.id = e.target_id
     LEFT JOIN app.user_show_watch usw
         ON usw.user_id = e.actor_id

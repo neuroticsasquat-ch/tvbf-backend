@@ -6,7 +6,7 @@ import pytest
 
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
 from tvbf.app.services import my_shows_service
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 async def _seed_show(
@@ -18,7 +18,7 @@ async def _seed_show(
     show_status: str = "Ended",
     airdates: list[date] | None = None,
 ) -> Show:
-    show = Show(id=show_id, name=name, tvmaze_updated=1, status=show_status)
+    show = Show(id=show_id, name=name, status=show_status)
     session.add(show)
     await session.flush()
     today = date.today()
@@ -28,7 +28,15 @@ async def _seed_show(
             if airdates is not None and i - 1 < len(airdates)
             else today - timedelta(days=episodes - i + 1)
         )
-        session.add(Episode(id=show_id * 100 + i, show_id=show.id, season=1, number=i, airdate=ad))
+        session.add(
+            Episode(
+                id=show_id * 100 + i,
+                show_id=show.id,
+                season_number=1,
+                episode_number=i,
+                air_date=ad,
+            )
+        )
     await session.flush()
     return show
 
@@ -265,11 +273,16 @@ async def test_sort_premiered_asc(session, make_user):
     user = await make_user()
     early = await _seed_show(session, show_id=940120, name="Early", episodes=1)
     late = await _seed_show(session, show_id=940121, name="Late", episodes=1)
-    early.premiered = date(2010, 1, 1)
-    late.premiered = date(2020, 1, 1)
+    early.first_air_date = date(2010, 1, 1)
+    late.first_air_date = date(2020, 1, 1)
     await _watch(session, user.id, early.id * 100 + 1)
     await _watch(session, user.id, late.id * 100 + 1)
     await session.commit()
+    # `catalog.show.is_ended` is a generated column, so SQLAlchemy expires it
+    # after the UPDATE these two assignments produce. `list_watched` reads it,
+    # and a lazy refresh inside the async session is a MissingGreenlet.
+    await session.refresh(early)
+    await session.refresh(late)
 
     rows = await my_shows_service.list_watched(session, user_id=user.id, sort="premiered_asc")
     assert [e.show.id for e in rows] == [early.id, late.id]
@@ -280,11 +293,16 @@ async def test_sort_premiered_desc(session, make_user):
     user = await make_user()
     early = await _seed_show(session, show_id=940130, name="Early", episodes=1)
     late = await _seed_show(session, show_id=940131, name="Late", episodes=1)
-    early.premiered = date(2010, 1, 1)
-    late.premiered = date(2020, 1, 1)
+    early.first_air_date = date(2010, 1, 1)
+    late.first_air_date = date(2020, 1, 1)
     await _watch(session, user.id, early.id * 100 + 1)
     await _watch(session, user.id, late.id * 100 + 1)
     await session.commit()
+    # `catalog.show.is_ended` is a generated column, so SQLAlchemy expires it
+    # after the UPDATE these two assignments produce. `list_watched` reads it,
+    # and a lazy refresh inside the async session is a MissingGreenlet.
+    await session.refresh(early)
+    await session.refresh(late)
 
     rows = await my_shows_service.list_watched(session, user_id=user.id, sort="premiered_desc")
     assert [e.show.id for e in rows] == [late.id, early.id]

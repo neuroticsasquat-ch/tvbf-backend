@@ -23,13 +23,23 @@ def test_settings_has_sensible_defaults(monkeypatch):
         "COOKIE_SECURE",
         "COOKIE_DOMAIN",
         "SESSION_TTL_DAYS",
+        "TMDB_BASE_URL",
+        "TMDB_IMAGE_BASE_URL",
+        "TMDB_READ_ACCESS_TOKEN",
+        "TMDB_RATE_LIMIT_REQUESTS",
+        "TMDB_RATE_LIMIT_WINDOW_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
     s = Settings()  # type: ignore[call-arg]
-    assert s.tvmaze_base_url == "https://api.tvmaze.com"
-    assert s.tvmaze_rate_limit_requests == 18
-    assert s.tvmaze_rate_limit_window_seconds == 10
-    assert s.tvmaze_retry_max_attempts == 5
+    assert s.tmdb_base_url == "https://api.themoviedb.org/3"
+    assert s.tmdb_image_base_url == "https://image.tmdb.org/t/p"
+    # 20 req/s: half TMDB's documented ~40–50/s ceiling.
+    assert s.tmdb_rate_limit_requests == 20
+    assert s.tmdb_rate_limit_window_seconds == 1
+    assert s.tmdb_retry_max_attempts == 5
+    # Optional on purpose — an app serving reads out of `catalog` needs no
+    # credential. TMDBClient raises when it is missing.
+    assert s.tmdb_read_access_token is None
     assert s.ingest_consecutive_failure_threshold == 10
     assert s.ingest_stale_run_minutes == 15
     assert s.log_level == "INFO"

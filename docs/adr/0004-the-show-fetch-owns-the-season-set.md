@@ -42,6 +42,12 @@ Diff by id, never by `(show_id, number)`. The duplicate-number case is precisely
 
 ## Consequences
 
+> **Note (NEU-1050).** This ADR is a historical record. The TV Maze ingest it
+> describes was retired, along with `scripts/verify_episode_credits.sh`,
+> `POST /admin/refresh-shows` and the daily update named below. The decision it
+> records is still live: `tmdb/upsert.py:upsert_series_payload` carries the same
+> opt-in `prune_seasons`, for the same reason.
+
 **A work list keyed on `credits_synced_at IS NULL` is incomplete by construction.** A season deleted upstream *after* its credits were fetched carries a stamp and is invisible to that query; it is pruned only when its show is next fetched by the daily. So `unstamped = 0` and a PASS from `verify_episode_credits.sh` measure **coverage**, not absence of phantoms. Both are honest signals; neither asserts the stronger claim. The window is small immediately after a credits pass, widens over time, and only a full show-refresh pass ever closes it completely.
 
 **The cleanup needs no new code.** Resetting `show.credits_synced_at` for the affected shows and running the existing `POST /admin/refresh-shows` deletes the phantoms via this prune and re-fetches credits for seasons that were unstamped for merely transient reasons — so one operation resolves both populations. A bespoke 404-probe script was rejected as a second deletion codepath existing for one run that heals nothing else.

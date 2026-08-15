@@ -48,8 +48,8 @@ jobs:
           psql -h localhost -U root -d postgres -c "CREATE DATABASE tvbf;"
           psql -h localhost -U root -d postgres -c "CREATE DATABASE tvbf_test;"
           for db in tvbf tvbf_test; do
-            psql -h localhost -U root -d "$db" -c "CREATE SCHEMA IF NOT EXISTS tvmaze;"
             psql -h localhost -U root -d "$db" -c "CREATE SCHEMA IF NOT EXISTS app;"
+            psql -h localhost -U root -d "$db" -c "CREATE SCHEMA IF NOT EXISTS catalog;"
           done
 
       - name: Migrate

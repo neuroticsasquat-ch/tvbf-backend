@@ -48,7 +48,7 @@ tasks:
         for db in tvbf tvbf_test; do
           docker exec tbc_postgresql_db psql -U root -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
             || docker exec tbc_postgresql_db psql -U root -d postgres -c "CREATE DATABASE $db"
-          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS tvmaze;"
+          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS catalog;"
         done
 
   migrate:
@@ -62,9 +62,13 @@ tasks:
       - "{{.EXEC}} alembic revision --autogenerate -m \"{{.CLI_ARGS}}\""
 
   db:refresh:
-    desc: 'Refresh local tvbf with prod tvmaze schema (preserves local app data)'
+    # `catalog` replaces the `tvmaze` mode this target carried until NEU-1051, so
+    # `task db:refresh` still means "refresh the catalog, keep my app data" and
+    # nobody's muscle memory now drops the wrong schema. It moves far more data
+    # than the old mirror did.
+    desc: 'Refresh local tvbf with prod catalog schema (preserves local app data)'
     cmds:
-      - 'scripts/refresh_db.sh tvmaze'
+      - 'scripts/refresh_db.sh catalog'
 
   db:refresh:app:
     desc: 'Refresh local tvbf with prod app schema (anonymizes by default; ANONYMIZE=0 to opt out)'
@@ -116,89 +120,216 @@ tasks:
     cmds:
       - "{{.EXEC}} pytest --cov=src/tvbf --cov-report=term-missing --cov-report=html {{.CLI_ARGS}}"
 
-  ingest:
-    desc: POST /admin/ingest
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/ingest
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
-  update:
-    desc: POST /admin/update
-    cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/update
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
-
   ingest:status:
-    desc: 'GET /admin/ingest/<id> — task ingest:status -- <uuid>'
+    # The one status route that filters nothing, so it reads a run of any kind.
+    # Poll `update:catalog` through it — that delta has no status route of its
+    # own — and the retired TV Maze runs, whose rows moved into
+    # `catalog.ingest_run` with the table in NEU-1051.
+    desc: 'GET /admin/ingest/<id> — status of any run — task ingest:status -- <uuid>'
     cmds:
       - >
         curl -sk https://api.tvbf.localhost/admin/ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
-  akas:backfill:
-    desc: POST /admin/backfill-akas
+  ingest:catalog:
+    desc: 'POST /admin/catalog-ingest — the full TMDB catalog pass, ~8.7h for 229k series (NEU-1034)'
     cmds:
       - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-akas
+        curl -sk -X POST https://api.tvbf.localhost/admin/catalog-ingest
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
-  akas:backfill:status:
-    desc: 'GET /admin/backfill-akas/<id> — task akas:backfill:status -- <uuid>'
+  ingest:catalog:status:
+    desc: 'GET /admin/catalog-ingest/<id> — task ingest:catalog:status -- <uuid>'
     cmds:
       - >
-        curl -sk https://api.tvbf.localhost/admin/backfill-akas/{{.CLI_ARGS}}
+        curl -sk https://api.tvbf.localhost/admin/catalog-ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
-  ratings:backfill:
-    desc: POST /admin/backfill-ratings
+  update:catalog:
+    desc: 'POST /admin/catalog-update — one TMDB catalog delta from /tv/changes (NEU-1035)'
     cmds:
       - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-ratings
+        curl -sk -X POST https://api.tvbf.localhost/admin/catalog-update
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
-  ratings:backfill:status:
-    desc: 'GET /admin/backfill-ratings/<id> — task ratings:backfill:status -- <uuid>'
+  reconcile:airdates:
+    # The *manual* trigger. In prod this runs as a second Coolify scheduled
+    # task on the same shape as the catalog delta, with its own
+    # `HEALTHCHECK_AIRDATE_URL` deadman — never a shared one. Exit 0 = the pass
+    # ran and succeeded; there is no status route of its own, so poll the run
+    # through `task ingest:status -- <uuid>`.
+    desc: Establish per-season airdate offsets against the TV Maze oracle (idempotent; NEU-1145)
     cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/backfill-ratings/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+      - docker compose exec tvbf-backend python -m tvbf.jobs.airdate_reconcile
 
-  credits:backfill:
-    desc: POST /admin/backfill-episode-credits
+  archive:watches:
+    desc: Snapshot every watch and rating into app.watch_archive (idempotent)
     cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/backfill-episode-credits
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+      - docker compose exec tvbf-backend python -m tvbf.jobs.watch_archive
 
-  credits:backfill:status:
-    desc: 'GET /admin/backfill-episode-credits/<id> — task credits:backfill:status -- <uuid>'
+  enrich:tmdb-ids:
+    desc: Attach tmdb_id to the copied catalog rows in three tiers (idempotent; NEU-1043)
     cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/backfill-episode-credits/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full ~90m pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.tmdb_enrichment {{.CLI_ARGS}}
 
-  refresh:shows:
-    desc: POST /admin/refresh-shows
+  queue:list:
+    desc: 'Report every user-touched show awaiting a human verdict, as JSON (NEU-1044)'
+    # `silent` + `-T` for the same reasons `reconcile:capture` needs them: the
+    # report is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it. Pass `-- --no-candidates` to skip
+    # the TMDB lookups (and the credential) when only the count is wanted.
+    silent: true
     cmds:
-      - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/refresh-shows
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.human_queue list {{.CLI_ARGS}}
 
-  refresh:shows:status:
-    desc: 'GET /admin/refresh-shows/<id> — task refresh:shows:status -- <uuid>'
+  queue:confirm:
+    desc: 'Record a human verdict: this show IS a TMDB series (task queue:confirm -- <show_id> <tmdb_id>)'
     cmds:
-      - >
-        curl -sk https://api.tvbf.localhost/admin/refresh-shows/{{.CLI_ARGS}}
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+      - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue confirm {{.CLI_ARGS}}
 
-  people:update:
-    desc: POST /admin/update-people
+  queue:reject:
+    desc: 'Record a human verdict: TMDB has no counterpart (task queue:reject -- <show_id>)'
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue reject {{.CLI_ARGS}}
+
+  map:episodes:
+    desc: Attach tmdb_id to the copied episode rows of every matched show (idempotent; NEU-1045)
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.episode_map map {{.CLI_ARGS}}
+
+  map:episodes:report:
+    desc: 'Report every unmapped episode carrying watch or rating history, as JSON (NEU-1045)'
+    # `silent` + `-T` for the same reasons `queue:list` needs them: the report is
+    # the process stdout, so go-task's banner and docker's TTY carriage returns
+    # would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_map report
+
+  dedupe:seasons:
+    desc: Delete the copied season rows the TMDB ingest superseded (idempotent; NEU-1119)
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.season_dedupe dedupe {{.CLI_ARGS}}
+
+  dedupe:seasons:report:
+    desc: 'Count the duplicate seasons and what the pass deliberately keeps, as JSON (NEU-1119)'
+    # `silent` + `-T` for the same reasons `map:episodes:report` needs them: the
+    # report is the process stdout, so go-task's banner and docker's TTY carriage
+    # returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.season_dedupe report
+
+  repoint:episodes:
+    desc: Move user history onto the ingested episode rows, then delete the copies (NEU-1126)
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.episode_repoint repoint {{.CLI_ARGS}}
+
+  repoint:episodes:report:
+    desc: 'Count what the episode re-point would move and what it keeps, as JSON (NEU-1126)'
+    # `silent` + `-T` for the same reasons `dedupe:seasons:report` needs them: the
+    # report is the process stdout, so go-task's banner and docker's TTY carriage
+    # returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_repoint report
+
+  retire:orphans:
+    desc: 'Re-point every TV Maze orphan onto its TMDB counterpart, delete the rest (NEU-1146)'
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      # Run `retire:orphans:report` first — this pass deletes user watch records
+      # and is not reversible.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.orphan_retire retire {{.CLI_ARGS}}
+
+  retire:orphans:report:
+    desc: 'What the orphan retirement would move and delete, incl. the loss list, as JSON (NEU-1146)'
+    # `silent` + `-T` for the same reasons `repoint:episodes:report` needs them:
+    # the report is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.orphan_retire report
+
+  backfill:credits:
+    desc: 'TMDB credits for every mirrored catalog show that has none — ~8.7h, resumable (NEU-1127)'
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.credits_backfill backfill {{.CLI_ARGS}}
+
+  backfill:credits:report:
+    desc: 'What the credit tables hold and how many shows are left to fetch, as JSON (NEU-1127)'
+    # `silent` + `-T` for the same reasons `repoint:episodes:report` needs them:
+    # the report is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.credits_backfill report
+
+  reconcile:capture:
+    desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
+    # Two things are deliberate. `silent` — go-task's own banner goes to stdout
+    # and would corrupt the artifact; `-T` — docker would otherwise add a TTY's
+    # carriage returns. And the write goes via a temp file: a bare
+    # `> baseline.json` truncates *before* the command runs, so a capture that
+    # failed would leave the cutover's acceptance baseline empty.
+    silent: true
     cmds:
       - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/update-people
-        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile capture
+        {{.CLI_ARGS}} > docs/migration/.reconciliation-baseline.tmp
+      - mv docs/migration/.reconciliation-baseline.tmp docs/migration/reconciliation-baseline.json
+
+  reconcile:verify:
+    desc: 'Diff the database against docs/migration/reconciliation-baseline.json (exit 1 on any change)'
+    cmds:
+      # The baseline rides stdin — `docs/` is not mounted into the container.
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile verify --baseline -
+        {{.CLI_ARGS}} < docs/migration/reconciliation-baseline.json
+
+  verify:airdates:capture:
+    desc: 'Snapshot the NEU-1145 watch_archive airdate comparison to docs/migration/'
+    # **Run this BEFORE the first airdate reconciliation pass.** AC 3 asks
+    # whether the already-correct rows were left alone, and after the fact a row
+    # that agrees looks identical whether it always did or whether something
+    # broke it and something else repaired it. `app.watch_archive` is
+    # append-only, so the baseline keeps for as long as you need.
+    #
+    # `silent` + `-T` + the temp file, for the three reasons `reconcile:capture`
+    # needs them: go-task's banner would corrupt the artifact, docker would add
+    # a TTY's carriage returns, and a bare `>` truncates before the command runs
+    # so a failed capture would leave the baseline empty.
+    silent: true
+    cmds:
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify capture
+        > docs/migration/.neu-1145-airdate-baseline.tmp
+      - mv docs/migration/.neu-1145-airdate-baseline.tmp docs/migration/neu-1145-airdate-baseline.json
+
+  verify:airdates:verify:
+    desc: 'Diff airdates against the NEU-1145 baseline (exit 1 only if a row got WORSE)'
+    # Deliberately unlike `reconcile:verify`, which fails on any difference:
+    # here movement is the point, and only a regression fails. Rows still
+    # reading a day early are printed, not scored — some cannot be corrected on
+    # purpose (a show TV Maze does not carry, a season the trust rule refused).
+    cmds:
+      # The baseline rides stdin — `docs/` is not mounted into the container.
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify verify
+        --baseline - {{.CLI_ARGS}} < docs/migration/neu-1145-airdate-baseline.json
+
+  verify:airdates:shows:
+    desc: 'AC 2 table: served date vs raw TMDB date per season (task verify:airdates:shows -- --show Silo)'
+    # Cannot assert — there is no machine-readable Apple schedule — so this
+    # prints what a human compares. Defaults to Silo, Lucky and Ted Lasso.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify shows {{.CLI_ARGS}}
 
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'

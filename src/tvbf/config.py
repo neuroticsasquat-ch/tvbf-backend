@@ -11,6 +11,36 @@ class Settings(BaseSettings):
     test_database_url: str | None = Field(default=None, alias="TEST_DATABASE_URL")
     admin_token: str = Field(..., alias="ADMIN_TOKEN")
 
+    # TMDB. The credential is the account's **API Read Access Token** (the long
+    # JWT), sent as `Authorization: Bearer` — never the `api_key` query
+    # parameter, which lands in access logs, proxy logs and any error report
+    # that echoes a URL. TMDB labels the bearer style "v4 auth"; it authenticates
+    # the v3 endpoints this app calls, and the v3 key is not interchangeable
+    # with it.
+    #
+    # Optional rather than required: an app serving reads out of `catalog` needs
+    # no credential at all, and only the ingest and delta paths do. `TMDBClient`
+    # raises when it is missing, so the failure surfaces at the call site rather
+    # than at import, where it would take the whole process down.
+    # Server-side only — nothing TMDB-shaped reaches the SPA.
+    tmdb_read_access_token: str | None = Field(default=None, alias="TMDB_READ_ACCESS_TOKEN")
+    tmdb_base_url: str = Field(default="https://api.themoviedb.org/3", alias="TMDB_BASE_URL")
+    tmdb_image_base_url: str = Field(
+        default="https://image.tmdb.org/t/p", alias="TMDB_IMAGE_BASE_URL"
+    )
+    # 20 req/s against a documented ceiling "somewhere in the 40 requests per
+    # second range" with a CDN-level 50/s. Half the ceiling is still 11× what
+    # TV Maze allowed, and no deadline needs more.
+    tmdb_rate_limit_requests: int = Field(default=20, alias="TMDB_RATE_LIMIT_REQUESTS")
+    tmdb_rate_limit_window_seconds: int = Field(default=1, alias="TMDB_RATE_LIMIT_WINDOW_SECONDS")
+    tmdb_retry_max_attempts: int = Field(default=5, alias="TMDB_RETRY_MAX_ATTEMPTS")
+
+    # TV Maze, which is not a mirror source any more (NEU-1050) and is read by
+    # exactly one thing: the airdate oracle (NEU-1145). Keyless and free — there
+    # is no credential to configure, which is half of why it was chosen over
+    # Trakt. 18 calls per 10 seconds is TV Maze's published ~20/10s with room to
+    # spare, and is the calibration ADR-0006 was validated at, restored token
+    # for token.
     tvmaze_base_url: str = Field(default="https://api.tvmaze.com", alias="TVMAZE_BASE_URL")
     tvmaze_rate_limit_requests: int = Field(default=18, alias="TVMAZE_RATE_LIMIT_REQUESTS")
     tvmaze_rate_limit_window_seconds: int = Field(
@@ -23,12 +53,21 @@ class Settings(BaseSettings):
     )
     ingest_stale_run_minutes: int = Field(default=15, alias="INGEST_STALE_RUN_MINUTES")
 
-    # healthchecks.io deadman for the daily update, which runs as a Coolify
-    # scheduled task. Coolify notifies when a task *fails*; it cannot notify
-    # that one never ran — suspended and forgotten, container down, scheduler
-    # broken. That gap is the whole reason for this. Unset makes every ping a
-    # no-op, so local runs and tests never call out.
-    healthcheck_daily_url: str | None = Field(default=None, alias="HEALTHCHECK_DAILY_URL")
+    # healthchecks.io deadman for the TMDB catalog delta (NEU-1035), which runs
+    # as a Coolify scheduled task. Coolify notifies when a task *fails*; it
+    # cannot notify that one never ran — suspended and forgotten, container
+    # down, scheduler broken. That gap is the whole reason for this. Unset makes
+    # every ping a no-op, so local runs and tests never call out.
+    #
+    # One check per scheduled task, never one shared between them: either task
+    # feeding a shared deadman keeps it alive on its own, so the day one stops
+    # running the other goes on covering for it silently. `HEALTHCHECK_DAILY_URL`
+    # was the TV Maze daily's and went with it (NEU-1050).
+    healthcheck_catalog_url: str | None = Field(default=None, alias="HEALTHCHECK_CATALOG_URL")
+    # The airdate reconciliation's own deadman (NEU-1145). Its own, for the rule
+    # stated above and for no other reason: one check fed by both scheduled
+    # tasks would let either keep it alive while the other quietly stopped.
+    healthcheck_airdate_url: str | None = Field(default=None, alias="HEALTHCHECK_AIRDATE_URL")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 

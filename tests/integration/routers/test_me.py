@@ -12,10 +12,10 @@ from sqlalchemy import select
 from tvbf.app.models import User
 from tvbf.app.schemas import AccountDeleteRequest
 from tvbf.app.services import my_shows_service  # noqa: F401 — used implicitly
+from tvbf.catalog.models import Episode, Show
 from tvbf.config import get_settings
 from tvbf.main import app
 from tvbf.routers import me as me_router
-from tvbf.tvmaze.models import Episode, Show
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -23,24 +23,26 @@ from tvbf.tvmaze.models import Episode, Show
 
 
 async def _seed_show(session, *, show_id: int, name: str = "S", episodes: int = 2) -> Show:
-    show = Show(id=show_id, name=name, tvmaze_updated=1)
+    show = Show(id=show_id, name=name)
     session.add(show)
     await session.flush()
     for i in range(1, episodes + 1):
-        session.add(Episode(id=show_id * 100 + i, show_id=show.id, season=1, number=i))
+        session.add(
+            Episode(id=show_id * 100 + i, show_id=show.id, season_number=1, episode_number=i)
+        )
     await session.flush()
     return show
 
 
 async def _seed_show_with_seasons(session, *, show_id: int, seasons: dict[int, int]) -> Show:
-    show = Show(id=show_id, name=f"Show{show_id}", tvmaze_updated=1)
+    show = Show(id=show_id, name=f"Show{show_id}")
     session.add(show)
     await session.flush()
     ep_id = show_id * 1000
     for season, count in seasons.items():
         for n in range(1, count + 1):
             ep_id += 1
-            session.add(Episode(id=ep_id, show_id=show.id, season=season, number=n))
+            session.add(Episode(id=ep_id, show_id=show.id, season_number=season, episode_number=n))
     await session.flush()
     return show
 
@@ -472,16 +474,16 @@ async def test_watch_next_route_accepts_today_param(session, make_user):
     from datetime import date as _date
 
     user = await make_user(email="wn-rt-today@example.com")
-    show = Show(id=940500, name="Router Today Show", tvmaze_updated=1)
+    show = Show(id=940500, name="Router Today Show")
     session.add(show)
     await session.flush()
     session.add(
         Episode(
             id=940501,
             show_id=show.id,
-            season=1,
-            number=1,
-            airdate=_date(2026, 5, 6),
+            season_number=1,
+            episode_number=1,
+            air_date=_date(2026, 5, 6),
         )
     )
     await session.flush()

@@ -6,15 +6,17 @@ import pytest
 
 from tvbf.app.models import UserEpisodeWatch
 from tvbf.app.repos import episode_watch_repo
-from tvbf.tvmaze.models import Episode, Show
+from tvbf.catalog.models import Episode, Show
 
 
 async def _seed(session, *, show_id: int, episodes: int = 3) -> Show:
-    show = Show(id=show_id, name="S", tvmaze_updated=1)
+    show = Show(id=show_id, name="S")
     session.add(show)
     await session.flush()
     for i in range(1, episodes + 1):
-        session.add(Episode(id=show_id * 100 + i, show_id=show.id, season=1, number=i))
+        session.add(
+            Episode(id=show_id * 100 + i, show_id=show.id, season_number=1, episode_number=i)
+        )
     await session.flush()
     return show
 

@@ -15,7 +15,7 @@ from tvbf.app.services.my_shows_service import (
     sort_upcoming,
     sort_watch_next,
 )
-from tvbf.tvmaze.schemas import EpisodeOut, ShowSummary
+from tvbf.catalog.schemas import EpisodeOut, ShowSummary
 
 # ---------------------------------------------------------------------------
 # Fixtures (factories — pure construction, no fixtures decorator)
@@ -339,28 +339,20 @@ def test_sort_upcoming_name_modes():
 # ---------------------------------------------------------------------------
 
 
-def _show_model(
-    *,
-    id: int = 1,
-    name: str = "Show",
-    network_id: int | None = None,
-    web_channel_id: int | None = None,
-):
+def _show_model(*, id: int = 1, name: str = "Show"):
     """Light stand-in for the SQLAlchemy Show model — only the fields
-    build_show_summary touches."""
+    `build_show_summary` touches, in `catalog`'s column names."""
     return SimpleNamespace(
         id=id,
         name=name,
         type=None,
-        language=None,
+        original_language=None,
         status=None,
-        premiered=None,
-        ended=None,
-        image_medium=None,
-        image_original=None,
-        network_id=network_id,
-        web_channel_id=web_channel_id,
-        rating_average=None,
+        is_ended=False,
+        first_air_date=None,
+        last_air_date=None,
+        poster_path=None,
+        vote_average=None,
     )
 
 
@@ -369,13 +361,14 @@ def test_build_show_summary_with_no_refs():
     out = build_show_summary_from_refs(
         show,  # type: ignore[arg-type]
         genres_by_show={},
-        networks_by_id={},
-        wcs_by_id={},
+        networks_by_show={},
     )
     assert out.id == 1
     assert out.name == "X"
     assert out.genres == []
     assert out.network is None
+    # Permanently null since the repoint: TMDB draws no broadcaster/streamer
+    # distinction, so the key survives in the payload with nothing behind it.
     assert out.web_channel is None
 
 
@@ -384,20 +377,17 @@ def test_build_show_summary_with_genres():
     out = build_show_summary_from_refs(
         show,  # type: ignore[arg-type]
         genres_by_show={1: ["Drama", "Sci-Fi"]},
-        networks_by_id={},
-        wcs_by_id={},
+        networks_by_show={},
     )
     assert out.genres == ["Drama", "Sci-Fi"]
 
 
-def test_build_show_summary_resolves_network_when_show_has_network_id():
-    show = _show_model(id=1, name="X", network_id=5)
-    network = SimpleNamespace(id=5, name="HBO")
+def test_build_show_summary_resolves_the_shows_network():
+    show = _show_model(id=1, name="X")
     out = build_show_summary_from_refs(
         show,  # type: ignore[arg-type]
         genres_by_show={},
-        networks_by_id={5: network},
-        wcs_by_id={},
+        networks_by_show={1: SimpleNamespace(id=5, name="HBO")},  # type: ignore[dict-item]
     )
     assert out.network is not None
     assert out.network.id == 5
@@ -405,42 +395,13 @@ def test_build_show_summary_resolves_network_when_show_has_network_id():
     assert out.web_channel is None
 
 
-def test_build_show_summary_resolves_web_channel_when_show_has_web_channel_id():
-    show = _show_model(id=1, name="X", web_channel_id=42)
-    wc = SimpleNamespace(id=42, name="Netflix")
+def test_build_show_summary_leaves_network_none_when_show_is_absent_from_the_map():
+    """Defensive: a show with no `show_network` row — 26k copies TMDB never
+    matched carry none — degrades to None rather than crashing."""
+    show = _show_model(id=1, name="X")
     out = build_show_summary_from_refs(
         show,  # type: ignore[arg-type]
         genres_by_show={},
-        networks_by_id={},
-        wcs_by_id={42: wc},
+        networks_by_show={2: SimpleNamespace(id=5, name="HBO")},  # type: ignore[dict-item]
     )
     assert out.network is None
-    assert out.web_channel is not None
-    assert out.web_channel.id == 42
-    assert out.web_channel.name == "Netflix"
-
-
-def test_build_show_summary_skips_network_when_id_present_but_not_in_map():
-    """Defensive: if the lookup map is missing an entry, the summary degrades to
-    None rather than crashing. Mirrors hydrate_show_refs's contract."""
-    show = _show_model(id=1, name="X", network_id=5)
-    out = build_show_summary_from_refs(
-        show,  # type: ignore[arg-type]
-        genres_by_show={},
-        networks_by_id={},
-        wcs_by_id={},
-    )
-    assert out.network is None
-
-
-def test_build_show_summary_with_both_network_and_web_channel():
-    show = _show_model(id=1, name="X", network_id=5, web_channel_id=42)
-    out = build_show_summary_from_refs(
-        show,  # type: ignore[arg-type]
-        genres_by_show={1: ["Drama"]},
-        networks_by_id={5: SimpleNamespace(id=5, name="HBO")},
-        wcs_by_id={42: SimpleNamespace(id=42, name="Netflix")},
-    )
-    assert out.network is not None and out.network.name == "HBO"
-    assert out.web_channel is not None and out.web_channel.name == "Netflix"
-    assert out.genres == ["Drama"]

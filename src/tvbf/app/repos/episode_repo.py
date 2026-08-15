@@ -1,24 +1,63 @@
+"""Episode reads for the tracking layer.
+
+Every query here names its own specials predicate — `~IS_SPECIAL`,
+`~IS_COPIED_SPECIAL`, or nothing at all — rather than inheriting one from a
+shared base selectable. `catalog/episodes.py` explains why, and
+`tests/integration/app/repos/test_specials_ledger.py` holds every site and its
+treatment in one table (NEU-1062).
+"""
+
 from datetime import date
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, not_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import UserEpisodeWatch, UserShowWatch
-from tvbf.tvmaze.models import Episode
+from tvbf.catalog.episodes import EPISODE_ORDER, IS_COPIED_SPECIAL, IS_SPECIAL
+from tvbf.catalog.models import Episode
 
 
 async def get_by_id(db: AsyncSession, episode_id: int) -> Episode | None:
+    """Any episode, specials included — it serves a special's own episode page."""
     return await db.get(Episode, episode_id)
 
 
 async def list_episode_ids_for_season(
     db: AsyncSession, show_id: int, season_number: int
 ) -> list[int]:
+    """A season's episodes, minus any copied special hanging inside it.
+
+    Season 0 is *not* excluded: marking the Specials season is a deliberate act
+    and stays available. What a regular season must not sweep up is the invented
+    negative numbers that belong to no season anyone picked.
+    """
     result = await db.execute(
         select(Episode.id).where(
             Episode.show_id == show_id,
-            Episode.season == season_number,
+            Episode.season_number == season_number,
+            not_(IS_COPIED_SPECIAL),
+        )
+    )
+    return list(result.scalars().all())
+
+
+async def list_all_episode_ids_for_season(
+    db: AsyncSession, show_id: int, season_number: int
+) -> list[int]:
+    """A season's episodes, specials included — this backs *un*-marking a season.
+
+    The season-grain twin of the show-grain pair above: marking reads the
+    filtered `list_episode_ids_for_season`, un-marking reads this one. The
+    asymmetry is the point. Sharing one filtered query between the two would
+    leave a copied special that was ticked individually unreachable from its own
+    season, which is the same orphaning `list_episode_ids_for_show` exists to
+    prevent one grain up.
+    """
+    result = await db.execute(
+        select(Episode.id).where(
+            Episode.show_id == show_id,
+            Episode.season_number == season_number,
         )
     )
     return list(result.scalars().all())
@@ -27,40 +66,51 @@ async def list_episode_ids_for_season(
 async def aired_count_per_season(db: AsyncSession, show_id: int, today: date) -> dict[int, int]:
     rows = (
         await db.execute(
-            select(Episode.season, func.count(Episode.id))
+            select(Episode.season_number, func.count(Episode.id))
             .where(
                 Episode.show_id == show_id,
-                Episode.airdate.is_not(None),
-                Episode.airdate <= today,
+                Episode.air_date.is_not(None),
+                Episode.air_date <= today,
+                not_(IS_COPIED_SPECIAL),
             )
-            .group_by(Episode.season)
+            .group_by(Episode.season_number)
         )
     ).all()
     return {season: count for season, count in rows}
 
 
 async def list_aired_episode_ids_for_show(db: AsyncSession, show_id: int, today: date) -> list[int]:
+    """Every aired *regular* episode — what "mark the whole show watched" marks.
+
+    Specials count toward nothing, so ticking them would leave the show short of
+    100% by exactly the rows the user just asked to be done with.
+    """
     result = await db.execute(
         select(Episode.id).where(
             Episode.show_id == show_id,
-            Episode.airdate.is_not(None),
-            Episode.airdate <= today,
+            Episode.air_date.is_not(None),
+            Episode.air_date <= today,
+            not_(IS_SPECIAL),
         )
     )
     return list(result.scalars().all())
 
 
 async def list_episode_ids_for_show(db: AsyncSession, show_id: int) -> list[int]:
+    """Every episode, specials included — this backs *un*-marking a whole show.
+
+    Excluding anything here orphans the watch rows for whatever it excluded.
+    """
     result = await db.execute(select(Episode.id).where(Episode.show_id == show_id))
     return list(result.scalars().all())
 
 
 async def count_per_show(db: AsyncSession, show_ids: list[int]) -> dict[int, int]:
-    """Return total episode count per show_id."""
+    """Return total *regular* episode count per show_id."""
     rows = (
         await db.execute(
             select(Episode.show_id, func.count(Episode.id))
-            .where(Episode.show_id.in_(show_ids))
+            .where(Episode.show_id.in_(show_ids), not_(IS_SPECIAL))
             .group_by(Episode.show_id)
         )
     ).all()
@@ -70,14 +120,19 @@ async def count_per_show(db: AsyncSession, show_ids: list[int]) -> dict[int, int
 async def count_aired_per_show(
     db: AsyncSession, show_ids: list[int], today: date
 ) -> dict[int, int]:
-    """Return aired episode count per show_id (airdate not null and <= today)."""
+    """Return aired *regular* episode count per show_id (airdate <= today).
+
+    The denominator of every progress bar, which is the whole ticket: a user who
+    has watched every regular episode and none of the specials reads 100%.
+    """
     rows = (
         await db.execute(
             select(Episode.show_id, func.count(Episode.id))
             .where(
                 Episode.show_id.in_(show_ids),
-                Episode.airdate.is_not(None),
-                Episode.airdate <= today,
+                Episode.air_date.is_not(None),
+                Episode.air_date <= today,
+                not_(IS_SPECIAL),
             )
             .group_by(Episode.show_id)
         )
@@ -88,14 +143,15 @@ async def count_aired_per_show(
 async def latest_aired_per_show(
     db: AsyncSession, show_ids: list[int], today: date
 ) -> dict[int, date]:
-    """Return the date of the latest aired episode per show_id."""
+    """Return the date of the latest aired *regular* episode per show_id."""
     rows = (
         await db.execute(
-            select(Episode.show_id, func.max(Episode.airdate))
+            select(Episode.show_id, func.max(Episode.air_date))
             .where(
                 Episode.show_id.in_(show_ids),
-                Episode.airdate.is_not(None),
-                Episode.airdate <= today,
+                Episode.air_date.is_not(None),
+                Episode.air_date <= today,
+                not_(IS_SPECIAL),
             )
             .group_by(Episode.show_id)
         )
@@ -106,8 +162,9 @@ async def latest_aired_per_show(
 async def earliest_aired_unwatched_per_show(
     db: AsyncSession, *, user_id: UUID, today: date
 ) -> list[Episode]:
-    """Return the earliest unwatched-and-aired episode per show in the user's
-    My Shows list. Used by Watch Next."""
+    """Return the earliest unwatched-and-aired *regular* episode per show in the
+    user's My Shows list. Used by Watch Next, which must never offer a special as
+    the next thing to watch."""
     watched_subq = (
         select(UserEpisodeWatch.episode_id).where(UserEpisodeWatch.user_id == user_id)
     ).subquery()
@@ -117,12 +174,13 @@ async def earliest_aired_unwatched_per_show(
         .join(UserShowWatch, UserShowWatch.show_id == Episode.show_id)
         .where(
             UserShowWatch.user_id == user_id,
-            Episode.airdate.is_not(None),
-            Episode.airdate <= today,
+            Episode.air_date.is_not(None),
+            Episode.air_date <= today,
             Episode.id.notin_(select(watched_subq)),
+            not_(IS_SPECIAL),
         )
     )
-    order = (Episode.season.asc(), Episode.number.asc())
+    order = EPISODE_ORDER
     rn = func.row_number().over(partition_by=Episode.show_id, order_by=order).label("rn")
     base_with_rn = base.add_columns(rn).subquery()
 
@@ -139,18 +197,20 @@ async def earliest_aired_unwatched_per_show(
 async def earliest_future_per_show(
     db: AsyncSession, *, user_id: UUID, today: date
 ) -> list[Episode]:
-    """Return the earliest future episode per show in the user's My Shows list.
-    Used by Upcoming."""
+    """Return the earliest future *regular* episode per show in the user's My
+    Shows list. Used by Upcoming: an unaired special is not what a show is
+    waiting for."""
     base = (
         select(Episode.id)
         .join(UserShowWatch, UserShowWatch.show_id == Episode.show_id)
         .where(
             UserShowWatch.user_id == user_id,
-            Episode.airdate.is_not(None),
-            Episode.airdate > today,
+            Episode.air_date.is_not(None),
+            Episode.air_date > today,
+            not_(IS_SPECIAL),
         )
     )
-    order = (Episode.airdate.asc(), Episode.season.asc(), Episode.number.asc())
+    order = (Episode.air_date.asc(), *EPISODE_ORDER)
     rn = func.row_number().over(partition_by=Episode.show_id, order_by=order).label("rn")
     base_with_rn = base.add_columns(rn).subquery()
 
@@ -165,8 +225,8 @@ async def earliest_future_per_show(
 
 
 async def next_unwatched(db: AsyncSession, *, user_id: UUID, show_id: int) -> Episode | None:
-    """Earliest unwatched episode by season/number ordering, regardless of
-    airdate. Used internally by My Shows entries."""
+    """Earliest unwatched *regular* episode by season/number ordering, regardless
+    of airdate. Used internally by My Shows entries."""
     watched_subq = (
         select(UserEpisodeWatch.episode_id).where(UserEpisodeWatch.user_id == user_id)
     ).subquery()
@@ -174,7 +234,8 @@ async def next_unwatched(db: AsyncSession, *, user_id: UUID, show_id: int) -> Ep
         select(Episode)
         .where(Episode.show_id == show_id)
         .where(Episode.id.notin_(select(watched_subq)))
-        .order_by(Episode.season.asc(), Episode.number.asc())
+        .where(not_(IS_SPECIAL))
+        .order_by(*EPISODE_ORDER)
         .limit(1)
     )
     return (await db.execute(stmt)).scalar_one_or_none()

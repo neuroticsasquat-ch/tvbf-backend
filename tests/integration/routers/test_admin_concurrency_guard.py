@@ -2,8 +2,9 @@
 
 Nothing used to stop this: each route called `asyncio.create_task`
 unconditionally. A stray second POST during a long pass walks the same work
-list twice, and since the TV Maze rate limiter is process-wide (NEU-955) the
-two runs simply split one budget — a ~29h pass becomes ~58h. See NEU-966.
+list twice, and since the request budget is shared per upstream (NEU-955,
+ADR-0006) the two runs simply split one allowance — a ~8.7h pass becomes
+~17h. See NEU-966.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -13,33 +14,25 @@ import pytest
 from httpx import ASGITransport
 from sqlalchemy import select
 
+from tvbf.catalog import models as m
+from tvbf.catalog.runs import create_run
 from tvbf.main import app
-from tvbf.tvmaze import models as m
-from tvbf.tvmaze.runs import create_run
 
 # Every POST route on the admin router, with the run kind it creates.
 ROUTE_KINDS = [
-    ("/admin/ingest", "initial"),
-    ("/admin/update", "update"),
-    ("/admin/backfill-akas", "akas_backfill"),
-    ("/admin/backfill-ratings", "ratings_backfill"),
-    ("/admin/refresh-shows", "show_refresh"),
-    ("/admin/update-people", "person_update"),
+    ("/admin/catalog-ingest", "catalog_initial"),
+    ("/admin/catalog-update", "catalog_update"),
 ]
 
 AUTH = {"Authorization": "Bearer shh"}
 
 
 BACKGROUND_FNS = [
-    "_background_ingest",
-    # Shared with the `tvbf.jobs.daily_update` CLI, so it lives in `update.py`
+    "_background_catalog_ingest",
+    # Shared with the `tvbf.jobs.catalog_update` CLI, so it lives in `update.py`
     # rather than the router — but it is still bound as a name in the router's
-    # module namespace, which is what `setattr` needs (NEU-1008).
-    "run_update_job",
-    "_background_backfill_akas",
-    "_background_backfill_ratings",
-    "_background_show_refresh",
-    "_background_person_update",
+    # module namespace, which is what `setattr` needs (NEU-1035).
+    "run_catalog_update_job",
 ]
 
 
@@ -95,7 +88,7 @@ async def test_post_409s_when_a_run_of_that_kind_is_live(admin_client, session, 
 
 @pytest.mark.parametrize("route,kind", ROUTE_KINDS)
 async def test_post_202s_when_the_live_run_is_a_different_kind(admin_client, session, route, kind):
-    """Scoped to one kind: a stuck backfill must not block an urgent daily."""
+    """Scoped to one kind: a stuck full pass must not block an urgent delta."""
     other = next(k for _, k in ROUTE_KINDS if k != kind)
     await create_run(session, kind=other)
     await session.commit()
@@ -125,7 +118,7 @@ async def test_post_202s_when_the_running_run_of_that_kind_is_stale(
 
 @pytest.mark.parametrize("route,kind", ROUTE_KINDS)
 async def test_post_202s_when_the_previous_run_finished(admin_client, session, route, kind):
-    from tvbf.tvmaze.runs import finalize_run
+    from tvbf.catalog.runs import finalize_run
 
     run_id = await create_run(session, kind=kind)
     await session.commit()
@@ -139,14 +132,14 @@ async def test_post_202s_when_the_previous_run_finished(admin_client, session, r
 
 async def test_409_does_not_create_a_second_run_row(admin_client, session):
     """The rejection must happen before `create_run`, not after."""
-    await create_run(session, kind="akas_backfill")
+    await create_run(session, kind="catalog_initial")
     await session.commit()
 
-    resp = await admin_client.post("/admin/backfill-akas", headers=AUTH)
+    resp = await admin_client.post("/admin/catalog-ingest", headers=AUTH)
     assert resp.status_code == 409
 
     rows = (
-        (await session.execute(select(m.IngestRun).where(m.IngestRun.kind == "akas_backfill")))
+        (await session.execute(select(m.IngestRun).where(m.IngestRun.kind == "catalog_initial")))
         .scalars()
         .all()
     )
@@ -155,9 +148,9 @@ async def test_409_does_not_create_a_second_run_row(admin_client, session):
 
 async def test_guard_runs_after_auth(admin_client, session):
     """An unauthenticated caller learns nothing about what is running."""
-    await create_run(session, kind="akas_backfill")
+    await create_run(session, kind="catalog_initial")
     await session.commit()
 
-    resp = await admin_client.post("/admin/backfill-akas")
+    resp = await admin_client.post("/admin/catalog-ingest")
 
     assert resp.status_code in (401, 403)
