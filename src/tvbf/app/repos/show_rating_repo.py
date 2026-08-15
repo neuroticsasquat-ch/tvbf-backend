@@ -81,3 +81,21 @@ async def get_many_for_user(
         )
     ).all()
     return {r.show_id: float(r.stars) for r in rows}
+
+
+async def get_all_for_user(session: AsyncSession, *, user_id: UUID) -> dict[int, float]:
+    """Every show this user has rated, keyed by show id.
+
+    `get_many_for_user` answers "what did they make of these shows"; this one
+    answers "which shows has this user rated at all", which is what the taste
+    signal's universe needs — a rating is the loudest statement the app collects,
+    and it survives the user removing the show from My Shows.
+    """
+    rows = (
+        await session.execute(
+            select(UserShowRating.show_id, UserShowRating.stars).where(
+                UserShowRating.user_id == user_id
+            )
+        )
+    ).all()
+    return {r.show_id: float(r.stars) for r in rows}
