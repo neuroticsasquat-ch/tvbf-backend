@@ -23,7 +23,6 @@ knows how to ask a model for JSON; the taste payload (M2), storage and resolutio
 from tvbf.llm.client import SOURCE as SOURCE
 from tvbf.llm.client import OpenAICompatClient as OpenAICompatClient
 from tvbf.llm.registry import DEEPINFRA as DEEPINFRA
-from tvbf.llm.registry import PROVIDERS as PROVIDERS
 from tvbf.llm.registry import base_url_for as base_url_for
 from tvbf.llm.retry import DEFAULT_RETRY_POLICY as DEFAULT_RETRY_POLICY
 from tvbf.llm.retry import RetryPolicy as RetryPolicy

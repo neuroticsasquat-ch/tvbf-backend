@@ -19,8 +19,6 @@ constant rather than a literal repeated per call site.
 
 DEEPINFRA = "deepinfra"
 
-PROVIDERS: tuple[str, ...] = (DEEPINFRA,)
-
 _OPENAI_COMPAT_BASE_URLS: dict[str, str] = {
     DEEPINFRA: "https://api.deepinfra.com/v1/openai",
 }

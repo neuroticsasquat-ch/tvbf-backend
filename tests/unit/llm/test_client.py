@@ -179,8 +179,77 @@ class TestMalformedResponse:
         respx.post(COMPLETIONS).mock(return_value=httpx.Response(200, text="<html>502</html>"))
 
         async with _client() as client:
-            with pytest.raises(LLMResponseInvalid, match="envelope did not decode"):
+            with pytest.raises(LLMResponseInvalid, match="was not a chat completion"):
                 await client.complete_json(PROMPT)
+
+    @respx.mock
+    async def test_an_envelope_that_decodes_to_a_list_is_invalid(self):
+        """A 200 that decodes fine but is not a chat completion. Before the typed
+        parser this walked a `.get()` chain into an `AttributeError`, which is
+        neither half of the taxonomy and so escaped a job dispatching on
+        `LLMError`."""
+        respx.post(COMPLETIONS).mock(return_value=httpx.Response(200, json=[]))
+
+        async with _client() as client:
+            with pytest.raises(LLMResponseInvalid, match="was not a chat completion"):
+                await client.complete_json(PROMPT)
+
+    @respx.mock
+    async def test_a_non_numeric_token_count_is_invalid_rather_than_a_crash(self):
+        """Same hole one field along: `int("lots")` is a `ValueError` nobody
+        catches. M4 stores these counts directly, so a count that is not a number
+        is a response that cannot be believed."""
+        respx.post(COMPLETIONS).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "choices": [{"message": {"content": "{}"}, "finish_reason": "stop"}],
+                    "usage": {"prompt_tokens": "lots", "completion_tokens": 7},
+                },
+            )
+        )
+
+        async with _client() as client:
+            with pytest.raises(LLMResponseInvalid, match="was not a chat completion"):
+                await client.complete_json(PROMPT)
+
+    @respx.mock
+    async def test_unknown_provider_fields_are_ignored_not_refused(self):
+        """A provider adding a key is not a reason to fail a call that otherwise
+        came back fine — and both of these are real keys this module does not read
+        (`prompt_tokens_details` is the cache split `pricing.py` would have needed)."""
+        respx.post(COMPLETIONS).mock(
+            return_value=httpx.Response(
+                200,
+                json={
+                    "id": "chatcmpl-1",
+                    "object": "chat.completion",
+                    "choices": [
+                        {
+                            "index": 0,
+                            "logprobs": None,
+                            "message": {"role": "assistant", "content": '{"ok": true}'},
+                            "finish_reason": "stop",
+                        }
+                    ],
+                    "usage": {
+                        "prompt_tokens": 3,
+                        "completion_tokens": 4,
+                        "total_tokens": 7,
+                        "prompt_tokens_details": {"cached_tokens": 2},
+                    },
+                },
+            )
+        )
+
+        async with _client() as client:
+            response = await client.complete_json(PROMPT)
+
+        assert response.parsed == {"ok": True}
+        # The whole `prompt_tokens`, not the uncached remainder: upmovies subtracts
+        # the cached count to keep four counts disjoint for `price()`, and
+        # `pricing.py` is not ported.
+        assert response.input_tokens == 3
 
 
 class TestRequestFailure:
@@ -202,6 +271,28 @@ class TestRequestFailure:
         async with _client() as client:
             with pytest.raises(LLMRequestFailed):
                 await client.complete_json(PROMPT)
+
+    @respx.mock
+    async def test_an_unreachable_request_budget_is_a_request_failure(self):
+        """`DatabaseRateLimiter` **fails closed** — a bucket it cannot read raises
+        rather than falling back to an in-process limiter — so once NEU-1099 points
+        this at the shared `deepinfra` row, a database blip arrives here. Untranslated
+        it is neither subclass and a job dispatching on `LLMError` loses its per-user
+        isolation."""
+        route = respx.post(COMPLETIONS).mock(
+            return_value=httpx.Response(200, json=_completion("{}"))
+        )
+
+        class _ClosedBudget:
+            async def acquire(self, n: int = 1) -> None:
+                raise RuntimeError("could not reach catalog.rate_budget")
+
+        async with _client(limiter=_ClosedBudget()) as client:
+            with pytest.raises(LLMRequestFailed, match="request budget could not be reached"):
+                await client.complete_json(PROMPT)
+        # And no request was made, which is why it is a request failure and not a
+        # response one.
+        assert route.call_count == 0
 
     @respx.mock
     async def test_a_400_carries_the_providers_own_error_body(self):
@@ -287,21 +378,38 @@ class TestPromptAndConstruction:
         )
 
         async with _client() as client:
-            with pytest.raises(UnsupportedPromptError, match='literal word "json"'):
+            with pytest.raises(UnsupportedPromptError, match='literal lower-case word "json"'):
                 await client.complete_json(Prompt(system="Answer tersely.", user="hi"))
         assert route.call_count == 0
 
     @respx.mock
-    async def test_the_word_json_is_matched_case_insensitively(self):
-        """A request is attempted, which is the whole assertion: the guard let an
-        upper-case spelling through. The transport failure is only how this test
-        avoids needing a plausible response body."""
-        route = respx.post(COMPLETIONS).mock(side_effect=httpx.ConnectError("nope"))
+    async def test_the_match_is_case_sensitive_on_purpose(self):
+        """Nobody measured whether the provider lowercases before looking, so
+        accepting "JSON" on that assumption would wave through the exact 400 this
+        guard exists to stop. The refusal is loud, local and one word to fix; the
+        failure it replaces is a lost week for a user."""
+        route = respx.post(COMPLETIONS).mock(
+            return_value=httpx.Response(200, json=_completion("{}"))
+        )
 
         async with _client() as client:
-            with pytest.raises(LLMRequestFailed):
+            with pytest.raises(UnsupportedPromptError):
                 await client.complete_json(Prompt(system="Reply with JSON.", user="hi"))
-        assert route.call_count == 1
+        assert route.call_count == 0
+
+    @respx.mock
+    async def test_the_word_in_the_user_payload_does_not_satisfy_the_rule(self):
+        """Stricter than the provider, which reads the whole prompt: the word
+        belongs with the authored instruction, not incidentally inside a payload
+        that varies per call."""
+        route = respx.post(COMPLETIONS).mock(
+            return_value=httpx.Response(200, json=_completion("{}"))
+        )
+
+        async with _client() as client:
+            with pytest.raises(UnsupportedPromptError):
+                await client.complete_json(Prompt(system="Answer tersely.", user="as json"))
+        assert route.call_count == 0
 
     async def test_a_missing_api_key_raises_at_construction(self):
         with pytest.raises(ValueError, match="DEEPINFRA_API_KEY"):

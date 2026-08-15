@@ -2,7 +2,7 @@
 
 import pytest
 
-from tvbf.llm.registry import DEEPINFRA, PROVIDERS, base_url_for
+from tvbf.llm.registry import DEEPINFRA, base_url_for
 
 
 def test_the_base_url_is_a_constant_not_a_setting():
@@ -15,9 +15,3 @@ def test_the_base_url_is_a_constant_not_a_setting():
 def test_an_unregistered_provider_raises_rather_than_guessing_an_endpoint():
     with pytest.raises(KeyError):
         base_url_for("openai")
-
-
-def test_deepinfra_is_the_only_provider():
-    """One entry is the whole point of the trim. A second one is a decision about
-    which model answers, not a free addition."""
-    assert PROVIDERS == (DEEPINFRA,)
