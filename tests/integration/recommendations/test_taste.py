@@ -222,3 +222,15 @@ class TestTheFactsTravelWithTheLabel:
         signals = await taste_for_user(session, user_id=user.id, now=NOW)
 
         assert signals[WATCHED_ONLY].label is TasteLabel.NOT_LIKED
+
+    async def test_a_tracked_show_abandoned_years_ago_is_not_liked(self, session, make_user, shows):
+        """The overlap between §5.1's two rows, end to end: still on the list,
+        one episode in, untouched since 2025."""
+        user = await make_user()
+        await _track(session, user.id, TRACKED)
+        await _watch(session, user.id, [TRACKED + 1], when=LONG_AGO)
+
+        signals = await taste_for_user(session, user_id=user.id, now=NOW)
+
+        assert signals[TRACKED].in_my_shows is True
+        assert signals[TRACKED].label is TasteLabel.NOT_LIKED

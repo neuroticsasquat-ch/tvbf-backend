@@ -41,6 +41,22 @@ progress counts do not (see `completion.py`). That asymmetry is deliberate at bo
 ends: watching last week's special is engagement, so it postpones abandonment;
 having watched *only* specials is not progress, so it does not make a show LIKED.
 
+## LIKED and NOT LIKED overlap, and behaviour wins the overlap
+
+A show in My Shows, one episode in, under half, last touched two years ago
+satisfies §5.1's LIKED row ("in My Shows with >= 1 episode watched") *and* its
+NOT LIKED row ("... and nothing watched in 180 days") at once. The tables do not
+say which fires, so the order here comes from the sentence above them:
+**completion outranks membership**. An abandoned start is a behavioural verdict
+and being on the list is a membership one, so NOT LIKED is tested first.
+
+The alternative reading empties the tier. Only 8 (user, show) pairs in the
+baseline are watched-but-not-added, so letting membership win confines NOT LIKED
+to those eight — which is the design depending on exactly the signal §4 measured
+and said not to depend on, and is why the 180-day clause exists at all. It would
+also repeat, one tier up, the mistake INTERESTED was invented to avoid: calling
+a show somebody bailed on in 2019 LIKED overstates the positive signal.
+
 ## Not every show gets a label
 
 Watched, under half, and watched last week, while not in My Shows: too recent for
@@ -134,15 +150,17 @@ def classify(
             return TasteLabel.NOT_LIKED
 
     watched = completion.watched_episodes
-    # Completion outranks membership, so half a show is LIKED whether or not the
-    # user ever added it. `pct` is 0 until something is watched, so this branch
-    # already carries "and they watched some of it".
+    # Half a show is LIKED whether or not the user ever added it. `pct` is 0
+    # until something is watched, so this branch already carries "and they
+    # watched some of it".
     if completion.pct >= LIKED_PCT:
         return TasteLabel.LIKED
-    if in_my_shows and watched >= 1:
-        return TasteLabel.LIKED
+    # Behaviour before membership: an abandoned start is NOT LIKED even when the
+    # show is still in My Shows (see the docstring's note on the overlap).
     if watched >= 1 and _abandoned(completion.last_watched_at, now):
         return TasteLabel.NOT_LIKED
+    if in_my_shows and watched >= 1:
+        return TasteLabel.LIKED
     if in_my_shows and watched == 0:
         return TasteLabel.INTERESTED
     return None

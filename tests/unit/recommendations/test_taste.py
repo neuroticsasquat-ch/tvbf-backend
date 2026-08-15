@@ -96,13 +96,16 @@ class TestLiked:
             is TasteLabel.LIKED
         )
 
-    def test_membership_plus_one_episode_beats_the_abandonment_clause(self):
-        """Adding a show and starting it is a positive act; the 180 days only
-        turn *un*-added, barely-watched shows negative."""
-        assert (
-            label(watched=1, aired=100, in_my_shows=True, last_watched_at=LONG_AGO)
-            is TasteLabel.LIKED
-        )
+    def test_half_a_show_is_liked_even_when_it_was_abandoned(self):
+        """Completion outranks the abandonment clause as well as membership:
+        somebody who watched half of it told us something a stale date does not
+        take back."""
+        assert label(watched=5, aired=10, last_watched_at=LONG_AGO) is TasteLabel.LIKED
+
+    def test_forty_nine_percent_is_not_enough_on_its_own(self):
+        """The boundary from below: without membership or a rating, just under
+        half is not LIKED."""
+        assert label(watched=49, aired=100, last_watched_at=RECENTLY) is None
 
     def test_watching_only_specials_is_not_watching_it(self):
         """`watched_episodes` strips specials while `last_watched_at` does not —
@@ -115,6 +118,15 @@ class TestLiked:
 class TestNotLiked:
     def test_started_and_dropped_is_not_liked(self):
         assert label(watched=1, aired=100, last_watched_at=LONG_AGO) is TasteLabel.NOT_LIKED
+
+    def test_an_abandoned_my_shows_row_is_not_liked(self):
+        """The overlap between the two tiers. Membership does not rescue a show
+        nobody has touched in two years — behaviour outranks it, and the other
+        reading leaves NOT LIKED with only the 8 un-added rows to describe."""
+        assert (
+            label(watched=1, aired=100, in_my_shows=True, last_watched_at=LONG_AGO)
+            is TasteLabel.NOT_LIKED
+        )
 
     def test_the_boundary_day_counts_as_abandoned(self):
         exactly = NOW - timedelta(days=ABANDONED_AFTER_DAYS)
