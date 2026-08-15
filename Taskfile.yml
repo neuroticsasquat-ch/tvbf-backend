@@ -331,6 +331,19 @@ tasks:
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify shows {{.CLI_ARGS}}
 
+  recommend:dry-run:
+    desc: "Compile one user's taste payload and print it, calling no provider (task recommend:dry-run -- <user-uuid>)"
+    # `silent` + `-T` for the same reasons `reconcile:capture` needs them: the
+    # payload is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it. The counts and the token estimate
+    # ride stderr, so `task recommend:dry-run -- <uuid> > payload.json` leaves a
+    # file holding exactly what the model would be sent.
+    silent: true
+    cmds:
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.weekly_recommendations
+        --dry-run --user {{.CLI_ARGS}}
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
