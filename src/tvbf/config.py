@@ -59,11 +59,13 @@ class Settings(BaseSettings):
     # rather than of a deployment, so it is a constant in `llm/registry.py`. The
     # model id is the knob that actually gets turned, which is why it is here.
     #
-    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**. The exact
-    # DeepSeek id available on DeepInfra is NEU-1100's to measure against the
-    # live catalog; asserting one from memory buys a non-retryable 404 in
-    # production that looks like an outage. Server-side only — nothing about the
-    # provider reaches the SPA.
+    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**, and stays that
+    # way now that NEU-1100 has measured which ids exist: the id it settled on
+    # (`deepseek-ai/DeepSeek-V4-Pro-0813`, 2026-08-15) is recorded in
+    # `.env.example`, which a deployment reads once, rather than here, where it
+    # would be a claim the client keeps making after the id is retired upstream.
+    # Asserting one from memory buys a non-retryable 404 that looks like an
+    # outage. Server-side only — nothing about the provider reaches the SPA.
     deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
     recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
     # This ceiling is **ours, not the provider's** (NEU-1099). DeepInfra's own
