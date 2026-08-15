@@ -10,6 +10,7 @@ import pytest
 
 from tvbf.rate_budget import (
     BUCKETS,
+    DEEPINFRA_BUCKET,
     TMDB_BUCKET,
     TVMAZE_BUCKET,
     Bucket,
@@ -74,11 +75,16 @@ def test_every_registered_source_names_a_distinct_bucket():
     """Two sources sharing a row would silently merge their ceilings.
 
     TMDB fills the mirror; TV Maze is read by the airdate oracle alone
-    (NEU-1145) and fills nothing. They are separate ceilings precisely because
-    they are separate upstreams, and a shared row would let a nightly oracle
-    pass eat a multi-hour ingest's budget.
+    (NEU-1145) and fills nothing; DeepInfra is a model provider rather than a
+    catalog source at all (NEU-1099). They are separate ceilings precisely
+    because they are separate upstreams, and a shared row would let a nightly
+    oracle pass eat a multi-hour ingest's budget.
     """
-    assert BUCKETS == {"tmdb": TMDB_BUCKET, "tvmaze": TVMAZE_BUCKET}
+    assert BUCKETS == {
+        "tmdb": TMDB_BUCKET,
+        "tvmaze": TVMAZE_BUCKET,
+        "deepinfra": DEEPINFRA_BUCKET,
+    }
     rows = {(b.table, b.key) for b in BUCKETS.values()}
     assert len(rows) == len(BUCKETS)
 

@@ -12,7 +12,7 @@ import httpx
 import pytest
 import respx
 
-from tvbf.llm.client import OpenAICompatClient
+from tvbf.llm.client import OpenAICompatClient, _budget
 from tvbf.llm.registry import DEEPINFRA
 from tvbf.llm.retry import RetryPolicy
 from tvbf.llm.types import (
@@ -21,7 +21,7 @@ from tvbf.llm.types import (
     Prompt,
     UnsupportedPromptError,
 )
-from tvbf.rate_budget import RateLimiter
+from tvbf.rate_budget import Budget, RateLimiter, get_rate_limiter
 
 BASE = "https://api.deepinfra.com/v1/openai"
 COMPLETIONS = f"{BASE}/chat/completions"
@@ -35,9 +35,11 @@ def _client(**overrides) -> OpenAICompatClient:
         "provider": DEEPINFRA,
         "api_key": "test-key",
         "model": "deepseek-ai/Some-Model",
-        # An isolated in-process limiter, so no unit test needs a database. Once
-        # NEU-1099 registers the `deepinfra` bucket this is also what keeps the
-        # shared budget out of the unit suite.
+        "rate_calls": 5,
+        "rate_window": 1,
+        # An isolated in-process limiter, so no unit test needs a database —
+        # which is also what keeps the shared `deepinfra` bucket (NEU-1099) out
+        # of the unit suite. The test below is the one that asks for the default.
         "limiter": RateLimiter(20, 1),
         # No real sleeping: one attempt, so the backoff curve is never walked
         # except where a test asks for it.
@@ -365,6 +367,32 @@ class TestRetries:
             await client.complete_json(PROMPT)
 
         assert spent == [1, 1]
+
+
+class TestTheSharedBudget:
+    def test_the_client_shares_the_deepinfra_budget_by_default(self):
+        """One bucket for the whole app (ADR-0006), reached by source name.
+
+        The identity check *is* the assertion: `get_rate_limiter` is cached on
+        (source, budget), so matching here proves the client asked for exactly
+        this budget rather than a private limiter that would let a second
+        process call the provider at twice the configured rate — the rake this
+        codebase has already stepped on twice (NEU-955, then ADR-0006).
+        """
+        client = _client(limiter=None)
+        assert client._limiter is get_rate_limiter("deepinfra", Budget(5, 1))
+
+    def test_an_explicit_limiter_still_wins(self):
+        """`limiter=` is the opt-out an isolated caller needs — every unit test
+        here takes it, which is why none of them needs a database."""
+        isolated = RateLimiter(20, 1)
+        assert _client(limiter=isolated)._limiter is isolated
+
+    def test_the_budget_takes_no_lease(self):
+        """Leasing amortises lock traffic on a source hit tens of times a second.
+        This one is called once per changed user per week, so a locked round trip
+        per request is free — do not "unify" it upward with TMDB's."""
+        assert _budget(5, 1.0).lease == 1
 
 
 class TestPromptAndConstruction:

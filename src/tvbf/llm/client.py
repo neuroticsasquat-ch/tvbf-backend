@@ -41,15 +41,32 @@ from tvbf.llm.types import (
     Prompt,
     UnsupportedPromptError,
 )
-from tvbf.rate_budget import Limiter
+from tvbf.rate_budget import Budget, Limiter, get_rate_limiter
 
 log = logging.getLogger(__name__)
 
 # The source name this client's budget is registered under in
-# `tvbf.rate_budget.BUCKETS`. The registration itself, and defaulting `limiter=`
-# to the shared bucket, are NEU-1099 — until then a caller supplies one, which
-# is why the argument is required rather than optional-and-unpaced.
+# `tvbf.rate_budget.BUCKETS` (NEU-1099).
 SOURCE = DEEPINFRA
+
+
+def _budget(rate_calls: int, rate_window: float) -> Budget:
+    """This client's slice of the shared DeepInfra budget.
+
+    Built here rather than inline at the construction site for the reason
+    `tmdb/client.py:_budget` and `airdates/client.py:_budget` are:
+    `get_rate_limiter` is `@cache`d on the literal call, so a second caller
+    writing the same numbers a different way would mint a second limiter and a
+    second lease against one row. One function is what keeps every caller's key
+    identical.
+
+    No lease, which is `Budget`'s default and the pre-NEU-1027 behaviour token
+    for token. Leasing exists to cut lock traffic on a source hit tens of times
+    a second; this one is called once per changed user per week, so a locked
+    round trip per request is free and a block held across a weekly gap is just
+    tokens forfeited by a process that exits.
+    """
+    return Budget(rate_calls, rate_window)
 
 
 def _to_wire(model: str, prompt: Prompt) -> dict[str, Any]:
@@ -190,7 +207,9 @@ class OpenAICompatClient:
         provider: str,
         api_key: str | None,
         model: str | None,
-        limiter: Limiter,
+        rate_calls: int,
+        rate_window: float,
+        limiter: Limiter | None = None,
         policy: RetryPolicy = DEFAULT_RETRY_POLICY,
     ):
         if not api_key:
@@ -203,7 +222,16 @@ class OpenAICompatClient:
                 "non-retryable 404 in production."
             )
         self._model = model
-        self._limiter = limiter
+        # Shared by default; pass `limiter` explicitly for an isolated budget.
+        # The rate arguments stay required even for a caller that supplies one,
+        # so a construction site always states the budget it means rather than
+        # inheriting one from whichever default happened to be written here —
+        # the same shape `TMDBClient` and `TVMazeOracleClient` take.
+        self._limiter = (
+            limiter
+            if limiter is not None
+            else get_rate_limiter(SOURCE, _budget(rate_calls, rate_window))
+        )
         self._policy = policy
         self._client = httpx.AsyncClient(
             # Raises KeyError for a provider with no registry entry, at
@@ -231,7 +259,7 @@ class OpenAICompatClient:
         A budget that cannot be reached becomes `LLMRequestFailed` rather than
         escaping as whatever the limiter raised. It is `DatabaseRateLimiter`'s
         documented behaviour to **fail closed** — a bucket it cannot read raises
-        rather than falling back to an in-process limiter — so once NEU-1099
+        rather than falling back to an in-process limiter — and since NEU-1099
         points this at the shared `deepinfra` row, a database blip surfaces here
         as a `SQLAlchemyError`. Left untranslated it is neither subclass, so a job
         dispatching on `LLMError` would miss it and lose its per-user isolation.
