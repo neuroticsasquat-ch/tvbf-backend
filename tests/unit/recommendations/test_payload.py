@@ -25,6 +25,7 @@ def _payload(*, liked: int = 0, interested: int = 0) -> TastePayload:
         hash="",
         liked_count=liked,
         interested_count=interested,
+        interested_before_cap=interested,
         excluded_show_ids=frozenset(),
     )
 
