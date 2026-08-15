@@ -6,23 +6,33 @@ direction** (unmark-show leaving orphan rows, an episode page 404ing a special).
 Explicit-at-each-site fails loudly instead, but only if something notices the
 site that forgot. This file is that something.
 
-`LEDGER` names every public function in the four modules that read
+`LEDGER` names every public function in the five modules that read
 `catalog.episode` on a user's behalf — `episode_repo`, `episode_watch_repo`,
-`season_repo` and `activity_event_repo` — and the treatment each owes.
+`season_repo`, `activity_event_repo` and `episode_rating_repo` — and the
+treatment each owes.
 `test_every_query_has_a_ledger_row` fails the moment one is added without a row;
 the behavioural tests below then hold each treatment to what it claims, against
 a fixture show carrying all three shapes at once.
 
-The last two modules are in scope because the acceptance criterion says *every*
-episode-reading query, not every query in the two obvious repos — and the
-activity-event pair is where the subtlest failure lived: a collapse wider than
-the mark it substitutes for silently deletes a special's feed item.
+The last three modules are in scope because the acceptance criterion says
+*every* episode-reading query, not every query in the two obvious repos — and
+the activity-event pair is where the subtlest failure lived: a collapse wider
+than the mark it substitutes for silently deletes a special's feed item.
+`episode_rating_repo` joined the list when NEU-1103 gave it its first query
+that reaches `catalog.episode` rather than being handed ids.
 """
 
 import inspect
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
-from tvbf.app.repos import activity_event_repo, episode_repo, episode_watch_repo, season_repo
+from tvbf.app.repos import (
+    activity_event_repo,
+    episode_rating_repo,
+    episode_repo,
+    episode_watch_repo,
+    season_repo,
+)
 from tvbf.catalog.models import Episode, Show
 
 # --- the ledger -------------------------------------------------------------
@@ -80,6 +90,14 @@ LEDGER: dict[str, str] = {
     "activity_event_repo.delete_episode_and_season_events_for_show": EXCLUDE_BOTH,
     "activity_event_repo.upsert": BY_EXPLICIT_IDS,
     "activity_event_repo.delete": BY_EXPLICIT_IDS,
+    # episode_rating_repo — a rating is a sentence somebody typed about an
+    # episode, not progress, so the taste signal's mean counts specials.
+    "episode_rating_repo.mean_stars_per_show_for_user": EXCLUDE_NOTHING,
+    "episode_rating_repo.upsert": BY_EXPLICIT_IDS,
+    "episode_rating_repo.delete": BY_EXPLICIT_IDS,
+    "episode_rating_repo.get": BY_EXPLICIT_IDS,
+    "episode_rating_repo.list_for_episode": BY_EXPLICIT_IDS,
+    "episode_rating_repo.get_many_for_user": BY_EXPLICIT_IDS,
 }
 
 
@@ -100,7 +118,13 @@ def test_every_query_has_a_ledger_row():
     actual = set().union(
         *(
             _public_functions(m)
-            for m in (episode_repo, episode_watch_repo, season_repo, activity_event_repo)
+            for m in (
+                episode_repo,
+                episode_watch_repo,
+                season_repo,
+                activity_event_repo,
+                episode_rating_repo,
+            )
         )
     )
     assert actual == set(LEDGER), {
@@ -349,3 +373,19 @@ class TestExcludeNothing:
         assert sorted(ids) == sorted(
             [REG_S1_E1, REG_S1_E2, COPIED_S1, SPECIAL_S0_E1, SPECIAL_S0_E2]
         )
+
+    async def test_episode_rating_mean_counts_a_rated_special(self, session, make_user):
+        user = await make_user()
+        await _seed(session)
+        # 4 stars on a regular episode, 2 on a season-0 special: the mean the
+        # taste signal reads is 3, not the 4 a specials filter would leave.
+        await episode_rating_repo.upsert(
+            session, user_id=user.id, episode_id=REG_S1_E1, stars=Decimal("4.0")
+        )
+        await episode_rating_repo.upsert(
+            session, user_id=user.id, episode_id=SPECIAL_S0_E1, stars=Decimal("2.0")
+        )
+        await session.flush()
+
+        means = await episode_rating_repo.mean_stars_per_show_for_user(session, user_id=user.id)
+        assert means == {SHOW_ID: 3.0}
