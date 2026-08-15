@@ -35,8 +35,14 @@ class Prompt:
     nowhere in the prompt. Every call this module makes sets `response_format`
     (see `client.complete_json`), so the constraint is unconditional here and
     `client._to_wire` enforces it rather than trusting a comment — nobody
-    "cleaning up" the wording later can get past it. NEU-1100 re-measures the
-    behaviour against DeepInfra's live catalog.
+    "cleaning up" the wording later can get past it.
+
+    **NEU-1100 re-measured it and it did not reproduce** (2026-08-15,
+    `scripts/probe_deepinfra.py`): on both `DeepSeek-V4-Pro-0813` and
+    `DeepSeek-V4-Flash`, `response_format` with no "json" anywhere answered 200
+    with a decodable object, as did uppercase-only and user-message-only. The
+    requirement stays enforced anyway — see the comment in `client._to_wire`,
+    which is where the reasoning lives.
 
     `max_tokens` needs headroom beyond the visible answer: DeepSeek is a
     reasoning model and its reasoning tokens count against this ceiling while

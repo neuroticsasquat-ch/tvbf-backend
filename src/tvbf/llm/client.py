@@ -83,22 +83,31 @@ def _to_wire(model: str, prompt: Prompt) -> dict[str, Any]:
     # user their week's recommendations. Checked here rather than left as a
     # comment on the prompt builder so that "clean up the wording" cannot
     # silently break it — this is the site that sets `response_format`, so it is
-    # the site that owes the constraint. NEU-1100 re-measures it live.
+    # the site that owes the constraint.
     #
-    # Two deliberate strictnesses, both of them the safe direction of an unknown.
-    # The match is **case-sensitive**, because "the provider lowercases before
-    # looking" is not something anybody measured — a guard that accepts "JSON" on
-    # that assumption would wave through the exact 400 it exists to stop. And only
-    # `system` is inspected, which the milestone states as the rule and which is
-    # stricter than the provider, whose own check reads the whole prompt: the word
-    # belongs with the authored instruction, not incidentally inside a user
-    # payload that varies per call. Both failures are loud, local and one word to
-    # fix; the failure they replace is a lost week for a user.
+    # **NEU-1100 re-measured all of it against DeepInfra and none of it
+    # reproduced** (2026-08-15, `scripts/probe_deepinfra.py`). On both
+    # `DeepSeek-V4-Pro-0813` and `DeepSeek-V4-Flash`, four requests — the word
+    # lowercase in `system`, the word nowhere at all, uppercase "JSON" only, and
+    # the word in the `user` message only — each answered 200 with a decodable
+    # JSON object. So this guard, its case-sensitivity and its `system`-only
+    # reading are all **stricter than the provider measured on that date**.
+    #
+    # It stays, and the measurement is the argument for keeping it *knowingly*
+    # rather than for deleting it. The evidence is two models on one day against
+    # a catalog that carried nine and rotates; the guard's own failure is a loud
+    # local `UnsupportedPromptError` one word away from fixed, raised before
+    # anything is sent; and the failure it stands in front of is a 400 no retry
+    # can help, which costs a user their week. Those costs are not comparable,
+    # and they are not comparable in the same direction as before. Do not remove
+    # it on the strength of this comment — removing it is a decision to trust
+    # that no DeepSeek id the setting can name enforces the rule.
     if "json" not in prompt.system:
         raise UnsupportedPromptError(
-            'the instruction must contain the literal lower-case word "json": this '
-            "provider rejects a request with response_format set and no such word "
-            "in the prompt, with a 400 that no retry can help"
+            'the instruction must contain the literal lower-case word "json"; add it '
+            "to the system prompt. The comment above this check records why it is "
+            "enforced even though DeepInfra's own models did not require it when "
+            "measured (NEU-1100, 2026-08-15)"
         )
     return {
         "model": model,
