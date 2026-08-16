@@ -31,6 +31,24 @@ async def get_by_email(db: AsyncSession, email: str) -> User | None:
     return result.scalar_one_or_none()
 
 
+async def list_ids(db: AsyncSession) -> list[UUID]:
+    """Every user id, oldest account first.
+
+    The weekly recommendations pass's work list (project spec §10). It is every
+    user rather than every user with history: the generation floor is what
+    decides who is worth a call, and it decides that from the compiled payload
+    rather than from a query that would have to reproduce the tier rules a
+    second time.
+
+    Ordered by `created_at` so a pass that aborts on consecutive failures
+    (`jobs/weekly_recommendations`) covered the same users it would have covered
+    yesterday, rather than a different arbitrary prefix each week.
+    """
+    return list(
+        (await db.execute(select(User.id).order_by(User.created_at, User.id))).scalars().all()
+    )
+
+
 async def get_many_by_ids(db: AsyncSession, ids: set[UUID]) -> dict[UUID, User]:
     if not ids:
         return {}

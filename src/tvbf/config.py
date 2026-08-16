@@ -48,6 +48,39 @@ class Settings(BaseSettings):
     )
     tvmaze_retry_max_attempts: int = Field(default=5, alias="TVMAZE_RETRY_MAX_ATTEMPTS")
 
+    # DeepInfra, which serves the DeepSeek model the weekly recommendations pass
+    # asks for JSON (project spec §6). Optional rather than required for the
+    # reason the TMDB token is: an app serving reads needs no credential, and
+    # only the recommendations job does. `OpenAICompatClient` raises when either
+    # of these is missing, so the failure surfaces at the call site rather than
+    # at import, where it would take the whole process down.
+    #
+    # There is no `DEEPINFRA_BASE_URL`: a base URL is a property of the provider
+    # rather than of a deployment, so it is a constant in `llm/registry.py`. The
+    # model id is the knob that actually gets turned, which is why it is here.
+    #
+    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**, and stays that
+    # way now that NEU-1100 has measured which ids exist: the id it settled on
+    # (`deepseek-ai/DeepSeek-V4-Pro-0813`, 2026-08-15) is recorded in
+    # `.env.example`, which a deployment reads once, rather than here, where it
+    # would be a claim the client keeps making after the id is retired upstream.
+    # Asserting one from memory buys a non-retryable 404 that looks like an
+    # outage. Server-side only — nothing about the provider reaches the SPA.
+    deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
+    recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
+    # This ceiling is **ours, not the provider's** (NEU-1099). DeepInfra's own
+    # published limit was not measured, and one asserted from memory would be a
+    # number that reads as a provider fact while being a guess. 5 per second is
+    # deliberately conservative: the pass is sequential and makes one call per
+    # changed user per week, so nothing today comes within three orders of
+    # magnitude of it, and it exists to bound the bounded-semaphore change the
+    # spec schedules for ~100–200 users (§10) rather than to pace anything now.
+    # Raising it is a measurement, not an edit.
+    deepinfra_rate_limit_requests: int = Field(default=5, alias="DEEPINFRA_RATE_LIMIT_REQUESTS")
+    deepinfra_rate_limit_window_seconds: int = Field(
+        default=1, alias="DEEPINFRA_RATE_LIMIT_WINDOW_SECONDS"
+    )
+
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
     )
@@ -68,6 +101,13 @@ class Settings(BaseSettings):
     # stated above and for no other reason: one check fed by both scheduled
     # tasks would let either keep it alive while the other quietly stopped.
     healthcheck_airdate_url: str | None = Field(default=None, alias="HEALTHCHECK_AIRDATE_URL")
+    # The weekly recommendations pass's own deadman (NEU-1111). Third scheduled
+    # task, third check, for the rule above — and the gap is widest here: this
+    # one fires *weekly*, so a schedule that silently stops running is invisible
+    # for seven days before anybody would even think to look.
+    healthcheck_recommendations_url: str | None = Field(
+        default=None, alias="HEALTHCHECK_RECOMMENDATIONS_URL"
+    )
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 

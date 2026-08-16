@@ -2,17 +2,20 @@ import asyncio
 import logging
 from collections.abc import Callable, Coroutine
 from typing import Any
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.app.repos import user_repo
+from tvbf.app.schemas import RecommendationsRunRequest
 from tvbf.catalog import models as m
 from tvbf.catalog.runs import create_run, finalize_run, find_live_run
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.deps import get_session, require_admin
+from tvbf.jobs.weekly_recommendations import run_pass_if_free
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import run_catalog_ingest
 from tvbf.tmdb.update import run_catalog_update_job
@@ -163,3 +166,89 @@ async def trigger_catalog_update(
     poll the unfiltered `GET /admin/ingest/{run_id}` if you want its progress.
     """
     return await _start_run(session, settings, "catalog_update", run_catalog_update_job)
+
+
+_background_tasks: set[asyncio.Task[None]] = set()
+"""Strong references to the passes spawned by `POST /admin/recommendations`.
+
+`asyncio` keeps only a weak reference to a running task, so one nothing else
+holds can be garbage-collected mid-run. `_start_run`'s workers survive that
+badly but visibly — a vanished catalog pass leaves a `running` `ingest_run` row
+for the lifespan hook's stale-run cleanup to find. This job writes no row at all
+(project spec §10), so the only trace would be a log line that stopped, which is
+indistinguishable from a pass still working. Discarding on completion is what
+keeps this from growing.
+"""
+
+
+async def _background_weekly_recommendations(
+    run_id: UUID, settings: Settings, user_id: UUID | None
+) -> None:
+    """One recommendations pass, under the same lock the schedule takes.
+
+    Nothing is written about the run itself: there is no `ingest_run` row for
+    this job and no run table of any kind (project spec §10), because
+    `app.user_recommendation_set` already *is* the per-user run record. So
+    `run_id` is a correlation id and nothing more — it is what ties these log
+    lines to the 202 the operator got back, and it is why the route says nothing
+    about polling.
+
+    Every failure is swallowed into the log for the same reason: the response
+    went out before this started, and there is no row to mark failed.
+    """
+    scope = f"user {user_id}" if user_id is not None else "every user"
+    log.info("admin recommendations run %s starting over %s", run_id, scope)
+    try:
+        result = await run_pass_if_free(settings, user_id=user_id)
+    except Exception:
+        log.exception("admin recommendations run %s crashed", run_id)
+        return
+    if result is None:
+        log.info("admin recommendations run %s: a pass was already running", run_id)
+    else:
+        log.info("admin recommendations run %s finished: %s", run_id, result)
+
+
+@router.post("/recommendations", status_code=status.HTTP_202_ACCEPTED)
+async def trigger_weekly_recommendations(
+    body: RecommendationsRunRequest | None = None,
+    settings: Settings = Depends(get_settings),
+    session: AsyncSession = Depends(get_session),
+) -> dict[str, str]:
+    """Run the weekly recommendations pass now, optionally for one user (NEU-1110).
+
+    The manual counterpart to the Sunday Coolify schedule. It exists so a prompt
+    change can be tried against one account without waiting for Sunday, which is
+    the difference between an iteration loop measured in minutes and one measured
+    in weeks.
+
+    `202 + run_id` and a background task, matching every other trigger here even
+    though **there is no status route to poll** — the run leaves no row behind
+    (see `_background_weekly_recommendations`), so the id is a correlation id for
+    the logs. Precedent: the retired `/admin/update` and `/admin/update-people`
+    had no status route of their own either.
+
+    No 409 guard, unlike `_start_run`: liveness for this job is
+    `pg_try_advisory_lock`, not a run row, and a second trigger is a no-op rather
+    than a double spend. Refusing here as well would mean a second liveness
+    notion for one job, which is what the missing run table exists to avoid.
+
+    The two refusals are both about the only feedback this endpoint can give.
+    A misconfigured provider or an unknown user id would otherwise be a 202
+    followed by silence in a log nobody is watching, so both are answered
+    synchronously, before the task is spawned.
+    """
+    user_id = body.user_id if body is not None else None
+    if not settings.recommendation_model or not settings.deepinfra_api_key:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RECOMMENDATION_MODEL and DEEPINFRA_API_KEY must both be set",
+        )
+    if user_id is not None and await user_repo.get_by_id(session, user_id) is None:
+        raise HTTPException(status_code=404, detail=f"no user with id {user_id}")
+
+    run_id = uuid4()
+    task = asyncio.create_task(_background_weekly_recommendations(run_id, settings, user_id))
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return {"run_id": str(run_id)}

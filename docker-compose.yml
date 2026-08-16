@@ -26,6 +26,14 @@ services:
       TMDB_RATE_LIMIT_REQUESTS: "20"
       TMDB_RATE_LIMIT_WINDOW_SECONDS: "1"
       TMDB_RETRY_MAX_ATTEMPTS: "5"
+      # DeepInfra, which serves the DeepSeek model the weekly recommendations
+      # pass calls. Both blank by default: the key goes in .env (gitignored), and
+      # the model id is measured against the live catalog by NEU-1100 rather than
+      # asserted here. The line has to exist even while empty — Coolify seeds a
+      # prod env var from this fallback exactly once, so a variable absent here
+      # is one that has to be added by hand in prod later.
+      DEEPINFRA_API_KEY: "${DEEPINFRA_API_KEY:-}"
+      RECOMMENDATION_MODEL: "${RECOMMENDATION_MODEL:-}"
       INGEST_CONSECUTIVE_FAILURE_THRESHOLD: "10"
       INGEST_STALE_RUN_MINUTES: "15"
       LOG_LEVEL: "INFO"
