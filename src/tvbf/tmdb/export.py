@@ -127,7 +127,7 @@ def _popularity_of(record: dict) -> float | None:
     otherwise become a popularity of 1.0 rather than no popularity at all.
     """
     value = record.get("popularity")
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, int | float):
         return None
     return float(value)
 

@@ -7,8 +7,11 @@ matches on `tmdb_id`, and it refuses a short export exactly as the tombstone
 pass does — the two read the same file and must not disagree about it.
 """
 
+import gzip
+import json
 from datetime import UTC, datetime, timedelta
 
+import httpx
 import pytest
 import respx
 from sqlalchemy import select
@@ -279,3 +282,27 @@ async def test_the_daily_delta_refreshes_popularity(session):
     assert (await _reread(session, untouched.id)).popularity == 88.5, (
         "a show the delta never re-fetched is exactly what this pass is for"
     )
+
+
+@respx.mock
+async def test_a_truncated_download_writes_no_popularity(session, caplog):
+    """AC 2, the second half: a short file writes no score for the same reason
+    it writes no tombstone. The gzip trailer catches it in `parse_series_export`,
+    ahead of both passes, so neither ever sees the partial catalog."""
+    caplog.set_level("ERROR", logger="tvbf.tmdb.update")
+    await _seed_cursor(session, TODAY - timedelta(days=1))
+    mock_changes({})
+    whole = gzip.compress(
+        "\n".join(json.dumps({"id": i, "popularity": 99.0}) for i in range(1, 500)).encode()
+    )
+    respx.get(url__regex=r"https://files\.tmdb\.org/.*").mock(
+        return_value=httpx.Response(200, content=whole[: len(whole) // 2])
+    )
+    show = await _add_show(session, tmdb_id=1, popularity=2.0)
+    await session.commit()
+
+    _, result = await _run(session, export_ids=None)
+
+    assert not result.aborted, "the delta's own work still stands"
+    assert (await _reread(session, show.id)).popularity == 2.0
+    assert any("id export download failed" in r.message for r in caplog.records)

@@ -276,9 +276,8 @@ async def _refresh_popularity(
 ) -> None:
     try:
         async with _owned_session(session_factory) as s:
-            result = await refresh_popularity(s, entries=entries)
+            await refresh_popularity(s, entries=entries)
             await s.commit()
-        log.info("catalog popularity refresh: %d row(s) updated", result.updated)
     except Exception:
         log.exception("catalog popularity refresh failed — the delta itself is unaffected")
 
