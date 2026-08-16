@@ -1,14 +1,15 @@
 """The shape every run-row-backed Coolify-scheduled job shares (NEU-1008, NEU-1035).
 
-Three jobs run on a Coolify schedule today and they do not all fit this shape.
-Two do — the TMDB catalog delta and the airdate reconciliation (NEU-1145) —
-differing only in which run kind they take, which body they await and which
-deadman they feed; the TV Maze daily was the first and NEU-1050 retired it. The
-weekly recommendations pass (NEU-1109, NEU-1111) is the exception and calls
-`ping` alone: it deliberately writes no run row (`user_recommendation_set` is
-already its per-user run record), so the guard, the row and the terminal-status
-read here have nothing to act on. What it does keep is the *rules* below, which
-is the reason they are written down rather than merely implemented:
+Four jobs run on a Coolify schedule today and they do not all fit this shape.
+Three do — the TMDB catalog delta, the airdate reconciliation (NEU-1145) and
+the daily trending snapshot (NEU-1055) — differing only in which run kind they
+take, which body they await and which deadman they feed; the TV Maze daily was
+the first and NEU-1050 retired it. The weekly recommendations pass (NEU-1109,
+NEU-1111) is the exception and calls `ping` alone: it deliberately writes no
+run row (`user_recommendation_set` is already its per-user run record), so the
+guard, the row and the terminal-status read here have nothing to act on. What
+it does keep is the *rules* below, which is the reason they are written down
+rather than merely implemented:
 
 - **The exit code is the result.** Coolify notifies on a task that fails, so 0
   must mean the delta actually ran and succeeded.
