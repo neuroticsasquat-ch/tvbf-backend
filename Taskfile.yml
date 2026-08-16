@@ -355,6 +355,18 @@ tasks:
         docker compose exec -T tvbf-backend python -m tvbf.jobs.weekly_recommendations
         {{.CLI_ARGS}}
 
+  recommend:trigger:
+    desc: 'POST /admin/recommendations — run the pass now, optionally one user (task recommend:trigger [-- <user-uuid>])'
+    # The HTTP trigger (NEU-1110) rather than the CLI one above: same pass, same
+    # advisory lock, 202 + a correlation id. There is no status route to poll —
+    # the job leaves no run row — so `task logs` is where the run is watched.
+    cmds:
+      - >
+        curl -sk -X POST https://api.tvbf.localhost/admin/recommendations
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+        -H 'Content-Type: application/json'
+        -d '{{if .CLI_ARGS}}{"user_id": "{{.CLI_ARGS}}"}{{else}}{}{{end}}'
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:
