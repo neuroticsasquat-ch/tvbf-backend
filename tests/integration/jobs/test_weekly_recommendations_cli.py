@@ -1,4 +1,4 @@
-"""CLI-level tests for `python -m tvbf.jobs.weekly_recommendations --dry-run`.
+"""CLI-level tests for `python -m tvbf.jobs.weekly_recommendations`.
 
 These exercise `run()` rather than `main()`, for the reason
 `test_reconcile_cli.py` gives: `main`'s `asyncio.run` would rebuild the event
@@ -7,22 +7,27 @@ loop under the shared engine's pooled connections.
 What matters here is the **split** — stdout is the payload and stderr is the
 report — plus the two ways the run refuses, because a dry run that prints a
 plausible payload for the wrong user, or under a guessed model id, is worse than
-one that exits 1.
+one that exits 1 — plus, since NEU-1111, the deadman pings the schedule hangs off
+the whole-pass invocation.
 """
 
 import json
 import uuid
 
+import httpx
 import pytest
+import respx
 
 from tvbf.app.models import UserShowWatch
 from tvbf.catalog.models import Show
 from tvbf.config import get_settings
-from tvbf.jobs.weekly_recommendations import _parse_args, run
+from tvbf.jobs import weekly_recommendations
+from tvbf.jobs.weekly_recommendations import PassResult, _parse_args, run
 from tvbf.recommendations.payload import GENERATION_FLOOR, INTERESTED_CAP, build_payload
 
 MODEL = "deepseek-ai/DeepSeek-V4-Pro-0813"
 FIRST_SHOW = 966_000
+HEALTHCHECK = "https://hc.example.com/recommendations"
 
 
 @pytest.fixture
@@ -164,3 +169,138 @@ class TestHowItRefuses:
 
         assert capsys.readouterr().out == ""
         assert "RECOMMENDATION_MODEL is unset" in caplog.text
+
+
+class TestTheDeadman:
+    """The healthchecks.io pings the schedule feeds (NEU-1111).
+
+    Coolify notifies when the task *fails*; only the deadman catches the task
+    never running at all, and at a weekly cadence that failure is invisible for
+    seven days. So every exit path is pinned here, including the two that
+    deliberately stay silent.
+    """
+
+    @pytest.fixture
+    def authenticated(self, monkeypatch):
+        """A deployment that can authenticate. Says nothing about the deadman.
+
+        Every environment fixture here clears the cache on the way *out* as well
+        as in, for the reason `model` gives: `get_settings` is `lru_cache`d, so a
+        test that leaves one behind hands it to whatever runs next. Cleanup in a
+        test body would not survive the first failing assert above it.
+        """
+        monkeypatch.setenv("RECOMMENDATION_MODEL", MODEL)
+        monkeypatch.setenv("DEEPINFRA_API_KEY", "key")
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    @pytest.fixture
+    def deadman(self, monkeypatch):
+        """`HEALTHCHECK_RECOMMENDATIONS_URL` pointed at `HEALTHCHECK`."""
+        monkeypatch.setenv("HEALTHCHECK_RECOMMENDATIONS_URL", HEALTHCHECK)
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    @pytest.fixture
+    def no_deadman(self, monkeypatch):
+        """The unset case, which is `config.py`'s default and what local runs want."""
+        monkeypatch.delenv("HEALTHCHECK_RECOMMENDATIONS_URL", raising=False)
+        get_settings.cache_clear()
+        yield
+        get_settings.cache_clear()
+
+    @pytest.fixture
+    def configured(self, authenticated, deadman):
+        """The whole scheduled-task environment: authenticates, and has a check."""
+
+    @pytest.fixture
+    def pass_result(self, monkeypatch):
+        """Replace the pass body with one returning whatever this test needs.
+
+        What `run_pass` does is covered by `test_weekly_recommendations_pass.py`;
+        what is under test here is the exit code and the pings hung off it.
+        """
+
+        def _install(result):
+            async def _fake(settings, *, user_id=None):
+                if isinstance(result, Exception):
+                    raise result
+                return result
+
+            monkeypatch.setattr(weekly_recommendations, "run_pass_if_free", _fake)
+
+        return _install
+
+    @respx.mock
+    async def test_a_successful_pass_pings_start_then_success(self, configured, pass_result):
+        pass_result(PassResult(succeeded=3))
+        start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
+        success = respx.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
+
+        assert await run(_parse_args([])) == 0
+        assert start.called
+        assert success.called
+
+    @respx.mock
+    async def test_a_pass_with_a_failed_user_pings_fail(self, configured, pass_result):
+        """Exit 1 and /fail are the same claim told to two systems: Coolify sees
+        the exit code, healthchecks.io sees the ping."""
+        pass_result(PassResult(succeeded=1, failed=1))
+        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
+        fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+
+        assert await run(_parse_args([])) == 1
+        assert fail.called
+
+    @respx.mock
+    async def test_a_crash_outside_a_users_turn_pings_fail(self, configured, pass_result, caplog):
+        """Per-user failures leave a `failed` set behind; a crash outside one
+        leaves nothing in the database to speak for it."""
+        pass_result(RuntimeError("the lock query blew up"))
+        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
+        fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+
+        with caplog.at_level("ERROR"):
+            assert await run(_parse_args([])) == 1
+
+        assert fail.called
+        assert "crashed" in caplog.text
+
+    @respx.mock
+    async def test_the_lock_being_held_pings_nothing_beyond_start(self, configured, pass_result):
+        """The pass that *does* hold the lock pings nothing itself, so a success
+        ping here would report an outcome this process never learns. Silence
+        leaves the check started, the grace period expires, and someone looks."""
+        pass_result(None)
+        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
+
+        assert await run(_parse_args([])) == 0
+        assert len(respx.calls) == 1, "the skip path pinged something beyond /start"
+
+    @respx.mock
+    async def test_an_unconfigured_deployment_pings_fail(self, deadman, no_model):
+        """A typo'd env var is a broken deployment, not a quiet week."""
+        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
+        fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+
+        assert await run(_parse_args([])) == 1
+        assert fail.called
+
+    @respx.mock
+    async def test_a_run_narrowed_to_one_user_pings_nothing(self, configured, pass_result):
+        """`--user` is a hand-run: feeding the check with it would silence the
+        deadman for the week on the strength of one account being covered."""
+        pass_result(PassResult(succeeded=1))
+
+        assert await run(_parse_args(["--user", str(uuid.uuid4())])) == 0
+        assert not respx.calls, "a narrowed run fed the weekly deadman"
+
+    @respx.mock
+    async def test_an_unset_url_attempts_no_request(self, authenticated, no_deadman, pass_result):
+        """Which is what local runs and the test suite want."""
+        pass_result(PassResult(succeeded=1))
+
+        assert await run(_parse_args([])) == 0
+        assert not respx.calls

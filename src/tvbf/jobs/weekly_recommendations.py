@@ -8,9 +8,18 @@ Sundays. `--dry-run` (NEU-1105) compiles one user's payload, writes it to
 stdout, and exits **without calling a provider**.
 
 Follows NEU-1008 like every other scheduled job here: **the process is the run
-and the exit code is the result**, `configure_logging()` in `main()`. The
-healthchecks.io deadman that covers the case Coolify cannot see — the task never
-firing at all — is NEU-1111's, along with the schedule itself.
+and the exit code is the result**, `configure_logging()` in `main()`, and its own
+`HEALTHCHECK_RECOMMENDATIONS_URL` deadman for the case Coolify cannot see, which
+is the task never firing at all (NEU-1111). Its own, never a check shared with
+the two nightly tasks: either one feeding a shared check keeps it alive while the
+other quietly stops. **The pings ride `run()` rather than
+`jobs/scheduled.run_scheduled_delta`**, because that helper's shape is built
+around a run row this job deliberately does not have — what is shared is `ping`
+itself and, more importantly, the three rules the helper encodes: /start first,
+/fail on every exit-1 path *from that ping onward*, and *nothing at all* when the
+guard finds another pass already running. Onward, because a crash before it —
+settings that will not load — has no URL to ping with; the check simply stays in
+whatever state it was left in and its grace period does the work.
 
 ## There is no run table, and the guard is an advisory lock
 
@@ -96,6 +105,7 @@ from tvbf.app.models import (
 from tvbf.app.repos import recommendation_repo, user_repo
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal, engine
+from tvbf.jobs.scheduled import ping
 from tvbf.llm.client import OpenAICompatClient
 from tvbf.llm.registry import DEEPINFRA
 from tvbf.llm.types import LLMResponse, LLMResponseInvalid, UnsupportedPromptError
@@ -684,6 +694,9 @@ async def run(args: argparse.Namespace) -> int:
         return await run_dry_run(args.user)
 
     settings = get_settings()
+    healthcheck = _healthcheck_url(settings, args)
+    await ping(healthcheck, "/start")
+
     if not settings.recommendation_model or not settings.deepinfra_api_key:
         # Checked before the work list — and, since NEU-1110, before the lock —
         # rather than at the first call: a pass that compiles five payloads and
@@ -698,11 +711,49 @@ async def run(args: argparse.Namespace) -> int:
         # whoever else is running, and 0 there hides a typo'd env var behind
         # whatever happened to be in flight.
         log.error("RECOMMENDATION_MODEL and DEEPINFRA_API_KEY must both be set")
+        await ping(healthcheck, "/fail")
         return 1
 
-    result = await run_pass_if_free(settings, user_id=args.user)
-    # A pass that never started is a 0: this process did nothing wrong.
-    return 0 if result is None or result.ok else 1
+    try:
+        result = await run_pass_if_free(settings, user_id=args.user)
+    except Exception:
+        # Per-user failures are already isolated inside the pass and leave a
+        # `failed` set behind to speak for them, so reaching this means the
+        # failure was *outside* one — the lock, the work list, the engine — and
+        # nothing in the database records it. Same reasoning as
+        # `jobs/scheduled.scheduled_main`'s handler, and the same answer.
+        log.exception("weekly recommendations pass crashed")
+        await ping(healthcheck, "/fail")
+        return 1
+
+    if result is None:
+        # Another pass holds the lock. Exit 0 — this process did nothing wrong —
+        # and deliberately **no ping of any kind beyond /start**, exactly as
+        # `run_scheduled_delta` treats its own in-flight guard: the run that does
+        # hold the lock pings nothing itself, so a success ping here would report
+        # an outcome we never learn. Staying silent leaves the check in its
+        # started state, so the grace period expires and someone looks.
+        return 0
+
+    if not result.ok:
+        await ping(healthcheck, "/fail")
+        return 1
+
+    await ping(healthcheck)
+    return 0
+
+
+def _healthcheck_url(settings: Settings, args: argparse.Namespace) -> str | None:
+    """The deadman, but only for the invocation the schedule actually makes.
+
+    `--user <uuid>` narrows the pass to one account, which is a hand-run and not
+    the weekly pass: letting it feed the check would silence the deadman for the
+    week on the strength of one user having been covered — the exact case
+    ("the task never ran at all") the check exists for.
+    """
+    if args.user is not None:
+        return None
+    return settings.healthcheck_recommendations_url
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
