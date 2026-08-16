@@ -344,6 +344,17 @@ tasks:
         docker compose exec -T tvbf-backend python -m tvbf.jobs.weekly_recommendations
         --dry-run --user {{.CLI_ARGS}}
 
+  recommend:weekly:
+    desc: 'Run the weekly recommendations pass now (task recommend:weekly [-- --user <uuid>])'
+    # The *manual* trigger; in prod this is a Coolify scheduled task running
+    # Sundays, on `jobs/scheduled.py`'s contract — the process is the run and
+    # the exit code is the result. `--user` narrows it to one account. A second
+    # copy running finds `pg_try_advisory_lock` held, logs, and exits 0.
+    cmds:
+      - >
+        docker compose exec -T tvbf-backend python -m tvbf.jobs.weekly_recommendations
+        {{.CLI_ARGS}}
+
   deps:add:
     desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
     cmds:

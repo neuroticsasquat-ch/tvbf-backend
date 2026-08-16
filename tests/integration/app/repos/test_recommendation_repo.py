@@ -211,3 +211,95 @@ async def test_two_sets_generated_at_the_same_instant_resolve_to_the_same_one(se
     assert current is not None
     assert current.id == max(first.id, second.id)
     assert [rec.set_id for rec, _ in rows] == [current.id]
+
+
+class TestWritingASet:
+    """`write_set` (NEU-1109), the other half of this module."""
+
+    async def test_the_set_and_its_rows_land_together(self, session, make_user):
+        user = await make_user()
+        first = await _show(session, 974_000, "Dark", popularity=90.0)
+        second = await _show(session, 974_001, "Shōgun", popularity=80.0)
+
+        written = await recommendation_repo.write_set(
+            session,
+            user_id=user.id,
+            status=SET_STATUS_SUCCEEDED,
+            payload_hash="hash",
+            prompt_version="1",
+            model="deepseek-ai/DeepSeek-V4-Pro-0813",
+            compiled_payload={"liked": []},
+            raw_response={"recommendations": []},
+            input_tokens=6_748,
+            output_tokens=1_100,
+            recommendations=[
+                recommendation_repo.NewRecommendation(
+                    show_id=first.id, reason="One.", matched_via=MATCHED_VIA_NAME
+                ),
+                recommendation_repo.NewRecommendation(
+                    show_id=second.id, reason="Two.", matched_via=MATCHED_VIA_AKA
+                ),
+            ],
+        )
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+        assert written.status == SET_STATUS_SUCCEEDED
+        assert [(rec.rank, rec.show_id, rec.matched_via) for rec, _ in rows] == [
+            (1, first.id, MATCHED_VIA_NAME),
+            (2, second.id, MATCHED_VIA_AKA),
+        ]
+
+    async def test_rank_is_the_order_it_was_given_rather_than_the_callers_to_assign(
+        self, session, make_user
+    ):
+        """The model's ordering is the only ordering there is, and a caller that
+        has to number the rows itself is a caller that can get it wrong."""
+        user = await make_user()
+        shows = [await _show(session, 974_100 + n, f"Show {n}") for n in range(3)]
+
+        await recommendation_repo.write_set(
+            session,
+            user_id=user.id,
+            status=SET_STATUS_SUCCEEDED,
+            payload_hash="hash",
+            prompt_version="1",
+            model="m",
+            compiled_payload={},
+            recommendations=[
+                recommendation_repo.NewRecommendation(
+                    show_id=show.id, reason="r", matched_via=MATCHED_VIA_NAME
+                )
+                for show in reversed(shows)
+            ],
+        )
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+        assert [rec.rank for rec, _ in rows] == [1, 2, 3]
+        assert [show.id for _, show in rows] == [s.id for s in reversed(shows)]
+
+    async def test_an_unhappy_status_is_recorded_and_stays_invisible_to_readers(
+        self, session, make_user
+    ):
+        """All four statuses come through here — the row is the only place a
+        failure becomes visible at 3-5 users, and only `succeeded` is served."""
+        user = await make_user()
+        await _set(session, user, generated_at=_BASE - timedelta(days=7))
+
+        for status in (SET_STATUS_FAILED, SET_STATUS_NO_MATCHES, SET_STATUS_INSUFFICIENT_HISTORY):
+            await recommendation_repo.write_set(
+                session,
+                user_id=user.id,
+                status=status,
+                payload_hash=f"hash-{status}",
+                prompt_version="1",
+                model="m",
+                compiled_payload={},
+            )
+        await session.commit()
+
+        current = await recommendation_repo.get_current_set(session, user_id=user.id)
+        assert current is not None
+        assert current.status == SET_STATUS_SUCCEEDED
+        assert current.payload_hash == "abc123"
