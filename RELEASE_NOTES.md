@@ -1,5 +1,17 @@
 # Release notes
 
+## 0.3.2 — 2026-08-16
+
+### General
+
+- Refresh catalog.show.popularity from the daily TMDB export ([NEU-1172](https://linear.app/neuroticsasquatch/issue/NEU-1172)) ([#293](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/293))
+- Mirror TMDB recommendations and backfill the catalog ([NEU-1052](https://linear.app/neuroticsasquatch/issue/NEU-1052)) ([#294](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/294))
+- Serve TMDB's similar shows at GET /shows/{id}/similar ([NEU-1053](https://linear.app/neuroticsasquatch/issue/NEU-1053)) ([#297](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/297))
+- Capture a daily /trending/tv/week snapshot ([NEU-1055](https://linear.app/neuroticsasquatch/issue/NEU-1055)) ([#298](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/298))
+- Serve the trending snapshot at GET /trending ([NEU-1056](https://linear.app/neuroticsasquatch/issue/NEU-1056)) ([#299](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/299))
+- Most-anticipated query layer over catalog.show ([NEU-1058](https://linear.app/neuroticsasquatch/issue/NEU-1058)) ([#300](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/300))
+- Serve the most-anticipated list at GET /anticipated ([NEU-1059](https://linear.app/neuroticsasquatch/issue/NEU-1059)) ([#301](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/301))
+
 ## 0.3.1 — 2026-08-16
 
 ### General
