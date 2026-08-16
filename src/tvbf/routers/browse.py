@@ -4,6 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User
+from tvbf.app.repos import show_membership_repo
 from tvbf.catalog import browse_queries
 from tvbf.catalog.schemas import (
     ALLOWED_SORT_KEYS,
@@ -20,6 +21,8 @@ from tvbf.catalog.schemas import (
     ShowFilters,
     ShowListPage,
     ShowSummary,
+    TrendingOut,
+    TrendingShowOut,
     build_cast_member,
     build_crew_member,
     build_episode_out,
@@ -188,6 +191,61 @@ async def get_show_similar_route(
         build_show_summary(show, genre_names=[], network=None)
         for show in await browse_queries.list_similar_shows(session, show_id)
     ]
+
+
+@router.get("/trending", response_model=TrendingOut)
+async def get_trending_route(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> TrendingOut:
+    """The current `/trending/tv/week` snapshot, or nothing if it has gone stale.
+
+    **The seven-day cutoff is the server's rule and is enforced in one place**
+    (`browse_queries.get_trending_snapshot`, project spec §3). A snapshot past it
+    answers `200 {"captured_at": null, "shows": []}` — the same body an empty
+    table gives — so the SPA renders no section without ever being told the word
+    "stale", and never holds enough to re-derive the rule for itself. A rule
+    enforced in two places drifts, and what it drifts into is week-old rows under
+    a label reading "trending right now".
+
+    **Shows the viewer already tracks are marked, not filtered.** Trending is a
+    claim about the world; seeing your own show in it is a feature.
+
+    That mark is a per-user field, so the route takes `no-store` rather than the
+    router-level cacheable header — the reason the show and episode routes do.
+    Being per-user anyway is also what pays for `my_rating` here where
+    `/shows/{id}/similar` declines it: that route trades the badge for a body
+    identical to every viewer's, and this one has no such body to protect.
+
+    Genres and the network are left empty on `/shows/{id}/similar`'s cheaper
+    reasoning: `ShowCard` renders neither, so hydrating them would be two more
+    round trips for fields nothing displays.
+    """
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
+    captured_at, shows = await browse_queries.get_trending_snapshot(session)
+    show_ids = [show.id for show in shows]
+    tracked = await show_membership_repo.tracked_show_ids(
+        session, user_id=user.id, show_ids=show_ids
+    )
+    my_ratings = await browse_queries.hydrate_my_ratings(
+        session, viewer_id=user.id, show_ids=show_ids
+    )
+    return TrendingOut(
+        captured_at=captured_at,
+        shows=[
+            TrendingShowOut(
+                **build_show_summary(
+                    show,
+                    genre_names=[],
+                    network=None,
+                    my_rating=my_ratings.get(show.id),
+                ).model_dump(),
+                in_my_shows=show.id in tracked,
+            )
+            for show in shows
+        ],
+    )
 
 
 # Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded
