@@ -226,6 +226,36 @@ class TrendingOut(BaseModel):
     shows: list[TrendingShowOut] = []
 
 
+class AnticipatedShowOut(ShowSummary):
+    """One entry of the most-anticipated list: a `ShowSummary` **flattened**,
+    plus the same mark trending carries (NEU-1059).
+
+    A sibling of `TrendingShowOut` rather than a shared type or a reuse of it.
+    The flattening and the mark are the same decision for the same reason —
+    `ShowGrid` and `ShowCard` already take a `ShowSummary`, so a wrapper type
+    would cost the frontend something for one boolean, and a show the viewer
+    already tracks is marked rather than dropped. What differs is everything
+    around them: these two surfaces answer different bodies (a bare array here,
+    an object with a `captured_at` there), and this one leaves `my_rating` null
+    where trending fills it. `RecommendationOut` is the third variation on the
+    shape and is not a subtype of either.
+
+    `my_rating` is always null here, and the reason is the surface rather than
+    the cost of the query: every show on this list premieres in the future, so
+    a rating for one is a rating for something nobody has seen. Trending's
+    argument for filling it — the badge would be missing on Discover and
+    present everywhere else for the same show — does not reach a list of
+    unpremiered shows, and NEU-1059's "one query for the list plus at most one
+    for the mark" is what it would have to be paid for with.
+
+    `genres` is always `[]` and `network` always null, on
+    `/shows/{id}/similar`'s reasoning: `ShowCard` renders neither, so
+    hydrating them is two more round trips for fields nothing displays.
+    """
+
+    in_my_shows: bool = False
+
+
 class PersonRef(BaseModel):
     """Compact person reference used inside credit payloads."""
 
