@@ -330,9 +330,15 @@ async def list_anticipated_shows(
     `adult` and `deleted_upstream_at` are filtered here, on the read, as
     everywhere else in this module.
 
-    The id breaks ties, because at this end of the catalog a tie is the ordinary
-    case rather than the exotic one — most future-dated shows score alike — and
-    without it the order changes between two requests for the same list.
+    **An unscored show is served last, not withheld.** `popularity` is NULL for a
+    show the export has never carried a score for, and `NULLS LAST` is the whole
+    of what that means here: absent evidence of interest is not evidence of
+    absent interest, and the window and the limit already bound the list.
+
+    The id breaks ties, because `ORDER BY popularity` alone is a partial order —
+    two shows carrying the same score, or both carrying none, may come back in
+    either order from one request to the next, which a cached browse response
+    then freezes at random.
     """
     result = await session.execute(
         select(m.Show)
