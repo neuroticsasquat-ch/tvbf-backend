@@ -41,6 +41,7 @@ from tvbf.jobs.weekly_recommendations import (
     CONSECUTIVE_FAILURE_LIMIT,
     _parse_args,
     run,
+    run_pass_if_free,
 )
 from tvbf.recommendations.payload import GENERATION_FLOOR, PROMPT_VERSION
 
@@ -471,6 +472,26 @@ class TestTheAdvisoryLock:
 
         assert route.call_count == 0
         assert await _sets(session, user.id) == []
+
+    @respx.mock
+    async def test_the_seam_both_triggers_share_reports_a_held_lock_as_none(
+        self, session, user, provider
+    ):
+        """`POST /admin/recommendations` calls this rather than `run_pass`, which
+        is what makes a manual trigger during the cron a no-op instead of a
+        second call per user."""
+        route = _mock(_answer(_recommendation("Dark", 2017)))
+
+        async with engine.connect() as holder:
+            assert (
+                await holder.execute(select(func.pg_try_advisory_lock(ADVISORY_LOCK_KEY)))
+            ).scalar_one()
+            try:
+                assert await run_pass_if_free(get_settings()) is None
+            finally:
+                await holder.execute(select(func.pg_advisory_unlock(ADVISORY_LOCK_KEY)))
+
+        assert route.call_count == 0
 
     @respx.mock
     async def test_the_lock_is_released_when_the_pass_finishes(self, session, user, provider):

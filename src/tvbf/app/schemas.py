@@ -218,6 +218,18 @@ class SeasonProgress(BaseModel):
     watched: int
 
 
+class RecommendationsRunRequest(BaseModel):
+    """The optional body of `POST /admin/recommendations` (NEU-1110).
+
+    `user_id` narrows the run to one account, which is the reason the endpoint
+    exists: testing a prompt edit against a single user is the difference between
+    an iteration loop measured in minutes and one measured in weeks. Omitting it
+    — or the body entirely — runs the same pass the Sunday schedule runs.
+    """
+
+    user_id: UUID | None = None
+
+
 class InviteCreateRequest(BaseModel):
     email_hint: EmailStr | None = None
 

@@ -479,13 +479,14 @@ async def _record_failure(user_id: UUID, model: str) -> None:
 async def run_pass(settings: Settings, *, user_id: UUID | None = None) -> PassResult:
     """The weekly pass over every user, or over one.
 
-    `user_id` narrows the work list to a single account. It is a debugging
-    affordance and the seam `POST /admin/recommendations` (NEU-1110) will be
-    written against; the schedule always calls it with nothing.
+    `user_id` narrows the work list to a single account — a debugging affordance,
+    and what `POST /admin/recommendations` (NEU-1110) passes through; the
+    schedule always calls it with nothing.
 
-    The advisory lock is **not** taken here — `run` takes it around this, so a
-    caller that already holds it (an in-process admin trigger) is not deadlocked
-    by its own guard.
+    The advisory lock is **not** taken here. `run_pass_if_free` wraps this and is
+    what both triggers call, so a caller that already holds the lock — a test
+    holding it deliberately, or a future in-process caller — is not deadlocked by
+    its own guard.
     """
     model = settings.recommendation_model
     if not model:
@@ -547,6 +548,30 @@ async def run_pass(settings: Settings, *, user_id: UUID | None = None) -> PassRe
         " (aborted)" if result.aborted else "",
     )
     return result
+
+
+async def run_pass_if_free(settings: Settings, *, user_id: UUID | None = None) -> PassResult | None:
+    """Run the pass under `ADVISORY_LOCK_KEY`, or report that somebody else holds it.
+
+    `None` means another pass is already running and this caller did nothing —
+    which is not an error at either call site. The schedule exits 0 on it, and
+    `POST /admin/recommendations` (NEU-1110) has already answered 202 by the time
+    this runs, so the log line is all there is to say.
+
+    Both triggers go through this rather than through `run_pass` directly, and
+    that is the whole point of the guard: a manual trigger fired minutes before
+    the cron would otherwise have both processes read the same stale payload
+    hash, both find the user dirty, and both spend a call.
+    """
+    async with _advisory_lock() as held:
+        if not held:
+            # Somebody triggered the pass by hand minutes before the schedule
+            # fired, or the last one has not finished. Benign: failing here would
+            # have Coolify notify on a condition the guard exists to produce —
+            # the same call `jobs/scheduled` makes for its own in-flight guard.
+            log.info("another weekly recommendations pass holds the lock; nothing to do")
+            return None
+        return await run_pass(settings, user_id=user_id)
 
 
 def _report(user_id: UUID, model: str, payload: TastePayload) -> None:
@@ -658,26 +683,26 @@ async def run(args: argparse.Namespace) -> int:
     if args.dry_run:
         return await run_dry_run(args.user)
 
-    async with _advisory_lock() as held:
-        if not held:
-            # Somebody triggered the pass by hand minutes before the schedule
-            # fired, or the last one has not finished. Exit 0: this process did
-            # nothing wrong, and failing would have Coolify notify on a benign
-            # condition — the call `jobs/scheduled` already makes for its own
-            # in-flight guard.
-            log.info("another weekly recommendations pass holds the lock; nothing to do")
-            return 0
+    settings = get_settings()
+    if not settings.recommendation_model or not settings.deepinfra_api_key:
+        # Checked before the work list — and, since NEU-1110, before the lock —
+        # rather than at the first call: a pass that compiles five payloads and
+        # then discovers it cannot authenticate has spent five users' turns
+        # learning it, and a lock taken to discover it is one another process
+        # waited behind.
+        #
+        # That ordering is deliberate and it does change one case: an
+        # unconfigured process that would also have found the lock held used to
+        # exit 0 and now exits 1. "A concurrent pass is not an error" is about a
+        # *concurrent pass*; a deployment that cannot authenticate is broken
+        # whoever else is running, and 0 there hides a typo'd env var behind
+        # whatever happened to be in flight.
+        log.error("RECOMMENDATION_MODEL and DEEPINFRA_API_KEY must both be set")
+        return 1
 
-        settings = get_settings()
-        if not settings.recommendation_model or not settings.deepinfra_api_key:
-            # Checked before the work list rather than at the first call: a pass
-            # that compiles five payloads and then discovers it cannot
-            # authenticate has spent five users' turns learning it.
-            log.error("RECOMMENDATION_MODEL and DEEPINFRA_API_KEY must both be set")
-            return 1
-
-        result = await run_pass(settings, user_id=args.user)
-    return 0 if result.ok else 1
+    result = await run_pass_if_free(settings, user_id=args.user)
+    # A pass that never started is a 0: this process did nothing wrong.
+    return 0 if result is None or result.ok else 1
 
 
 def _parse_args(argv: list[str] | None) -> argparse.Namespace:
