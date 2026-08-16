@@ -568,11 +568,15 @@ class UserRecommendationSet(Base):
         # falls out of a handful of rows rather than needing a term of its own —
         # a user accrues ~52 sets a year.
         #
-        # Which set the regeneration gate compares its hash against is NEU-1108's
-        # to decide and deliberately not settled here. It is not free either way:
-        # a `failed` set carries a `payload_hash` like any other, so a gate
-        # reading the newest set of *any* status would skip an unchanged user
-        # forever after one provider outage.
+        # NEU-1108 settled which set the regeneration gate compares its hash
+        # against, in `app/repos/recommendation_repo.py`: the newest `succeeded`
+        # one, the same set the API serves. It was not free either way — a
+        # `failed` set carries a `payload_hash` like any other, so a gate reading
+        # the newest set of *any* status would skip an unchanged user forever
+        # after one provider outage. That query orders on `id` behind
+        # `generated_at` to break the tie two sets written in one transaction
+        # produce, which this index does not cover; at ~52 rows a year the sort
+        # is over a handful of rows either way.
         Index("ix_user_recommendation_set_user_generated", "user_id", "generated_at"),
         {"schema": "app"},
     )
