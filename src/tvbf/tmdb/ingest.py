@@ -96,7 +96,7 @@ from tvbf.tmdb.client import (
     is_gone_upstream,
     plan_append,
 )
-from tvbf.tmdb.export import fetch_series_ids
+from tvbf.tmdb.export import fetch_series_export
 from tvbf.tmdb.upsert import mark_series_synced, upsert_series_payload
 
 log = logging.getLogger(__name__)
@@ -318,7 +318,11 @@ async def run_catalog_ingest(
     `series_ids` overrides the export download, which is what tests and a
     targeted re-run use; leaving it unset fetches the real thing.
     """
-    export_ids = list(series_ids) if series_ids is not None else await fetch_series_ids()
+    export_ids = (
+        list(series_ids)
+        if series_ids is not None
+        else [entry.tmdb_id for entry in await fetch_series_export()]
+    )
 
     async with _owned_session(session_factory) as s:
         synced = await synced_series_ids(s)

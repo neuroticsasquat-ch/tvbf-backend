@@ -29,7 +29,9 @@ work list *and* from the plausibility count, because they are not evidence
 either way about how complete the feed is.
 
 **The floors are recalibrated against 228,611**, the export's measured size on
-2026-08-07, rather than TV Maze's ~89k.
+2026-08-07, rather than TV Maze's ~89k. They live in `export.py` since NEU-1172
+gave them a second caller — "is this file the whole catalog?" is a question
+about the export, and the popularity refresh has to ask it before writing too.
 """
 
 import logging
@@ -40,28 +42,9 @@ from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
+from tvbf.tmdb.export import feed_is_implausible
 
 log = logging.getLogger(__name__)
-
-# The export's size the last time it was measured: 2026-08-07. Not a limit, a
-# *denominator* — see `_feed_is_implausible` for why the relative floor cannot
-# use the mirror's own size the way TV Maze's did.
-_MEASURED_EXPORT = 228_611
-
-# The reverse diff is `mirrored - feed`, so a truncated export that still parses
-# would tombstone the entire catalog. These floors are the only thing standing
-# between a bad download and 228k tombstoned series.
-#
-# Absolute: catches an empty or badly truncated file with no estimate involved.
-# Sized as TV Maze's was — comfortably below the measured catalog (two thirds of
-# it), far above any collapse TMDB could legitimately have. Strictly weaker than
-# the relative floor under today's constants, and kept anyway: it is what still
-# fires if `_MEASURED_EXPORT` is ever revised downward or the mirror count is
-# wrong, neither of which it depends on.
-_MIN_FEED_ABSOLUTE = 150_000
-# Relative: catches a partial file large enough to clear the absolute floor.
-# Upstream does not shed 5% of its catalog in a day.
-_MIN_FEED_RELATIVE = 0.95
 
 # Postgres caps bind parameters at 32,767 — the same ceiling that forces
 # `_EPISODE_BATCH_SIZE` and the export diff being computed in Python. The write
@@ -75,35 +58,6 @@ class TombstoneResult:
     tombstoned: int
     resurrected: int
     skipped_reason: str | None = None
-
-
-def _feed_is_implausible(feed_size: int, mirrored: int) -> str | None:
-    """Return why the export can't be trusted to prove absence, or None if it can.
-
-    The relative floor measures the export against **the larger of the mirror
-    and the export's own measured size**, which is the one place this cannot be
-    a straight port. TV Maze's mirror was the same size as its feed, so `95% of
-    mirrored` was `95% of the feed` in all but name. Here the mirror is far
-    smaller than the export for the whole pre-cutover period — ~63k mapped rows
-    against ~229k series — and a fraction of it is no floor at all: a complete-
-    looking export carrying a third of the catalog would clear both guards and
-    tombstone every mapped series in the missing two thirds.
-
-    Taking the maximum keeps both eras honest. Before cutover the constant binds;
-    after it, the mirror overtakes the constant and the guard tracks reality
-    rather than a number measured in 2026. Either way an export that has genuinely
-    shrunk 5% writes nothing and says so, which is the correct thing to do about
-    a catalog that lost eleven thousand series overnight.
-    """
-    if feed_size < _MIN_FEED_ABSOLUTE:
-        return f"export carried {feed_size} ids, under the absolute floor of {_MIN_FEED_ABSOLUTE}"
-    expected = max(mirrored, _MEASURED_EXPORT)
-    if feed_size < _MIN_FEED_RELATIVE * expected:
-        return (
-            f"export carried {feed_size} ids against the {expected} series TMDB is known "
-            f"to hold, under {_MIN_FEED_RELATIVE:.0%} of it"
-        )
-    return None
 
 
 async def _set_deleted_at(
@@ -147,7 +101,7 @@ async def reconcile_tombstones(session: AsyncSession, *, feed_ids: set[int]) -> 
     # and resurrection.
     live = sum(1 for r in rows if r.deleted_upstream_at is None)
 
-    if reason := _feed_is_implausible(len(feed_ids), live):
+    if reason := feed_is_implausible(len(feed_ids), live):
         log.error("catalog tombstone pass skipped, wrote nothing: %s", reason)
         return TombstoneResult(0, 0, reason)
 
