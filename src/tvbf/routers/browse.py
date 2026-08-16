@@ -167,13 +167,20 @@ async def get_show_similar_route(
     show still 404s, on `/cast`'s reasoning: an empty result cannot stand in for a
     missing show once empty is ordinary.
 
-    **The payload carries no per-user field**, so this route keeps the
-    router-level `private, max-age=300` instead of the `no-store` the show and
-    episode routes need: `my_rating` is null on every card here, and filling it
-    would cost both a second query and the cacheability. Genres and the network
-    are likewise left empty — `ShowCard` renders neither, and hydrating them is
-    two more round trips for fields nothing displays, against an acceptance
-    criterion of one query for the list.
+    **The payload carries no per-user field**, which is what lets this route keep
+    the router-level `private, max-age=300` instead of the `no-store` the show
+    and episode routes need. That is a trade rather than a free win, and it is
+    `my_rating` that pays: `ShowCard` *does* render a badge for it, so a
+    recommended show the viewer has already rated shows one here where it would
+    on any other grid. Filling it costs a query and, by `_SHOW_EP_CACHE`'s rule,
+    the cacheability of a list that is identical for every viewer — so the badge
+    goes.
+
+    Genres and the network are left empty on the cheaper reasoning: `ShowCard`
+    renders neither, so hydrating them is two more round trips for fields nothing
+    displays, against an acceptance criterion of one query for the list. A
+    consumer wanting the list-view shape (`ShowList` reads both) would need them
+    hydrated here.
     """
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")

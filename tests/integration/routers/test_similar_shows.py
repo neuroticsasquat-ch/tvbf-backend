@@ -144,12 +144,15 @@ async def test_requires_auth():
     assert r.status_code == 401
 
 
-async def test_serves_the_list_in_one_query(seeded_similar):
+async def test_serves_the_list_in_one_query_plus_the_existence_check(seeded_similar):
     """The list is one join, not a lookup per recommended show.
 
     Counted over statements touching `catalog`, like the `GET /shows` fixed-query
-    test: the existence check is the second, and it is the same PK lookup
-    `/shows/{id}/cast` spends to tell a bare show from a missing one.
+    test. **Two, not one**: the ticket's "one query" criterion is about the list,
+    and the second is the PK lookup `/shows/{id}/cast` spends for the same reason
+    — an empty result cannot stand in for a missing show once empty is ordinary.
+    Read the number as one query per question asked, and note that neither moves
+    with the number of recommendations.
     """
     from sqlalchemy import event
 
