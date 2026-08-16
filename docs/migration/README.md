@@ -45,6 +45,8 @@ pointing at unmapped rows.
 | Airdate reconciliation (NEU-1145) | `reconcile:airdates` | **after** the baseline capture; nightly thereafter | ✅ **2026-08-14 — run in production, twice.** The baseline above was captured before either, which is what makes it valid. **16:32:29→17:03:37 UTC**, 1,772 shows, 0 failed → **158 offsets** across 108 shows, **1,967 episodes corrected**. That run predates NEU-1148 and NEU-1149 being live (it left `catalog.airdate_show_state` empty). **19:34:59→20:06:07 UTC** (31m08s) was the first on both: same 1,772 shows, 0 failed, and **the offset and corrected-episode counts did not move** — 158 and 1,967 again, which is the raw-date comparison proving itself, since reading the corrected column would have judged all 158 seasons as agreeing and retracted every one. Left 1,772 `airdate_show_state` rows: 1,287 resolved, **485 with no TV Maze counterpart**, all 1,772 stamped. An earlier 15:49 attempt aborted on the consecutive-failure threshold and wrote nothing |
 | Airdate verdict (NEU-1145) | `airdate_verify verify` | after the first pass | ⬜ **now runnable** — the pass has run (above), so this is the outstanding step. Exit 1 only on a regression; rows still a day early are printed, not scored |
 | Orphan-row retirement (NEU-1146) | `task retire:orphans` | **after** the drop; re-run after any later ingest or delta | ✅ **2026-08-14 — criterion 7 met, catalog is TMDB-sourced throughout.** 0 `tmdb_id IS NULL` rows at all three grains, verified by query. Reconciliation matched the prediction **exactly** on all six metrics; 30 discrepancies, every one enumerated in advance, no unlisted `LOST` line. Needed `neu-1146-import-ne-remediation.sql` between two runs. Earlier note: report run 2026-08-14 (artifact `neu-1146-pre-run-report.json`, and it caught the tier-2 special-offset bug fixed in #255); **the pass itself has not run.** Ends the locally-authored residue at all three grains (782,161 episodes, 18,341 seasons, 2 shows as of 2026-08-14) and is the **first pass that deliberately deletes user rows** — ~95 watches, per ADR-0012. Run `task retire:orphans:report` first and commit its loss list; `reconcile:verify` will not come back clean afterwards, by design |
+| Recommendations backfill (NEU-1052) | `task backfill:recommendations` | after the ingest; re-run after any later full ingest | ⬜ **not run.** The one-time pass that fills `catalog.show_recommendation` for the 229,418 shows mirrored before the `recommendations` namespace was appended. Ordered `popularity DESC`, so **stopping early is a supported outcome** — the top 20,000 take ~45 min and cover essentially every page a user loads. ~8.8h for the whole catalog. Run `task backfill:recommendations:report` first and again afterwards |
+
 
 
 ## Dropping `tvmaze` (NEU-1051)
@@ -864,6 +866,115 @@ asks: spine row counts and the show's own columns, either side of a run.
 
 A per-show failure rolls back before it is counted, so a stamped show always
 carries a complete credit set and a re-run never has to wonder whether it does.
+
+## Recommendations backfill (NEU-1052)
+
+The credits backfill's shape with a different cause, and the last one of these
+the similar-shows surface will ever need.
+
+NEU-1127's backlog existed because the writers merged after the pass that
+fetched their data. This one exists because the **request never carried the
+namespace**: NEU-1031 classified `recommendations` as skipped — "TMDB-computed
+and volatile rather than a catalog fact" — and the same paragraph warned that
+"every namespace left off is a field that becomes a multi-hour backfill later".
+All 229,418 mirrored shows are that warning coming true, on schedule.
+
+From NEU-1052 on, `recommendations` is in `DEFAULT_APPEND`, so **every future
+ingest and every nightly delta refreshes a show's list as a side effect of the
+fetch it already makes.** There is no recurring refresh pass, no cadence to
+choose and no staleness rule. This backfill is the one-time cost of having
+skipped it.
+
+### What it costs, and what the append cost
+
+One request per show — the pass appends `recommendations` and nothing else, so a
+forty-season show costs one request rather than one plus its overflow. ~8.8 hours
+for the full catalog at the measured 7.27 shows/sec.
+
+Adding the twelfth namespace narrowed the ingest's speculative season window from
+0–8 to 0–7. Measured across all 210,343 mirrored shows carrying ingested seasons:
+**96.84% fit inside 0–8, 96.34% inside 0–7** — 1,054 shows paying one extra
+`get_tv_season` each, about two and a half minutes on a pass that runs most of a
+day. `SPECULATIVE_SEASONS` derives the window from `DEFAULT_APPEND`, so nothing
+overflowed the 20-entry cap into a hard 400.
+
+### Ordered by popularity, and stopping early is a destination
+
+The work list is taken `popularity DESC`, which front-loads all of the value: the
+top 20,000 shows take about 45 minutes and cover essentially every page a user
+will load. A pass killed at any point leaves a mirror whose popular shows have a
+"More like this" section and whose long tail does not, and the surface degrades
+to *no section at all* for the rest — the project spec's own degradation rule
+rather than a compromise.
+
+`catalog.show.popularity` is refreshed nightly from the daily export (NEU-1172),
+so the ordering reflects this week rather than the ingest's vintage. That is why
+this ticket was blocked on that one.
+
+### The watermark is a column, for the third time
+
+`catalog.show.recommendations_synced_at`, added by migration `f3a71c9d24b8`.
+"The show carries no `show_recommendation` row" cannot represent the normal
+outcome: TMDB recommends nothing for ~8% of the zero-vote long tail, and under
+that predicate every one of them would be re-fetched on every run and the pass
+would never converge — the same conflation `credits_synced_at` was added to
+avoid.
+
+`mark_series_synced` stamps all three columns, so a show the delta has already
+covered never enters the backlog. `mark_recommendations_synced` stamps only its
+own, because the backfill writes no spine and no credits and is in no position to
+claim either watermark.
+
+### Running it
+
+```bash
+# The artifact, before and after. Writes nothing, needs no TMDB credential.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.recommendations_backfill report' \
+  > /tmp/recommendations-before.json
+
+# A hundred shows first — seconds, and it proves the credential and the writer
+# against production data before hours are committed to.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.recommendations_backfill backfill --limit 100'
+
+# The top 20,000 — ~45 minutes, and the point at which the surface is
+# effectively complete for anything a user opens.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.recommendations_backfill backfill --limit 20000'
+
+# The rest. Resumable per show, so kill it freely and start it again.
+ssh "$PROD_SSH" 'docker exec -i <tvbf-backend> python -m tvbf.jobs.recommendations_backfill backfill'
+```
+
+Exit 0 means the pass completed; 1 means it aborted or raised. A show TMDB
+recommends nothing for is stamped like any other and counted apart — not a
+failure, and what stops the next run fetching it again. Shows that failed for any
+other reason are left unstamped, so re-running picks exactly those up.
+
+The run log keeps **two ways of ending with no rows apart**, and the distinction
+is the one worth reading: `%d show(s) with none upstream` is TMDB being quiet,
+which is normal for ~8% of the long tail, while `%d target(s) dropped as
+unmirrored` is the mirror being behind — a series TMDB created this morning is
+not ours until tonight's delta. A large second number is a reason to look at the
+delta; a large first one is not.
+
+The report's `user_touched_without_recommendations` is the spot-check list, worst
+first by tracker count then popularity. `targets_tombstoned` should be 0 or near
+it: a non-zero value is not a defect — the read path filters
+`deleted_upstream_at` for exactly that, and the source show's next refresh drops
+the row — but a large one would mean refreshes have stopped happening.
+
+### What it must not do, and how that is enforced
+
+The pass writes `catalog.show_recommendation` and nothing else, and advances
+neither `tmdb_synced_at` nor `credits_synced_at`. The guarantee lives in
+`upsert.write_series_recommendations` rather than in the job, on the
+`write_series_credits` precedent: the caller never assembles it out of private
+writers, so there is one place to read to know it holds.
+`test_it_writes_no_spine_row_and_advances_no_other_watermark` proves it the way
+the ticket asks — spine row counts and the show's own columns, either side of a
+run.
+
+**Re-run it after any later full ingest**, on the same footing as
+`season_dedupe` and `orphan_retire`.
 
 ## Show-grain prune (NEU-1066)
 

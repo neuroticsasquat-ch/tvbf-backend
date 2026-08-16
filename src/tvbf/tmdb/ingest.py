@@ -25,10 +25,12 @@ resumes rather than restarts.
 ## One request per show, and the guess that makes it one
 
 `append_to_response` takes 20 entries, namespaces and `season/N` blocks drawing
-on the same budget (NEU-1028). The audit's 11 namespaces leave nine season
-slots — but a show's season *numbers* are only knowable from a response we have
-not made yet, so the first request guesses a window and reconciles afterwards
-against `seasons[]`, fetching whatever it missed with `get_tv_season`.
+on the same budget (NEU-1028). The twelve namespaces leave eight season slots
+— the audit's eleven plus NEU-1052's `recommendations`, which narrowed the
+window from `0..8` to `0..7` and moved 1,054 shows into a second request. But a
+show's season *numbers* are only knowable from a response we have not made
+yet, so the first request guesses a window and reconciles afterwards against
+`seasons[]`, fetching whatever it missed with `get_tv_season`.
 
 Both halves of that guess are measured, by `scripts/probe_tmdb_season_speculation.py`
 against the live API on 2026-08-10:
@@ -37,9 +39,13 @@ against the live API on 2026-08-10:
   response silently — 200 OK, key simply absent. Verified on a 3-season show
   asked for six absent seasons. Had TMDB 400'd instead, speculation would have
   broken the ingest for the single-season series that are most of the catalog.
-- **`0..8` beats `1..9`.** Across 200 sampled series, 97.5% have every season
-  inside `0..8` against 94.0% inside `1..9`. Specials (season 0) are rarer than
-  expected at 3.5%, but shows with a ninth numbered season are rarer still.
+- **Starting at 0 beats starting at 1.** Across 200 sampled series, 97.5% have
+  every season inside `0..8` against 94.0% inside `1..9`. Specials (season 0)
+  are rarer than expected at 3.5%, but shows with a ninth numbered season are
+  rarer still — which is why the window that NEU-1052 narrowed to `0..7` gave up
+  its *top* slot rather than its bottom one, and why it cost 0.50 percentage
+  points of coverage (96.84% to 96.34%, measured over all 210,343 mirrored shows
+  with ingested seasons) rather than the 3.5% dropping season 0 would have.
 
 Correctness does not rest on the guess — the reconcile step covers whatever it
 missed. The guess only decides how many shows cost two requests instead of one.
@@ -110,8 +116,10 @@ def speculative_seasons(namespaces: Sequence[str] = DEFAULT_APPEND) -> tuple[int
     as an argument so a caller that appends *none* of them gets the whole budget
     as seasons rather than nine of it.
 
-    Starts at 0 — specials — because the measurement says so: 0..8 covers 97.5%
-    of sampled shows against 94.0% for 1..9. See the module docstring.
+    Starts at 0 — specials — because the measurement says so: a window starting
+    at 0 covers 97.5% of sampled shows against 94.0% for one starting at 1. See
+    the module docstring, including what NEU-1052's twelfth namespace cost by
+    narrowing the top of it.
     """
     return tuple(range(0, APPEND_TO_RESPONSE_LIMIT - len(namespaces)))
 
@@ -202,7 +210,7 @@ async def fetch_series_with_seasons(
 
     `namespaces` exists for the one caller that needs the episodes and nothing
     else — NEU-1045's episode mapping, which passes `()` and thereby trades the
-    audit's eleven namespaces for eleven more speculative seasons. The ingest
+    twelve namespaces for twelve more speculative seasons. The ingest
     itself never passes it: a narrower payload here would mean a show mirrored
     without its credits and then stamped as complete.
     """

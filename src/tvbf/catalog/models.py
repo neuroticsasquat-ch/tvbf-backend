@@ -433,6 +433,21 @@ class Show(Base):
     # and upstream had none" from "we never asked", so it would re-fetch every
     # credit-less show on every run and never converge.
     credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this show's **recommendations** were last written from a complete TMDB
+    # payload — the recommendations backfill's resumability watermark (NEU-1052),
+    # stamped alongside the other two by `mark_series_synced` because every
+    # caller of that fetches `DEFAULT_APPEND`, which now carries the
+    # `recommendations` namespace.
+    #
+    # A third column for the second reason the second one exists: a "carries no
+    # `show_recommendation` row" predicate cannot tell *upstream returned none*
+    # from *nobody has asked*, and upstream returning none is ~8% of the
+    # zero-vote long tail (project spec §2) — so that predicate would re-fetch
+    # every one of them on every run and never converge.
+    #
+    # NULL therefore means *no pass has written recommendations onto this row*.
+    # It does **not** mean the show has none.
+    recommendations_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the show stops appearing in the daily id export, i.e. TMDB has
     # deleted it. The row is never removed: `app.user_show_watch` and
     # `app.user_show_rating` cascade from here, so a delete would destroy user
@@ -898,6 +913,61 @@ class ShowWatchProvider(Base):
     )
     display_priority: Mapped[int | None] = mapped_column(Integer)
     link: Mapped[str | None] = mapped_column(Text)
+
+
+class ShowRecommendation(Base):
+    """TMDB's "More like this" list for one show, in TMDB's own order (NEU-1052).
+
+    A show-to-show edge with a position, not a lookup: `source_show_id` is the
+    show being viewed and `target_show_id` one of the twenty TMDB recommends
+    alongside it. `rank` is the position the entry held in the response, so the
+    read path is `ORDER BY rank` and nothing has to re-derive an order upstream
+    already decided.
+
+    **One endpoint means one provenance, so there is no `source` column**
+    (project spec §2). `/similar` was measured and rejected — it returns zero
+    for every show `/recommendations` also returns zero for, and noise where it
+    answers at all — and a column holding a single constant is a lie waiting for
+    a second writer this design says will not come. A later
+    "people who watched this also watched" signal is a different table with a
+    user dimension, not a second value here.
+
+    **Ranks may have gaps.** A target that does not resolve to a `catalog.show`
+    is dropped rather than renumbered, so `rank` keeps meaning *TMDB's position*
+    rather than *ours after filtering*. Measured, dropping is a no-op (502 of
+    502 sampled targets resolved), and it stays as a guard because a series TMDB
+    created this morning is not mirrored until tonight's delta.
+
+    The whole list for a source show is **replaced** on refresh, never merged:
+    TMDB's ranking is a total order and a partial update would interleave two
+    vintages of it.
+    """
+
+    __tablename__ = "show_recommendation"
+    __table_args__ = (
+        PrimaryKeyConstraint("source_show_id", "rank", name="pk_show_recommendation"),
+        # One row per pair, which is what makes "the writer deduplicates" an
+        # invariant rather than a habit — TMDB listing a target twice would
+        # otherwise store it twice and the read path would show a duplicate card.
+        UniqueConstraint("source_show_id", "target_show_id", name="uq_show_recommendation_target"),
+        # The PK covers source->target. This is the other direction, and it is
+        # not for reading: `target_show_id` is a CASCADE FK into `catalog.show`,
+        # and Postgres has to find the referencing rows every time a show is
+        # deleted. Unindexed that is a sequential scan of the whole table per
+        # deleted show — the cost `ix_show_last_episode_to_air_id` was added for,
+        # once `orphan_retire` made bulk show deletion a thing that happens.
+        Index("ix_show_recommendation_target_show_id", "target_show_id"),
+        {"schema": SCHEMA},
+    )
+
+    source_show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    # TMDB's position in the response, 1-based.
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
 
 
 class ContentRating(Base):

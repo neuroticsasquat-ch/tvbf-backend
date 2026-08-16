@@ -132,6 +132,9 @@ NAMESPACES: dict[str, Target] = {
     "external_ids": ("show", "tvdb_id"),
     "images": "image",
     "keywords": "show_keyword",
+    # NEU-1052 moved this entry up from `SKIPPED`, by hand and on purpose — see
+    # `test_a_skipped_field_has_no_column`.
+    "recommendations": "show_recommendation",
     "screened_theatrically": ("episode", "screened_theatrically"),
     "translations": "translation",
     "videos": "video",
@@ -155,7 +158,7 @@ EXTERNAL_IDS = (
 
 # Classified *skipped*, each with a reason the audit records. A column appearing
 # for one of these is a decision being reversed silently.
-SKIPPED = ("softcore", "recommendations", "similar", "reviews", "credits")
+SKIPPED = ("softcore", "similar", "reviews", "credits")
 
 
 def _catalog_tables() -> dict[str, object]:
@@ -202,9 +205,26 @@ def test_every_measured_external_id_has_a_column():
 @pytest.mark.parametrize("field", SKIPPED)
 def test_a_skipped_field_has_no_column(field):
     """Not pedantry. Each of these was skipped on merit — `credits` is strictly
-    weaker than `aggregate_credits`, `recommendations` and `similar` are
-    TMDB-computed and volatile, `reviews` is somebody else's user-generated
-    content. Adding one back is a decision, and should read like one."""
+    weaker than `aggregate_credits`, `similar` is TMDB-computed, volatile *and*
+    measurably bad, `reviews` is somebody else's user-generated content. Adding
+    one back is a decision, and should read like one.
+
+    **`recommendations` was on this list until NEU-1052 and now is not.** The
+    reversal is recorded here rather than merely performed, because this guard
+    could not have caught it: the assertion is an *exact* match against table and
+    column names, and neither `show_recommendation` nor `recommendations_synced_at`
+    equals `recommendations`, so moving the entry was the only thing that made
+    the decision visible. NEU-1031's reasoning — TMDB-computed and volatile
+    rather than a catalog fact — was right about what the field is; the same
+    paragraph warned that "every namespace left off is a field that becomes a
+    multi-hour backfill later", and the similar-shows surface is that bill coming
+    due. Riding `append_to_response` is what stops it coming due twice.
+
+    `similar` stays skipped and its reason is now stronger than volatility:
+    measured over 36 production shows it returned zero for every show
+    `/recommendations` also returned zero for, and noise where it answered at all
+    (project spec §2).
+    """
     tables = _catalog_tables()
     surface = {c.name for t in tables.values() for c in t.c} | set(tables)  # type: ignore[attr-defined]
 

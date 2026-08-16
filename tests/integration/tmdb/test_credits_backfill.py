@@ -249,7 +249,8 @@ async def test_writes_all_four_credit_tables_for_a_mirrored_show(session):
 
 @respx.mock
 async def test_a_season_outside_the_speculative_window_still_contributes_its_credits(session):
-    """A season past `0..8` overflows `append_to_response` and needs its own request.
+    """A season past the speculative window overflows `append_to_response` and
+    needs its own request.
 
     The overflow is where a credits pass is most likely to go quietly wrong — the
     episodes are mirrored either way, so a show whose season 25 guest cast never
