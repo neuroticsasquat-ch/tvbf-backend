@@ -28,6 +28,7 @@ dropped one.
 
 import unicodedata
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import Select, false, func, literal, or_, select
@@ -200,6 +201,71 @@ async def list_similar_shows(
         .limit(limit)
     )
     return list(result.scalars().all())
+
+
+TRENDING_MAX_AGE = timedelta(days=7)
+"""Project spec §3: past this, the snapshot is not served at all.
+
+The cutoff lives here, on the read, and nowhere else — not in the SPA and not in
+the job. A rule enforced in two places drifts, and what drifts into is week-old
+rows under a label reading "trending right now". Silent staleness under a
+present-tense label is worse than an absent section, which is why the answer to
+an old snapshot is an empty list rather than a smaller one or a warning flag.
+"""
+
+
+async def get_trending_snapshot(session: AsyncSession) -> tuple[datetime | None, list[m.Show]]:
+    """The current trending snapshot: `(captured_at, shows)`, in TMDB's rank order.
+
+    One join over `catalog.trending_show`, which the daily job replaces whole
+    (NEU-1055) — a request never reaches upstream (ADR-0002).
+
+    **The staleness cutoff is applied in the query**, so there is no path through
+    this module that returns a row past it. It is measured against `captured_at`,
+    which the job stamps *before* the request goes out, so it describes the list
+    rather than the bookkeeping that stored it. The window is not a parameter:
+    the constant is the whole rule, and an injectable override would be the
+    second place to enforce it that the constant's own docstring rules out.
+
+    The cutoff is computed from Python's clock rather than Postgres's `now()`
+    because Python's is the clock that wrote the value; comparing the two would
+    make the answer depend on the skew between them.
+
+    **`captured_at` is taken from the rows returned, so it is null exactly when
+    the list is empty.** It describes the list in hand: reporting the timestamp
+    of a snapshot withheld for being stale would hand a client everything it
+    needs to re-derive the cutoff this route exists to own.
+
+    `adult` and `deleted_upstream_at` are filtered here, at read time, on
+    NEU-1053's and NEU-1108's precedent — the job deliberately does not apply
+    them on the way in, so a resurrected show returns to the list rather than
+    being invisible until the next snapshot.
+
+    Ranks may have gaps: an entry the job could not resolve to a `catalog.show`
+    was dropped rather than renumbered. The order is all this reads from them.
+
+    **This leans on `catalog.trending_show` holding exactly one snapshot** — the
+    job replaces the lot inside one transaction, so every surviving row carries
+    the same `captured_at` and the first one's is the list's. Should that table
+    ever become a history, this function has to scope itself to the newest
+    snapshot rather than to the window, or it will interleave two vintages and
+    report the lowest-ranked row's timestamp as the list's.
+    """
+    cutoff = datetime.now(tz=UTC) - TRENDING_MAX_AGE
+    result = await session.execute(
+        select(m.TrendingShow.captured_at, m.Show)
+        .join(m.Show, m.Show.id == m.TrendingShow.show_id)
+        .where(
+            m.TrendingShow.captured_at >= cutoff,
+            m.Show.adult.is_(False),
+            m.Show.deleted_upstream_at.is_(None),
+        )
+        .order_by(m.TrendingShow.rank)
+    )
+    rows = result.all()
+    if not rows:
+        return None, []
+    return rows[0][0], [show for _captured_at, show in rows]
 
 
 # Credit ordering. `episode_count` is the measure TV Maze's `sort_order` only ever

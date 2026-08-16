@@ -46,7 +46,7 @@ character as free text, so `catalog.character` has no image column at all.
 """
 
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -190,6 +190,40 @@ class ShowListPage(BaseModel):
     per_page: int
     total: int
     total_pages: int
+
+
+class TrendingShowOut(ShowSummary):
+    """One entry of the trending snapshot: a `ShowSummary` **flattened**, plus
+    the one field that makes it an entry rather than a search result (NEU-1056).
+
+    Flattened rather than nested under a `show` key, on `RecommendationOut`'s
+    reasoning: `ShowGrid` and `ShowCard` already take a `ShowSummary`, and a
+    wrapper type would cost the frontend something for a single boolean.
+
+    `in_my_shows` is a **mark, never a filter**. Trending is a claim about the
+    world, and seeing a show you already track in it is a feature rather than
+    noise — the surface renders it differently, it does not drop it.
+    """
+
+    in_my_shows: bool = False
+
+
+class TrendingOut(BaseModel):
+    """The `GET /trending` body.
+
+    An object rather than a bare array, because the list is only half of what
+    the surface needs: `captured_at` says when TMDB was asked, and the SPA is
+    free to show it.
+
+    **`captured_at` is null exactly when `shows` is empty**, and both are what a
+    snapshot past the seven-day cutoff answers. It describes the list served, so
+    there is no reading of the payload under which a client can recover the age
+    of a snapshot the server withheld — which is what keeps the cutoff the
+    server's rule alone (project spec §3).
+    """
+
+    captured_at: datetime | None = None
+    shows: list[TrendingShowOut] = []
 
 
 class PersonRef(BaseModel):
