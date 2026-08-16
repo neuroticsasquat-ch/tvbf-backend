@@ -1,12 +1,24 @@
-"""The dry run's pure halves: the token estimate and the argument contract.
+"""The job's pure halves: the token estimate, the argument contract, the tally.
 
-The payload itself is pinned by `tests/*/recommendations/test_payload.py`; what
-is only decidable here is what the CLI accepts and what the estimate claims.
+The payload itself is pinned by `tests/*/recommendations/test_payload.py` and the
+pass by `tests/integration/jobs/test_weekly_recommendations_pass.py`; what is only
+decidable here is what the CLI accepts, what the estimate claims, and how a run's
+outcomes turn into an exit code.
 """
 
 import pytest
 
-from tvbf.jobs.weekly_recommendations import _parse_args, estimate_tokens
+from tvbf.app.models import (
+    SET_STATUS_INSUFFICIENT_HISTORY,
+    SET_STATUS_NO_MATCHES,
+    SET_STATUS_SUCCEEDED,
+)
+from tvbf.jobs.weekly_recommendations import (
+    PassResult,
+    UserOutcome,
+    _parse_args,
+    estimate_tokens,
+)
 
 USER = "3f2a1c44-0000-4000-8000-00000000abcd"
 
@@ -32,11 +44,14 @@ class TestTheArgumentContract:
         with pytest.raises(SystemExit):
             _parse_args(["--dry-run"])
 
-    def test_the_bare_invocation_is_refused_rather_than_treated_as_the_pass(self):
-        """The weekly pass is M4. Exiting 0 having done nothing would read as
-        "no user needed regenerating", which is a different claim."""
-        with pytest.raises(SystemExit):
-            _parse_args([])
+    def test_the_bare_invocation_is_the_pass_over_everybody(self):
+        """What the Coolify schedule runs. `--user` narrows it to one account —
+        a debugging affordance, and the seam NEU-1110's admin trigger is
+        written against."""
+        args = _parse_args([])
+
+        assert args.dry_run is False
+        assert args.user is None
 
     def test_a_user_that_is_not_a_uuid_is_refused_by_the_parser(self):
         with pytest.raises(SystemExit):
@@ -47,3 +62,41 @@ class TestTheArgumentContract:
 
         assert args.dry_run is True
         assert str(args.user) == USER
+
+
+class TestTheTally:
+    def test_a_run_where_nothing_failed_exits_zero(self):
+        """`insufficient_history` and `no_matches` are the pass working, not
+        failures — only a user whose turn raised makes the process exit 1."""
+        result = PassResult()
+        result.record(UserOutcome(status=None))
+        result.record(UserOutcome(status=SET_STATUS_INSUFFICIENT_HISTORY))
+        result.record(UserOutcome(status=SET_STATUS_NO_MATCHES))
+        result.record(UserOutcome(status=SET_STATUS_SUCCEEDED, unresolved=6))
+
+        assert (result.skipped, result.insufficient, result.no_matches, result.succeeded) == (
+            1,
+            1,
+            1,
+            1,
+        )
+        assert result.unresolved == 6
+        assert result.ok
+
+    def test_one_failed_user_is_enough_to_exit_one(self):
+        """At 3-5 accounts one failure is 20-33% of the user base, and the
+        client has already walked its backoff curve."""
+        result = PassResult(failed=1)
+
+        assert not result.ok
+
+    def test_an_abandoned_run_exits_one_even_though_it_reached_nobody_else(self):
+        result = PassResult(aborted=True)
+
+        assert not result.ok
+
+    def test_a_status_a_turn_cannot_end_in_is_refused_rather_than_miscounted(self):
+        """`failed` reaches `run_pass` as an exception and never as an outcome,
+        so counting it here would put it in somebody else's column."""
+        with pytest.raises(ValueError):
+            PassResult().record(UserOutcome(status="failed"))
