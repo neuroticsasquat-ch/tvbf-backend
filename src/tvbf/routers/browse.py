@@ -8,6 +8,7 @@ from tvbf.app.repos import show_membership_repo
 from tvbf.catalog import browse_queries
 from tvbf.catalog.schemas import (
     ALLOWED_SORT_KEYS,
+    AnticipatedShowOut,
     CastMemberOut,
     CrewMemberOut,
     EpisodeOut,
@@ -246,6 +247,61 @@ async def get_trending_route(
             for show in shows
         ],
     )
+
+
+@router.get("/anticipated", response_model=list[AnticipatedShowOut])
+async def get_anticipated_route(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[AnticipatedShowOut]:
+    """The shows premiering soonest that most people are waiting for (NEU-1059).
+
+    A thin router over `browse_queries.list_anticipated_shows`, which is a live
+    query over `catalog.show` rather than a snapshot table (project spec §4).
+    Three things this route would otherwise have to decide are therefore absent
+    rather than solved: there is no rule for dropping a show that premiered
+    since the list was built, because `current_date` is evaluated on the read;
+    no rule for what a failed run leaves behind, because there is no run; and
+    **no staleness cutoff of the kind `/trending` carries**, because nothing is
+    stored to go stale — and because "anticipated" makes no present-tense claim
+    that a week-old answer would falsify.
+
+    A bare array rather than an object, unlike `/trending`: there is no
+    `captured_at` to report, so there would be nothing in the wrapper. Nothing
+    matching is `200 []` — never a 404, on `/shows/{id}/similar`'s reasoning
+    that an empty list is an ordinary answer here, and never a 204, on
+    `/me/recommendations`' that the SPA tells "nothing to show" from "the
+    request failed" by status code.
+
+    **Shows the viewer already tracks are marked, not filtered**, exactly as on
+    `/trending`: a list of what is coming is a claim about the world, and seeing
+    something you are already waiting for in it is a feature.
+
+    That mark is a per-user field, so this route takes `no-store` rather than
+    the router-level cacheable header. The ticket asked for
+    `public, max-age=300` alongside the mark, and neither half of that survives
+    it. `public` is the lesser problem — a shared cache authorized to fan the
+    body out serves one account's marks to another — and the router-level
+    `private` already fixes it. **It is the `max-age` that cannot stay**, for
+    `_SHOW_EP_CACHE`'s own reason: the mark is not just per-user but mutable by
+    the user, so any max-age lets a My Shows toggle be followed by a refetch
+    that reads the pre-toggle body out of the browser cache and reverts the
+    optimistic update. `/trending` carries the identical mark and resolved it
+    the identical way.
+    """
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
+    shows = await browse_queries.list_anticipated_shows(session)
+    tracked = await show_membership_repo.tracked_show_ids(
+        session, user_id=user.id, show_ids=[show.id for show in shows]
+    )
+    return [
+        AnticipatedShowOut(
+            **build_show_summary(show, genre_names=[], network=None).model_dump(),
+            in_my_shows=show.id in tracked,
+        )
+        for show in shows
+    ]
 
 
 # Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded
