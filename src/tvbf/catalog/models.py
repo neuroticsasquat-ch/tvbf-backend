@@ -231,6 +231,22 @@ class Show(Base):
         # in bulk.
         Index("ix_show_last_episode_to_air_id", "last_episode_to_air_id"),
         Index("ix_show_next_episode_to_air_id", "next_episode_to_air_id"),
+        # The most-anticipated query (NEU-1058): a date range over live shows,
+        # ordered by popularity. 45 ms unindexed on the production mirror — a
+        # parallel sequential scan and a top-N heapsort for the 408 rows that
+        # survive the filter — which is already fine behind the browse routes'
+        # `Cache-Control: public, max-age=300`, so this is polish rather than a
+        # fix. It turns the scan into a range scan.
+        #
+        # **The predicate is `deleted_upstream_at IS NULL` and nothing else.**
+        # `current_date` is *stable* rather than *immutable*, so it may not
+        # appear in a partial-index predicate at all — Postgres rejects the
+        # statement. Index the column, not the comparison.
+        Index(
+            "ix_show_first_air_date_live",
+            "first_air_date",
+            postgresql_where=text("deleted_upstream_at IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 

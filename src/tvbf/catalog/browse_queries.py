@@ -268,6 +268,86 @@ async def get_trending_snapshot(session: AsyncSession) -> tuple[datetime | None,
     return rows[0][0], [show for _captured_at, show in rows]
 
 
+ANTICIPATED_WINDOW_DAYS = 365
+"""How far ahead the most-anticipated list looks (project spec §4).
+
+Barely binds, and is meant not to: 385 of the 408 future-dated shows in
+production fall inside a year, so its real job is excluding placeholder entries
+dated far out — TMDB carries a *Ben-Hur* in 2027 — rather than sizing the list,
+which `ANTICIPATED_LIMIT` does. A year also happens to be the horizon past which
+an announced date is a guess.
+"""
+
+ANTICIPATED_LIMIT = 24
+"""How many are served (project spec §4).
+
+A page-layout decision rather than a quality one: measured on the production
+mirror, ranks 21-45 still read *Blade Runner 2099*, *Crystal Lake*, *Ben-Hur*,
+so quality holds well past twenty and the number is free to be whatever the grid
+wants. Unlike `SIMILAR_LIMIT` there is no headroom to reserve, because the
+filters are in the query rather than applied to stored rows.
+"""
+
+
+async def list_anticipated_shows(
+    session: AsyncSession,
+    *,
+    window_days: int = ANTICIPATED_WINDOW_DAYS,
+    limit: int = ANTICIPATED_LIMIT,
+) -> list[m.Show]:
+    """Shows premiering between today and `window_days` out, most popular first.
+
+    A live query over `catalog.show` — no upstream call (ADR-0002), and no
+    snapshot table either. Measured on 2026-08-16, this and
+    `/discover/tv?first_air_date.gte=…&sort_by=popularity.desc` agree on every
+    show in the top fifteen, differing only in an ordering that our popularity
+    being six days stale entirely explains — the staleness NEU-1172 fixes. Since
+    ADR-0007, TMDB's catalog *is* our catalog, and `/discover/tv` is a query
+    against it.
+
+    **The date comparison being in the query is what makes the surface correct
+    rather than fresh.** A snapshot would need a rule for dropping shows that
+    premiered since it was taken, a rule for what a failed run leaves behind, and
+    a staleness cutoff of the kind `get_trending_snapshot` carries. `current_date`
+    is evaluated on the read, so all three problems are absent rather than
+    solved.
+
+    **An undated show never appears**, which the `>=` comparison enforces on its
+    own: 2,501 shows carry `Planned` / `In Production` / `Pilot` with no
+    `first_air_date`, and there is no defensible position to sort a show with no
+    date into. **`status` is deliberately not in the predicate** — *Lanterns* is
+    `Returning Series` with a future first air date and belongs on the list, so
+    filtering on status would drop exactly the returning-favourite entries the
+    surface is most wanted for.
+
+    **There is no `vote_count` floor**, and nothing replaces it. Of the 408
+    future-dated shows in production four have any votes and one has ten or
+    more; unpremiered shows do not get voted on, which is what "unpremiered"
+    means, so a floor there is a category error rather than a threshold needing
+    tuning. Popularity is already doing that filtering, because a show nobody
+    has heard of does not accumulate a popularity score either.
+
+    `adult` and `deleted_upstream_at` are filtered here, on the read, as
+    everywhere else in this module.
+
+    The id breaks ties, because at this end of the catalog a tie is the ordinary
+    case rather than the exotic one — most future-dated shows score alike — and
+    without it the order changes between two requests for the same list.
+    """
+    result = await session.execute(
+        select(m.Show)
+        .where(
+            m.Show.deleted_upstream_at.is_(None),
+            m.Show.adult.is_(False),
+            m.Show.first_air_date >= func.current_date(),
+            m.Show.first_air_date < func.current_date() + literal(window_days),
+        )
+        .order_by(m.Show.popularity.desc().nullslast(), m.Show.id)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
 # Credit ordering. `episode_count` is the measure TV Maze's `sort_order` only ever
 # proxied for, and it is the one ordering show cast and show crew can share — both
 # indexes lead on it. Descending, so the most-present person is billed first;
