@@ -101,6 +101,13 @@ class Settings(BaseSettings):
     # stated above and for no other reason: one check fed by both scheduled
     # tasks would let either keep it alive while the other quietly stopped.
     healthcheck_airdate_url: str | None = Field(default=None, alias="HEALTHCHECK_AIRDATE_URL")
+    # The weekly recommendations pass's own deadman (NEU-1111). Third scheduled
+    # task, third check, for the rule above — and the gap is widest here: this
+    # one fires *weekly*, so a schedule that silently stops running is invisible
+    # for seven days before anybody would even think to look.
+    healthcheck_recommendations_url: str | None = Field(
+        default=None, alias="HEALTHCHECK_RECOMMENDATIONS_URL"
+    )
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 
