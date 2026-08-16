@@ -246,7 +246,8 @@ def test_plan_append_rides_every_season_when_they_fit():
 
 
 def test_plan_append_splits_a_show_that_exceeds_the_cap():
-    """The Simpsons' 36 seasons against the decided 11 namespaces: 9 ride along."""
+    """The Simpsons' 36 seasons against the decided namespaces: whatever they
+    leave rides along, and the rest overflows."""
     room = APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND)
     append, overflow = plan_append(range(1, 37))
     assert len(append) == APPEND_TO_RESPONSE_LIMIT
@@ -256,10 +257,21 @@ def test_plan_append_splits_a_show_that_exceeds_the_cap():
 
 
 def test_the_decided_namespace_list_leaves_room_for_seasons():
-    """Eleven namespaces against a cap of 20 (NEU-1031 §1). A twelfth is a
-    decision about the season budget, not a free addition."""
-    assert len(DEFAULT_APPEND) == 11
-    assert APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND) == 9
+    """Twelve namespaces against a cap of 20 (NEU-1031 §1, widened by NEU-1052).
+
+    A thirteenth is a decision about the season budget, not a free addition —
+    the twelfth already narrowed the speculative window from 0..8 to 0..7, at a
+    measured 1,054 shows paying one extra `get_tv_season` each.
+    """
+    assert len(DEFAULT_APPEND) == 12
+    assert APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND) == 8
+
+
+def test_recommendations_rides_the_series_request():
+    """NEU-1052's delivery decision in one line: the similar-shows surface is a
+    namespace on a fetch the ingest and the nightly delta already make, so after
+    one backfill it never costs another request."""
+    assert "recommendations" in DEFAULT_APPEND
 
 
 def test_namespaces_and_seasons_draw_on_one_budget():

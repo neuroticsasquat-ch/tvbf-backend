@@ -185,7 +185,7 @@ async def test_an_episode_upstream_does_not_have_is_left_alone(session):
 async def test_a_season_outside_the_speculative_window_still_maps(session):
     """A season past the window overflows `append_to_response` and needs its own request.
 
-    The window is `0..19` here rather than the ingest's `0..8`: this pass appends
+    The window is `0..19` here rather than the ingest's narrower one: this pass appends
     no namespaces, so the whole 20-entry budget goes to seasons.
     """
     show_id = await _seed_show(session, tmdb_id=1396)

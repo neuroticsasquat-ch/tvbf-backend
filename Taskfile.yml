@@ -270,6 +270,23 @@ tasks:
     cmds:
       - docker compose exec -T tvbf-backend python -m tvbf.jobs.credits_backfill report
 
+  backfill:recommendations:
+    desc: 'TMDB recommendations for every mirrored catalog show that has none, most popular first — ~8.8h, resumable, stoppable (NEU-1052)'
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N, which is both the smoke run and the
+      # supported way to ask for a deliberately partial pass — the top 20,000
+      # shows take ~45 minutes and cover essentially every page a user loads.
+      - docker compose exec tvbf-backend python -m tvbf.jobs.recommendations_backfill backfill {{.CLI_ARGS}}
+
+  backfill:recommendations:report:
+    desc: 'What catalog.show_recommendation holds and how many shows are left to fetch, as JSON (NEU-1052)'
+    # `silent` + `-T` for the same reasons `backfill:credits:report` needs them:
+    # the report is the process stdout, so go-task's banner and docker's TTY
+    # carriage returns would both corrupt it.
+    silent: true
+    cmds:
+      - docker compose exec -T tvbf-backend python -m tvbf.jobs.recommendations_backfill report
+
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout

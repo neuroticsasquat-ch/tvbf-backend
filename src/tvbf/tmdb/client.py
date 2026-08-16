@@ -91,17 +91,36 @@ _MAX_CONNECTIONS = 10
 # The documented figure and the real one agree, so milestone 3's estimate stands.
 APPEND_TO_RESPONSE_LIMIT = 20
 
-# The decided list (NEU-1031 §1). Eleven namespaces, leaving nine season slots
-# out of the 20 above.
+# The decided list (NEU-1031 §1, widened by NEU-1052). Twelve namespaces,
+# leaving eight season slots out of the 20 above.
 #
-# Going from the provisional three to eleven costs +12,618 requests — about 11
+# Going from the provisional three to eleven cost +12,618 requests — about 11
 # minutes on a pass that runs an hour and a half either way — because 2.9% of
 # shows have more than nine seasons and pay one extra `get_tv_season` each.
 # Against that, every namespace left off is a field that becomes a multi-hour
 # backfill later, which is exactly how the TV Maze mirror accumulated four of
-# them. Four namespaces are omitted and none of them for cost: `credits` is
-# strictly weaker than `aggregate_credits`, `recommendations` and `similar` are
-# TMDB-computed and volatile rather than catalog facts, and `reviews` is another
+# them.
+#
+# **`recommendations` is the twelfth, and it is that warning coming true**
+# (NEU-1052). NEU-1031 skipped it as "TMDB-computed and volatile rather than a
+# catalog fact", which was right about what it is and wrong about what that
+# costs: the similar-shows surface needs it, so the choice was never "store it
+# or not" but "ride the fetch we already make, or pay an 8.8-hour pass for it
+# every time it goes stale". Riding the append is what makes the second one a
+# single backfill rather than a cadence.
+#
+# **The twelfth namespace costs one speculative season slot**, and the price was
+# measured rather than assumed: the window narrows from seasons 0-8 to 0-7, and
+# across all 210,343 mirrored shows carrying ingested seasons 96.84% fit inside
+# 0-8 against 96.34% inside 0-7. That is 1,054 shows paying one extra
+# `get_tv_season` — ~2.5 minutes on a pass that runs most of a day.
+# `speculative_seasons` derives the window from this list, so nothing here can
+# overflow the cap into a hard 400.
+#
+# Three namespaces stay omitted and none of them for cost: `credits` is strictly
+# weaker than `aggregate_credits`, `similar` was measured against
+# `recommendations` and lost outright (project spec §2 — it returns zero
+# wherever recommendations does, and noise elsewhere), and `reviews` is another
 # product's user-generated content.
 DEFAULT_APPEND: tuple[str, ...] = (
     "aggregate_credits",
@@ -111,6 +130,7 @@ DEFAULT_APPEND: tuple[str, ...] = (
     "external_ids",
     "images",
     "keywords",
+    "recommendations",
     "screened_theatrically",
     "translations",
     "videos",
