@@ -164,6 +164,44 @@ async def get_show_episodes(
     return list(result.scalars().all())
 
 
+SIMILAR_LIMIT = 12
+"""Project spec §2: twenty rows are mirrored per show and twelve are served."""
+
+
+async def list_similar_shows(
+    session: AsyncSession, show_id: int, *, limit: int = SIMILAR_LIMIT
+) -> list[m.Show]:
+    """TMDB's "More like this" for one show, in TMDB's own rank order.
+
+    One join over `catalog.show_recommendation`, which the ingest and the nightly
+    delta already keep current (NEU-1052) — a request never reaches upstream
+    (ADR-0002).
+
+    **`adult` and `deleted_upstream_at` are filtered here, at read time**, on
+    NEU-1108's precedent and for its reason: a list mirrored in March can name a
+    show tombstoned in June, and a write-time copy of this filter would make a
+    resurrected show permanently invisible. The filters run *before* the cap, so
+    twelve means twelve survivors — which is what storing twenty leaves headroom
+    for.
+
+    Ranks may have gaps, because a target that did not resolve to a
+    `catalog.show` was dropped rather than renumbered at write time. The order is
+    all the read path takes from them, so a gap costs nothing here.
+    """
+    result = await session.execute(
+        select(m.Show)
+        .join(m.ShowRecommendation, m.ShowRecommendation.target_show_id == m.Show.id)
+        .where(
+            m.ShowRecommendation.source_show_id == show_id,
+            m.Show.adult.is_(False),
+            m.Show.deleted_upstream_at.is_(None),
+        )
+        .order_by(m.ShowRecommendation.rank)
+        .limit(limit)
+    )
+    return list(result.scalars().all())
+
+
 # Credit ordering. `episode_count` is the measure TV Maze's `sort_order` only ever
 # proxied for, and it is the one ordering show cast and show crew can share — both
 # indexes lead on it. Descending, so the most-present person is billed first;

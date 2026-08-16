@@ -154,6 +154,42 @@ async def get_show_seasons_route(
     return [build_season_out(s) for s in await browse_queries.get_show_seasons(session, show_id)]
 
 
+@router.get("/shows/{show_id}/similar", response_model=list[ShowSummary])
+async def get_show_similar_route(
+    show_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    """The twelve shows TMDB recommends alongside this one (NEU-1053).
+
+    `ShowSummary`, so the SPA reuses `ShowCard` / `ShowGrid` unchanged. A show
+    with no recommendations answers `200 []` rather than a 404 — that is roughly
+    8% of the long tail and the section simply does not render — while an unknown
+    show still 404s, on `/cast`'s reasoning: an empty result cannot stand in for a
+    missing show once empty is ordinary.
+
+    **The payload carries no per-user field**, which is what lets this route keep
+    the router-level `private, max-age=300` instead of the `no-store` the show
+    and episode routes need. That is a trade rather than a free win, and it is
+    `my_rating` that pays: `ShowCard` *does* render a badge for it, so a
+    recommended show the viewer has already rated shows one here where it would
+    on any other grid. Filling it costs a query and, by `_SHOW_EP_CACHE`'s rule,
+    the cacheability of a list that is identical for every viewer — so the badge
+    goes.
+
+    Genres and the network are left empty on the cheaper reasoning: `ShowCard`
+    renders neither, so hydrating them is two more round trips for fields nothing
+    displays, against an acceptance criterion of one query for the list. A
+    consumer wanting the list-view shape (`ShowList` reads both) would need them
+    hydrated here.
+    """
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    return [
+        build_show_summary(show, genre_names=[], network=None)
+        for show in await browse_queries.list_similar_shows(session, show_id)
+    ]
+
+
 # Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded
 # (The Simpsons has 1,420 cast and 533 crew rows), and the detail route serves a
 # card. Separate routes keep that payload bounded and let the SPA lazy-load.
