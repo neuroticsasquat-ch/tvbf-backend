@@ -299,9 +299,9 @@ async def map_show_episodes(
     function already owns.
 
     **With no appended namespaces**, though: episode ids are all this pass reads,
-    so the audit's eleven namespaces would be a show's whole credit list,
-    translations and images fetched 63,000 times and discarded. Spending that
-    budget on seasons instead widens the speculative window from `0..8` to
+    so `DEFAULT_APPEND` would be a show's whole credit list, translations,
+    images and recommendations fetched 63,000 times and discarded. Spending that
+    budget on seasons instead widens the speculative window from the ingest's to
     `0..19`, which is the difference between one request and two for a
     long-running show.
     """

@@ -550,6 +550,20 @@ class TMDBScreenedEpisode(_Payload):
     episode_number: int | None = None
 
 
+class TMDBRecommendation(_Payload):
+    """One entry of `recommendations` — a show TMDB recommends alongside this one.
+
+    Deliberately two fields out of the fourteen the entry carries. The response
+    is a full show summary (poster, overview, vote counts, genre ids), and every
+    one of those is already mirrored on the target's own `catalog.show` row by
+    the ingest — parsing them here would invite a writer to store a second,
+    staler copy. The id resolves the edge; the name is for a log line.
+    """
+
+    tmdb_id: int = Field(alias="id")
+    name: str | None = None
+
+
 class TMDBSeries(_Payload):
     """A `GET /tv/{id}` response, with whatever `append_to_response` rode along.
 
@@ -612,6 +626,7 @@ class TMDBSeries(_Payload):
     episode_groups: TMDBResults[TMDBEpisodeGroup] | None = None
     images: TMDBImages | None = None
     keywords: TMDBResults[TMDBRef] | None = None
+    recommendations: TMDBResults[TMDBRecommendation] | None = None
     screened_theatrically: TMDBResults[TMDBScreenedEpisode] | None = None
     translations: TMDBTranslations | None = None
     videos: TMDBResults[TMDBVideo] | None = None

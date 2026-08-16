@@ -213,6 +213,23 @@ def make_aggregate_credits(
     return {"id": tmdb_id, "cast": cast or [], "crew": crew or []}
 
 
+def make_recommendations(tmdb_ids: list[int], *, page: int = 1) -> dict[str, Any]:
+    """The `recommendations` namespace — a paginated list of show summaries.
+
+    The live entries carry fourteen keys (poster, overview, vote counts, genre
+    ids); only `id` and `name` are spelled here because those are the two the
+    parser binds, and a fixture inventing values for the rest would suggest the
+    writer stores them. Measured, the appended namespace returns the **first
+    page** — 20 results or 0, never a handful.
+    """
+    return {
+        "page": page,
+        "results": [{"id": tmdb_id, "name": f"Show {tmdb_id}"} for tmdb_id in tmdb_ids],
+        "total_pages": 1,
+        "total_results": len(tmdb_ids),
+    }
+
+
 def make_series(
     tmdb_id: int = 1396,
     *,

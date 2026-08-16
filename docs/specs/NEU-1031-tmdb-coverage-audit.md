@@ -367,8 +367,8 @@ the daily delta refreshes them, and nothing should read them where a live query 
 | `videos` | Modeled | Trailers; free. |
 | `watch/providers` | Modeled | The capability that justifies TMDB beyond raw coverage. |
 | `credits` | **Skipped** | Strictly weaker than `aggregate_credits`, which carries the same cast plus `order`, `roles[]` and episode counts. Storing both duplicates the same people. |
-| `recommendations` | **Skipped** | TMDB-computed, paginated, and volatile — not a catalog fact. It would be stale before the ingest finished and we would never refresh it. |
-| `similar` | **Skipped** | Same reasoning. |
+| `recommendations` | ~~**Skipped**~~ **Modeled since NEU-1052** | The original reasoning — TMDB-computed, paginated and volatile, and stale before the ingest finished — was right about what the field *is*, and wrong about what skipping it costs. The similar-shows surface needs it, so the choice was never "store it or not" but "ride the fetch we already make, or pay a multi-hour pass every time it goes stale", which is the bill the paragraph below predicted. Lands in `catalog.show_recommendation`, watermarked by `catalog.show.recommendations_synced_at`. `/similar` was measured against it and stays skipped. |
+| `similar` | **Skipped** | Same reasoning, and since NEU-1052 a stronger one: measured over 36 production shows it returned zero for **every** show `/recommendations` also returned zero for, and noise where it answered at all. It cannot be a fallback for a failure it shares. |
 | `reviews` | **Skipped** | User-generated content belonging to another product, paginated, with moderation exposure we do not want to inherit. |
 | `season/N` | Modeled | Not a namespace but the same budget line, and the reason the budget binds at all: it carries a season's full episode list. Nine ride the series call; the rest overflow to `get_tv_season`. |
 
@@ -376,6 +376,14 @@ Reversing any of the four dropped namespaces costs **one season slot plus a full
 the slot pushes 2,558 shows (2.9%, those with more than 9 seasons) into one extra season call,
 about 3,038 requests, and the pass to populate the new column is the same ~1.5 hours as any
 other. Cheap in slots, not free in time. None was dropped for cost.
+
+**NEU-1052 paid exactly that price, and the estimate held.** Adding
+`recommendations` as the twelfth namespace narrowed the speculative window from seasons 0–8 to
+0–7: measured across all 210,343 mirrored shows carrying ingested seasons, 96.84% fit inside
+0–8 and 96.34% inside 0–7, so 1,054 shows pay one extra `get_tv_season` — ~2.5 minutes. The
+re-ingest half is the ~8.8-hour one-time backfill
+(`python -m tvbf.jobs.recommendations_backfill`), and it is one-time because the namespace now
+rides every ingest and every nightly delta. Three namespaces remain dropped.
 
 ---
 

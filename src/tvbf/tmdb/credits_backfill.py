@@ -53,7 +53,7 @@ covered never enters the backlog.
 
 ## Shape and cost
 
-One request per show over ~228k shows, the audit's eleven namespaces plus the
+One request per show over ~228k shows, the full `DEFAULT_APPEND` plus the
 speculative season window, exactly as the full pass fetches — **~8.7 hours** at
 the measured 7.27 shows/sec, because the loop is sequential and round-trip
 latency binds rather than the 20 req/s budget. Safe to kill and restart: a show
