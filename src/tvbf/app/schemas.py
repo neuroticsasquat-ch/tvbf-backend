@@ -218,6 +218,39 @@ class SeasonProgress(BaseModel):
     watched: int
 
 
+class RecommendationOut(ShowSummary):
+    """One suggestion: a `ShowSummary` **flattened**, plus the two fields that
+    make it a recommendation rather than a search result (NEU-1112).
+
+    Flattened rather than nested under a `show` key, unlike every other entry
+    shape in this module. Those carry per-show *progress* — watched counts, a
+    next episode — which is a second object with its own identity; a
+    recommendation carries a sentence and a position, and nesting would cost
+    the frontend a wrapper type for nothing when `ShowGrid` and `ShowCard`
+    already take a `ShowSummary`.
+
+    `reason` is model-authored prose and renders as plain text, never markup
+    (project spec §7). `rank` is the model's own ordering, carried through so a
+    client can display it and so "the order is the ranking" survives a client
+    that re-serializes the list.
+    """
+
+    rank: int
+    reason: str
+
+
+class RecommendationsOut(BaseModel):
+    """The `GET /me/recommendations` body.
+
+    An object rather than a bare array, and an **empty list rather than a 204**:
+    the frontend distinguishes "no recommendations" from "the request failed" by
+    status code, and a 204 collapses the two into one thing it cannot render
+    differently.
+    """
+
+    recommendations: list[RecommendationOut] = []
+
+
 class RecommendationsRunRequest(BaseModel):
     """The optional body of `POST /admin/recommendations` (NEU-1110).
 
