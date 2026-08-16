@@ -1553,10 +1553,17 @@ async def write_series_credits(
 
 # How many recommendations one source show stores. TMDB's `recommendations`
 # response is paginated 20 to a page and the appended namespace carries the
-# first page only — measured, that is 20 results or 0, never "a few" (project
-# spec §2). So this is what the payload can offer rather than a policy choice,
-# and it is stated here anyway: the read path shows 12, and the headroom is what
-# absorbs read-time filtering.
+# first page only, so this is what the payload can offer rather than a policy
+# choice. It is stated here anyway: the read path shows 12, and the headroom is
+# what absorbs read-time filtering.
+#
+# **A short list is rare but real, and the cap is not what produces one.**
+# Project spec §2 originally recorded the endpoint as binary — 20 results or 0,
+# never "a few" — over a 36-show sample; NEU-1052's 100-show production smoke run
+# corrected that to 95 of 100 at twenty, with Coronation Street at 19 and
+# Tagesschau at 1. The five are rolling news, a talk show, a daily sports panel
+# and two continuing soaps: formats with no plot to be similar to. Nothing here
+# treats a short list as an error, and nothing should.
 _MAX_RECOMMENDATIONS = 20
 
 

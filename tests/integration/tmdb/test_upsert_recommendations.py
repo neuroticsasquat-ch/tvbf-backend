@@ -59,8 +59,9 @@ class TestTheStoredList:
     async def test_twenty_entries_are_stored_in_tmdbs_order(self, session):
         """AC: a show with recommendations stores 20 ranked rows.
 
-        Twenty because that is what one page of the appended namespace carries —
-        measured as binary, 20 or 0, never a handful.
+        Twenty because that is what one page of the appended namespace carries
+        for 95 of the 100 most popular production shows. A short list is rare and
+        real — Tagesschau returns one — and is not an error at any grain here.
         """
         targets = await _mirror_targets(session, list(range(9_100, 9_120)))
         payload = make_series(9_001, seasons=0, append_seasons=False)
