@@ -4,9 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User
+from tvbf.app.repos import show_membership_repo
 from tvbf.catalog import browse_queries
 from tvbf.catalog.schemas import (
     ALLOWED_SORT_KEYS,
+    AnticipatedShowOut,
     CastMemberOut,
     CrewMemberOut,
     EpisodeOut,
@@ -20,6 +22,8 @@ from tvbf.catalog.schemas import (
     ShowFilters,
     ShowListPage,
     ShowSummary,
+    TrendingOut,
+    TrendingShowOut,
     build_cast_member,
     build_crew_member,
     build_episode_out,
@@ -152,6 +156,152 @@ async def get_show_seasons_route(
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return [build_season_out(s) for s in await browse_queries.get_show_seasons(session, show_id)]
+
+
+@router.get("/shows/{show_id}/similar", response_model=list[ShowSummary])
+async def get_show_similar_route(
+    show_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    """The twelve shows TMDB recommends alongside this one (NEU-1053).
+
+    `ShowSummary`, so the SPA reuses `ShowCard` / `ShowGrid` unchanged. A show
+    with no recommendations answers `200 []` rather than a 404 — that is roughly
+    8% of the long tail and the section simply does not render — while an unknown
+    show still 404s, on `/cast`'s reasoning: an empty result cannot stand in for a
+    missing show once empty is ordinary.
+
+    **The payload carries no per-user field**, which is what lets this route keep
+    the router-level `private, max-age=300` instead of the `no-store` the show
+    and episode routes need. That is a trade rather than a free win, and it is
+    `my_rating` that pays: `ShowCard` *does* render a badge for it, so a
+    recommended show the viewer has already rated shows one here where it would
+    on any other grid. Filling it costs a query and, by `_SHOW_EP_CACHE`'s rule,
+    the cacheability of a list that is identical for every viewer — so the badge
+    goes.
+
+    Genres and the network are left empty on the cheaper reasoning: `ShowCard`
+    renders neither, so hydrating them is two more round trips for fields nothing
+    displays, against an acceptance criterion of one query for the list. A
+    consumer wanting the list-view shape (`ShowList` reads both) would need them
+    hydrated here.
+    """
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    return [
+        build_show_summary(show, genre_names=[], network=None)
+        for show in await browse_queries.list_similar_shows(session, show_id)
+    ]
+
+
+@router.get("/trending", response_model=TrendingOut)
+async def get_trending_route(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> TrendingOut:
+    """The current `/trending/tv/week` snapshot, or nothing if it has gone stale.
+
+    **The seven-day cutoff is the server's rule and is enforced in one place**
+    (`browse_queries.get_trending_snapshot`, project spec §3). A snapshot past it
+    answers `200 {"captured_at": null, "shows": []}` — the same body an empty
+    table gives — so the SPA renders no section without ever being told the word
+    "stale", and never holds enough to re-derive the rule for itself. A rule
+    enforced in two places drifts, and what it drifts into is week-old rows under
+    a label reading "trending right now".
+
+    **Shows the viewer already tracks are marked, not filtered.** Trending is a
+    claim about the world; seeing your own show in it is a feature.
+
+    That mark is a per-user field, so the route takes `no-store` rather than the
+    router-level cacheable header — the reason the show and episode routes do.
+    Being per-user anyway is also what pays for `my_rating` here where
+    `/shows/{id}/similar` declines it: that route trades the badge for a body
+    identical to every viewer's, and this one has no such body to protect.
+
+    Genres and the network are left empty on `/shows/{id}/similar`'s cheaper
+    reasoning: `ShowCard` renders neither, so hydrating them would be two more
+    round trips for fields nothing displays.
+    """
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
+    captured_at, shows = await browse_queries.get_trending_snapshot(session)
+    show_ids = [show.id for show in shows]
+    tracked = await show_membership_repo.tracked_show_ids(
+        session, user_id=user.id, show_ids=show_ids
+    )
+    my_ratings = await browse_queries.hydrate_my_ratings(
+        session, viewer_id=user.id, show_ids=show_ids
+    )
+    return TrendingOut(
+        captured_at=captured_at,
+        shows=[
+            TrendingShowOut(
+                **build_show_summary(
+                    show,
+                    genre_names=[],
+                    network=None,
+                    my_rating=my_ratings.get(show.id),
+                ).model_dump(),
+                in_my_shows=show.id in tracked,
+            )
+            for show in shows
+        ],
+    )
+
+
+@router.get("/anticipated", response_model=list[AnticipatedShowOut])
+async def get_anticipated_route(
+    response: Response,
+    session: AsyncSession = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> list[AnticipatedShowOut]:
+    """The shows premiering soonest that most people are waiting for (NEU-1059).
+
+    A thin router over `browse_queries.list_anticipated_shows`, which is a live
+    query over `catalog.show` rather than a snapshot table (project spec §4).
+    Three things this route would otherwise have to decide are therefore absent
+    rather than solved: there is no rule for dropping a show that premiered
+    since the list was built, because `current_date` is evaluated on the read;
+    no rule for what a failed run leaves behind, because there is no run; and
+    **no staleness cutoff of the kind `/trending` carries**, because nothing is
+    stored to go stale — and because "anticipated" makes no present-tense claim
+    that a week-old answer would falsify.
+
+    A bare array rather than an object, unlike `/trending`: there is no
+    `captured_at` to report, so there would be nothing in the wrapper. Nothing
+    matching is `200 []` — never a 404, on `/shows/{id}/similar`'s reasoning
+    that an empty list is an ordinary answer here, and never a 204, on
+    `/me/recommendations`' that the SPA tells "nothing to show" from "the
+    request failed" by status code.
+
+    **Shows the viewer already tracks are marked, not filtered**, exactly as on
+    `/trending`: a list of what is coming is a claim about the world, and seeing
+    something you are already waiting for in it is a feature.
+
+    That mark is a per-user field, so this route takes `no-store` rather than
+    the router-level cacheable header. The ticket asked for
+    `public, max-age=300` alongside the mark, and neither half of that survives
+    it. `public` is the lesser problem — a shared cache authorized to fan the
+    body out serves one account's marks to another — and the router-level
+    `private` already fixes it. **It is the `max-age` that cannot stay**, for
+    `_SHOW_EP_CACHE`'s own reason: the mark is not just per-user but mutable by
+    the user, so any max-age lets a My Shows toggle be followed by a refetch
+    that reads the pre-toggle body out of the browser cache and reverts the
+    optimistic update. `/trending` carries the identical mark and resolved it
+    the identical way.
+    """
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
+    shows = await browse_queries.list_anticipated_shows(session)
+    tracked = await show_membership_repo.tracked_show_ids(
+        session, user_id=user.id, show_ids=[show.id for show in shows]
+    )
+    return [
+        AnticipatedShowOut(
+            **build_show_summary(show, genre_names=[], network=None).model_dump(),
+            in_my_shows=show.id in tracked,
+        )
+        for show in shows
+    ]
 
 
 # Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded

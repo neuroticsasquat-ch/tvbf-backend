@@ -108,6 +108,11 @@ class Settings(BaseSettings):
     healthcheck_recommendations_url: str | None = Field(
         default=None, alias="HEALTHCHECK_RECOMMENDATIONS_URL"
     )
+    # The daily trending snapshot's own deadman (NEU-1055). Fourth scheduled
+    # task, fourth check, for the rule above — and this one hides the failure
+    # best: a stopped snapshot does not error, it ages, and NEU-1056's seven-day
+    # cutoff turns the section off a week later with nothing anywhere saying why.
+    healthcheck_trending_url: str | None = Field(default=None, alias="HEALTHCHECK_TRENDING_URL")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 

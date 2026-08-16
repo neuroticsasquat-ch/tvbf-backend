@@ -190,6 +190,31 @@ async def test_changes_request_accepts_exactly_the_maximum_window():
     assert body["total_pages"] == 1
 
 
+# --- /trending/tv -----------------------------------------------------------
+
+
+@respx.mock
+async def test_trending_request_names_the_window_in_the_path():
+    route = respx.get(f"{BASE}/trending/tv/week").mock(
+        return_value=httpx.Response(200, json={"results": [{"id": 1396}]})
+    )
+    async with _client() as c:
+        body = await c.get_trending_tv(window="week")
+
+    assert body["results"] == [{"id": 1396}]
+    assert route.calls.last.request.url.path == "/3/trending/tv/week"
+
+
+@respx.mock
+async def test_trending_request_rejects_a_window_tmdb_does_not_have():
+    """TMDB answers 404 anyway; catching it here spends no token from a paced
+    budget on a request that cannot succeed, and names what is allowed."""
+    async with _client() as c:
+        with pytest.raises(ValueError, match="day or week"):
+            await c.get_trending_tv(window="month")
+    assert not respx.calls
+
+
 # --- /find ------------------------------------------------------------------
 
 

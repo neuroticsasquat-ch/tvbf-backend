@@ -220,7 +220,9 @@ def make_recommendations(tmdb_ids: list[int], *, page: int = 1) -> dict[str, Any
     ids); only `id` and `name` are spelled here because those are the two the
     parser binds, and a fixture inventing values for the rest would suggest the
     writer stores them. Measured, the appended namespace returns the **first
-    page** — 20 results or 0, never a handful.
+    page**. That is twenty entries for 95 of the 100 most popular production shows
+    and fewer for five of them (NEU-1052's smoke run), so a fixture handing over
+    three is a real shape rather than a convenience.
     """
     return {
         "page": page,

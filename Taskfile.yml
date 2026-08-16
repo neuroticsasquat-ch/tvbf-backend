@@ -162,6 +162,16 @@ tasks:
     cmds:
       - docker compose exec tvbf-backend python -m tvbf.jobs.airdate_reconcile
 
+  snapshot:trending:
+    # The *manual* trigger. In prod this runs as a fourth Coolify scheduled task
+    # on the same shape as the catalog delta, with its own
+    # `HEALTHCHECK_TRENDING_URL` deadman — never a shared one. Exit 0 = the
+    # snapshot ran and succeeded; there is no status route of its own, so poll
+    # the run through `task ingest:status -- <uuid>`.
+    desc: 'Capture one /trending/tv/week snapshot into catalog.trending_show (NEU-1055)'
+    cmds:
+      - docker compose exec tvbf-backend python -m tvbf.jobs.trending_snapshot
+
   archive:watches:
     desc: Snapshot every watch and rating into app.watch_archive (idempotent)
     cmds:
