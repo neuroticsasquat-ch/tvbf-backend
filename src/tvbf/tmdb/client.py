@@ -149,6 +149,11 @@ CHANGES_MAX_WINDOW_DAYS = 14
 # so this is a runaway guard rather than a paging strategy.
 CHANGES_MAX_PAGE = 500
 
+# The two time windows `/trending/tv/{window}` accepts. Which one this product
+# uses is `tvbf.tmdb.trending`'s decision, not this module's — here they are
+# only the set a request may name.
+TRENDING_WINDOWS: tuple[str, ...] = ("day", "week")
+
 
 def is_gone_upstream(exc: BaseException) -> bool:
     """True when TMDB says this series no longer exists.
@@ -409,6 +414,28 @@ class TMDBClient:
                 "page": page,
             },
         )
+        return resp.json()
+
+    async def get_trending_tv(self, *, window: str) -> dict:
+        """One page of `/trending/tv/{window}` — twenty series, most trending first.
+
+        `window` is required rather than defaulted, on the same principle
+        `rate_calls`/`rate_window` are: `day` and `week` are a real decision
+        about what the surface means and the call site is where it should be
+        readable. `tvbf.tmdb.trending` makes it, and records why.
+
+        The value is checked here for the reason `get_tv_series` checks an
+        oversized append and `get_tv_changes` an over-wide span: TMDB answers
+        anything else with a 404 either way, so this changes nothing about
+        correctness — it spends no token from a paced budget on a request that
+        cannot succeed, and names what is allowed.
+        """
+        if window not in TRENDING_WINDOWS:
+            raise ValueError(
+                f"/trending/tv takes {' or '.join(TRENDING_WINDOWS)}, got {window!r} "
+                f"(TMDB answers 404)"
+            )
+        resp = await self._request("GET", f"{self._base_url}/trending/tv/{window}")
         return resp.json()
 
     async def get_tv_season(self, series_id: int, season_number: int) -> dict:
