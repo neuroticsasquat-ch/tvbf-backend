@@ -58,6 +58,14 @@ NEU-1006 exists to avoid, traded for a reconciliation that can simply happen
 tomorrow instead. So it is caught and logged loudly, and the delta finalises on
 the work it actually did.
 
+## The popularity refresh rides along for the same reason
+
+The export the tombstone diff needs also carries every series' popularity, and
+`/tv/changes` never reports a popularity move (NEU-1172). So the same file, in
+the same hand, is what keeps `catalog.show.popularity` from freezing for the 97%
+of the catalog a delta never re-fetches. It is guarded separately from the
+tombstone pass — one download, two failures worth telling apart.
+
 ## What this delta deliberately does not do
 
 **It does not filter `adult`.** The full pass mirrors whatever the export lists
@@ -85,13 +93,14 @@ from tvbf.tmdb.client import (
     CHANGES_MAX_WINDOW_DAYS,
     TMDBClient,
 )
-from tvbf.tmdb.export import fetch_series_ids
+from tvbf.tmdb.export import ExportEntry, fetch_series_export
 from tvbf.tmdb.ingest import (
     CatalogIngestResult,
     SessionFactory,
     _owned_session,
     mirror_series,
 )
+from tvbf.tmdb.popularity import refresh_popularity
 from tvbf.tmdb.tombstone import reconcile_tombstones
 
 log = logging.getLogger(__name__)
@@ -248,23 +257,10 @@ async def resolve_start_date(session: AsyncSession, *, today: date) -> date:
     return today - timedelta(days=_COLD_START_DAYS)
 
 
-async def reconcile_against_export(
-    session_factory: SessionFactory, *, export_ids: Sequence[int] | None = None
-) -> None:
-    """Diff the mirror against the full id export and tombstone what is gone.
-
-    Swallows its own failures by design — see the module docstring. A download
-    that never completed raises out of `fetch_series_ids` rather than reaching
-    the diff, and a complete one that is implausibly short is refused by the
-    reconciler's floor guards; both end here, logged, with nothing written.
-
-    `export_ids` overrides the download, the way `run_catalog_ingest`'s
-    `series_ids` does.
-    """
+async def _tombstone(session_factory: SessionFactory, entries: Sequence[ExportEntry]) -> None:
     try:
-        ids = list(export_ids) if export_ids is not None else await fetch_series_ids()
         async with _owned_session(session_factory) as s:
-            result = await reconcile_tombstones(s, feed_ids=set(ids))
+            result = await reconcile_tombstones(s, feed_ids={e.tmdb_id for e in entries})
             await s.commit()
         log.info(
             "catalog tombstone pass: %d tombstoned, %d resurrected",
@@ -275,6 +271,48 @@ async def reconcile_against_export(
         log.exception("catalog tombstone pass failed — the delta itself is unaffected")
 
 
+async def _refresh_popularity(
+    session_factory: SessionFactory, entries: Sequence[ExportEntry]
+) -> None:
+    try:
+        async with _owned_session(session_factory) as s:
+            result = await refresh_popularity(s, entries=entries)
+            await s.commit()
+        log.info("catalog popularity refresh: %d row(s) updated", result.updated)
+    except Exception:
+        log.exception("catalog popularity refresh failed — the delta itself is unaffected")
+
+
+async def reconcile_against_export(
+    session_factory: SessionFactory, *, export_entries: Sequence[ExportEntry] | None = None
+) -> None:
+    """Download the export once and run both passes that read it.
+
+    Tombstoning and the popularity refresh (NEU-1172) share this one download,
+    which is the whole reason the refresh rides the delta rather than being a
+    job of its own: a second 5 MB transfer for a second reader buys nothing.
+
+    Swallows its own failures by design — see the module docstring. A download
+    that never completed raises out of `fetch_series_export` rather than
+    reaching either pass, and a complete one that is implausibly short is
+    refused by the floor guards both of them consult; all of it ends here,
+    logged, with nothing written. The two passes are guarded separately so a
+    database failure in one does not cost the other its night.
+
+    `export_entries` overrides the download, the way `run_catalog_ingest`'s
+    `series_ids` does.
+    """
+    try:
+        entries = (
+            list(export_entries) if export_entries is not None else await fetch_series_export()
+        )
+    except Exception:
+        log.exception("id export download failed — the delta itself is unaffected")
+        return
+    await _refresh_popularity(session_factory, entries)
+    await _tombstone(session_factory, entries)
+
+
 async def run_catalog_update(
     *,
     session_factory: SessionFactory,
@@ -282,7 +320,7 @@ async def run_catalog_update(
     run_id: UUID,
     failure_threshold: int = 10,
     today: date | None = None,
-    export_ids: Sequence[int] | None = None,
+    export_entries: Sequence[ExportEntry] | None = None,
 ) -> CatalogIngestResult:
     """One delta cycle: resolve the gap, walk it, re-fetch everything it names.
 
@@ -324,7 +362,7 @@ async def run_catalog_update(
     # Only after the loop completed normally — every abort path above returns
     # early, so a run that gave up partway never reconciles against a catalog it
     # only half saw (ADR-0005).
-    await reconcile_against_export(session_factory, export_ids=export_ids)
+    await reconcile_against_export(session_factory, export_entries=export_entries)
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=date_to_cursor(today))
