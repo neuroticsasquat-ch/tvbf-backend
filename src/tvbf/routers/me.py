@@ -21,6 +21,7 @@ from tvbf.app.schemas import (
     MeUpdateRequest,
     MyShowEntry,
     MyShowsSort,
+    RecommendationsOut,
     SeasonProgress,
     SessionSummary,
     ShowRatingIn,
@@ -42,6 +43,7 @@ from tvbf.app.services import (
     feed_service,
     my_shows_service,
     rating_service,
+    recommendation_service,
     session_service,
 )
 from tvbf.config import Settings, get_settings
@@ -546,6 +548,31 @@ async def get_feed(
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor"
         ) from err
+
+
+# ---------------------------------------------------------------------------
+# Recommendations (NEU-1112)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/me/recommendations", response_model=RecommendationsOut)
+async def list_my_recommendations(
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> RecommendationsOut:
+    """The current recommendation set, capped and filtered by the server.
+
+    `no-store` for the reason `/me/feed` above carries it: this is per-user
+    content behind a session cookie, and the weekly pass replaces it out from
+    under any cache.
+
+    A user with nothing to show gets `200 {"recommendations": []}`, never a 204 —
+    the frontend tells "no recommendations" from "the request failed" by status
+    code.
+    """
+    response.headers["Cache-Control"] = "no-store"
+    return await recommendation_service.list_recommendations(db, user_id=user.id)
 
 
 # ---------------------------------------------------------------------------
