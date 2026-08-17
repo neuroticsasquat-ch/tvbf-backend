@@ -118,6 +118,10 @@ class NewRecommendation:
     show_id: int
     reason: str
     matched_via: str
+    recovered_from: str | None = None
+    """The raw dressed title this row was recovered from, on the rare row that
+    was (NEU-1173). Defaulted because it is NULL on every ordinary row and a
+    caller that has never heard of the fallback should not have to say so."""
 
 
 async def write_set(
@@ -174,6 +178,7 @@ async def write_set(
                 show_id=row.show_id,
                 reason=row.reason,
                 matched_via=row.matched_via,
+                recovered_from=row.recovered_from,
             )
             for rank, row in enumerate(recommendations, start=1)
         ]

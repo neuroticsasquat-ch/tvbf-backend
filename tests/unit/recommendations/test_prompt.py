@@ -17,6 +17,7 @@ from tvbf.recommendations.prompt import (
     build_prompt,
     describe_dropped,
     parse_suggestions,
+    quoted_candidate,
 )
 
 
@@ -179,3 +180,90 @@ class TestDescribingWhatWasDropped:
 
     def test_an_entry_that_is_not_an_object_says_so(self):
         assert describe_dropped([42]) == "<not an object>"
+
+
+class TestRecoveringADressedTitle:
+    """NEU-1173. The five strings below are verbatim model output, not authored
+    examples — the same argument `tests/fixtures/recommendations/` rests on.
+    Four are from the `PROMPT_VERSION` 3 run of 2026-08-17 16:32; the fifth is
+    the version-1 answer recorded in `INSTRUCTION`'s docstring.
+    """
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("The Americans' sibling 'The Spy'", "The Spy", id="possessive s'"),
+            pytest.param("Halt and Catch Fire's 'The Company'", "The Company", id="possessive 's"),
+            pytest.param(
+                "The Leftovers' 'Manhunt: Unabomber'",
+                "Manhunt: Unabomber",
+                id="colon in the recommendation",
+            ),
+            pytest.param("Killing Eve's 'Bodyguard'", "Bodyguard", id="bare"),
+            pytest.param(
+                "Succession's corporate peer, 'Industry' (though you've seen it), try 'Billions'",
+                "Billions",
+                id="version 1, two quoted runs",
+            ),
+        ],
+    )
+    def test_the_recorded_dressed_titles_yield_the_recommendation(self, raw, expected):
+        assert quoted_candidate(raw) == expected
+
+    def test_the_pairing_runs_right_to_left_because_left_to_right_is_garbage(self):
+        """Every observed dressed title carries an *odd* number of apostrophes,
+        because the connective is a possessive. Pairing from the left recovers
+        `" sibling "` here — and on the version-1 case it recovers `Industry`,
+        the one show the model was explicitly declining because the user has it.
+        The trailing run is the recommendation; the leading one never is."""
+        assert quoted_candidate("The Americans' sibling 'The Spy'") == "The Spy"
+        assert (
+            quoted_candidate("Succession's corporate peer, 'Industry', try 'Billions'")
+            == "Billions"
+        )
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            pytest.param("Killing Eve's 'Bodyguard'", "Bodyguard", id="straight single"),
+            pytest.param('Killing Eve: "Bodyguard"', "Bodyguard", id="straight double"),
+            pytest.param("Killing Eve’s ‘Bodyguard’", "Bodyguard", id="curly single"),
+            pytest.param("Killing Eve: “Bodyguard”", "Bodyguard", id="curly double"),
+            pytest.param('Killing Eve\'s "Bodyguard"', "Bodyguard", id="mixed"),
+        ],
+    )
+    def test_every_delimiter_pair_is_recognised(self, raw, expected):
+        """A close-quote partners with its own open form, which is why the
+        typographic pairs work at all: `’` is ambiguous between possessive and
+        close-quote, `‘` unambiguously opens."""
+        assert quoted_candidate(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            pytest.param("The Spy", id="no delimiter at all"),
+            pytest.param(
+                "The Americans' sibling The Spy",
+                id="one unpartnered delimiter",
+            ),
+            pytest.param("Killing Eve ‘Bodyguard", id="an opener with nothing after it"),
+            pytest.param("Killing Eve ''", id="empty span"),
+            pytest.param("Killing Eve '   '", id="whitespace-only span"),
+        ],
+    )
+    def test_a_span_that_cannot_be_read_yields_nothing_rather_than_a_guess(self, raw):
+        """Every failure mode is closed. `The Americans' sibling The Spy` is the
+        one worth naming: two apostrophes where the second never opened, and the
+        answer is no candidate rather than `" sibling The Spy"`."""
+        assert quoted_candidate(raw) is None
+
+    def test_a_candidate_is_never_the_raw_title_it_came_from(self):
+        """The raw already failed to resolve; an identical second query buys
+        nothing. Asserted over the corpus because the pairing rule cannot
+        currently produce one — the guard is what keeps that true."""
+        for raw in (
+            "The Americans' sibling 'The Spy'",
+            'Killing Eve\'s "Bodyguard"',
+            "‘Bodyguard’",
+        ):
+            assert quoted_candidate(raw) != raw
