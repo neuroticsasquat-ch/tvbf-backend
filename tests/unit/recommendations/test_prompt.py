@@ -53,6 +53,21 @@ class TestTheInstruction:
         post-resolution filter is the guarantee. Neither replaces the other."""
         assert "Never recommend a series that appears" in INSTRUCTION
 
+    def test_it_demands_a_bare_title_and_says_what_a_dressed_one_costs(self):
+        """A production run stored 5 of 25 because the model wrote its reasoning
+        into `title` while every entry stayed structurally valid, so nothing
+        before resolution could object. Asking for "the title" was not enough —
+        the instruction names the failure modes and the consequence."""
+        assert "and nothing " in INSTRUCTION
+        assert "no commentary" in INSTRUCTION
+        assert "cannot be looked up" in INSTRUCTION
+
+    def test_it_tells_the_model_not_to_narrate_the_exclusions(self):
+        """The prose that broke the run editorialised around shows the user had
+        already seen ("though you've seen it"): the model wanted to explain what
+        it was skipping and had nowhere to put it at the point of naming."""
+        assert "never say that you are avoiding one" in INSTRUCTION
+
 
 class TestBuildPrompt:
     def test_the_user_message_is_the_payloads_own_bytes(self):

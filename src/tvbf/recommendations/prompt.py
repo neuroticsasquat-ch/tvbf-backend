@@ -79,10 +79,15 @@ INSTRUCTION = (
     '{"recommendations": [{"title": "...", "release_year": 1234, '
     '"reason": "one sentence"}]} and nothing else. Give exactly '
     f"{RECOMMENDATION_COUNT} recommendations, best first. "
-    '"title" is the series title as it is best known in English, "release_year" '
-    'is the year the series first aired, and "reason" is one plain sentence '
-    "saying why this person in particular would like it — prose only, no markup. "
-    "Never recommend a series that appears anywhere in the user message."
+    '"title" is the series title as it is best known in English and nothing '
+    "else: no commentary, no comparison with another series, no alternative "
+    "suggestion, no parenthetical and no quotation marks. "
+    '"release_year" is the year the series first aired, and "reason" is one '
+    "plain sentence saying why this person in particular would like it — prose "
+    'only, no markup. Every explanation belongs in "reason": a title carrying '
+    "one cannot be looked up, and that recommendation is discarded. "
+    "Never recommend a series that appears anywhere in the user message, and "
+    "never say that you are avoiding one — pick a different series instead."
 )
 """The instruction that does not vary between users. See the module docstring.
 
@@ -90,6 +95,23 @@ The rows are described rather than left to be inferred because the payload is
 columnar to save tokens (§5.3) and a header of four bare names is not
 self-explanatory — `pct` in particular reads as a percentage of *what* only
 once somebody says so.
+
+**The title clause is blunt because a real answer was not.** On 2026-08-17 a
+production run stored 5 of 25 because the model wrote its reasoning into
+`title` — `"The Americans' Russian counterpart, 'The Bureau'"`,
+`"Succession's corporate peer, 'Industry' (though you've seen it), try
+'Billions'"` — while every entry stayed *structurally* valid, so nothing
+before resolution could object. Resolution is fold-exact by design (§8 refuses
+a fuzzy fallback), so a title carrying prose matches nothing and reads in the
+log as a catalog gap. Hence naming the failure modes rather than only asking
+for a title, and saying what it costs.
+
+**The last sentence exists because the exclusion rule provoked the first.**
+That answer editorialised specifically around shows the user had already seen
+("though you've seen it", "but since seen"): the model wanted to explain what
+it was skipping and had nowhere to put it at the point of naming. Telling it
+not to mention the avoidance is cheaper than a field for reasoning nobody
+reads.
 """
 
 
