@@ -93,13 +93,23 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.app.repos import episode_rating_repo, show_repo
 from tvbf.recommendations.taste import TasteLabel, TasteSignal, taste_for_user
 
-PROMPT_VERSION = "3"
-"""The version of the prompt this payload is hashed against (§9.1).
+PROMPT_VERSION = "4"
+"""The version of the request/response contract this payload is hashed against (§9.1).
 
 It lives here because the hash needs one and the hash is this module's. **Bump it
 in the same commit as any change to the prompt text or to the payload's own
 shape** — that is what makes a prompt change re-run every user exactly once
 instead of never.
+
+**It versions the whole of §7, of which the reading side is half.** Version 4
+changed no instruction text at all: it added the recovery of a title the model
+dressed with a comparison (`prompt.quoted_candidate`, NEU-1173), which is the
+same payload and the same instruction producing *different stored rows*. That is
+exactly the condition the rule above names, so the constant is named for the
+contract rather than for the prose. Without the bump a user whose taste has not
+moved keeps the set that is missing those rows until something in their history
+changes, and the fix is never exercised against a real user — which is the only
+way to evaluate it.
 """
 
 COLUMNS = ("title", "year", "pct", "stars")

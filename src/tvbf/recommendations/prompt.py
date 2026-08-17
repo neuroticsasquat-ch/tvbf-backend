@@ -2,10 +2,12 @@
 
 Project spec §7. This module is the whole of what the weekly pass says to the
 provider and the whole of what it believes back — the request half is
-`INSTRUCTION` plus `build_prompt`, the response half is `parse_suggestions`.
-They live together because they are one contract: the output shape asserted in
-the instruction and the shape the parser insists on cannot be edited apart
-without one of them lying.
+`INSTRUCTION` plus `build_prompt`, the response half is `parse_suggestions` and
+`quoted_candidate`. They live together because they are one contract: the output
+shape asserted in the instruction and the shape the parser insists on cannot be
+edited apart without one of them lying. That is also why the repair for a title
+the model *dressed* lives here rather than in `resolution.py`: knowing how this
+model breaks §7 is knowledge about the contract, not about the catalog.
 
 ## Editing this file means bumping `PROMPT_VERSION`
 
@@ -225,3 +227,77 @@ def _dropped_label(entry: Any) -> str:
     if not isinstance(entry, Mapping):
         return "<not an object>"
     return _text(entry.get("title")) or "<no title>"
+
+
+_CLOSERS: dict[str, str] = {"'": "'", '"': '"', "’": "‘", "”": "“"}
+"""Each delimiter that can *close* a quoted run, mapped to the one that opens it.
+
+Straight quotes partner with themselves. The typographic pairs partner across
+their forms, which is what makes them the more reliable of the two: `’` is
+ambiguous between a possessive and a close-quote, but `‘` unambiguously opens,
+so a possessive `’` finds no partner and yields nothing rather than a guess.
+"""
+
+_DELIMITERS = frozenset(_CLOSERS) | frozenset(_CLOSERS.values())
+
+
+def quoted_candidate(title: str) -> str | None:
+    """The show a dressed title is actually recommending, or `None` (NEU-1173).
+
+    The model intermittently answers with a series from the user's own payload,
+    a possessive or connective, and then the real recommendation in quotes —
+    `"The Leftovers' 'Manhunt: Unabomber'"`. Resolution is fold-exact by design
+    (§8), so every such recommendation matches nothing and is lost, and it is
+    lost *invisibly*, reading in the log exactly like a catalog gap. Three
+    consecutive revisions of `INSTRUCTION` have tried to stop it happening; this
+    is the reading side of the same contract, which is why it lives here and not
+    in `resolution.py` — the model violated §7, and knowing the shape of its
+    violations is what this module is for.
+
+    **The pairing runs from the right.** Every observed dressed title carries an
+    *odd* number of apostrophes, because the connective is a possessive, so
+    pairing left to right recovers `" sibling "`, `"s "` and `" "` — garbage in
+    four cases out of four. Worse, on the version-1 answer recorded in
+    `INSTRUCTION`'s docstring it recovers `Industry`, the show the model was
+    explicitly declining *because the user already has it*. That asymmetry is
+    structural rather than lucky: the leading segment is the series being
+    compared against or declined, and the trailing one is the recommendation.
+
+    **One candidate, not many.** Walking every quoted run right to left until one
+    sticks is the shape §8 refuses — each extra candidate is another chance for a
+    junk segment to land on a real show, and `The Americans` *is* a real show.
+    The last run is correct on all five observed cases, at one extra query per
+    unresolved title.
+
+    Pure: no database, and no fold. `sql_fold.folded` strips punctuation anyway,
+    so `'Bodyguard'` and `Bodyguard` fold identically — this decides segment
+    boundaries and nothing else, and a candidate carrying stray punctuation is
+    not thereby broken. The caller decides what to do with it, and only after the
+    title as written has already failed.
+    """
+    closer_at = _last_delimiter(title)
+    if closer_at is None:
+        return None
+    opener = _CLOSERS.get(title[closer_at])
+    if opener is None:
+        # The last delimiter opens rather than closes: nothing to its right, and
+        # no partner to its left either.
+        return None
+    opener_at = title.rfind(opener, 0, closer_at)
+    if opener_at < 0:
+        return None
+    candidate = title[opener_at + 1 : closer_at].strip()
+    # The raw title already failed to resolve, so an identical second query buys
+    # nothing. Unreachable while the rule above excludes both delimiters from the
+    # span; it is the contract callers rely on, not an observed case.
+    if not candidate or candidate == title:
+        return None
+    return candidate
+
+
+def _last_delimiter(title: str) -> int | None:
+    """The index of the rightmost quote character, of any kind."""
+    for index in range(len(title) - 1, -1, -1):
+        if title[index] in _DELIMITERS:
+            return index
+    return None

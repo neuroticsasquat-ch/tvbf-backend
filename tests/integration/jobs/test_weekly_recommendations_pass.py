@@ -25,6 +25,7 @@ from sqlalchemy import func, select
 
 from tvbf.app.models import (
     MATCHED_VIA_AKA,
+    MATCHED_VIA_NAME,
     SET_STATUS_FAILED,
     SET_STATUS_INSUFFICIENT_HISTORY,
     SET_STATUS_NO_MATCHES,
@@ -679,3 +680,197 @@ class TestHowItRefusesToStart:
             get_settings.cache_clear()
 
         assert await _sets(session, user.id) == []
+
+
+DRESSED = CANDIDATE + 10
+"""The first of the shows a dressed title has to be read back out of (NEU-1173)."""
+
+
+@pytest.fixture
+async def dressed_catalog(session, catalog):
+    """The four shows the 2026-08-17 run lost, plus the pair AC 2 needs.
+
+    Seeded rather than assumed present, per the fixture rule at the top of this
+    file: `catalog` is sparsely populated locally while the ingest runs.
+    """
+    session.add_all(
+        [
+            Show(id=DRESSED, name="The Spy", first_air_date=date(2019, 9, 6), popularity=40.0),
+            Show(
+                id=DRESSED + 1,
+                name="The Company",
+                first_air_date=date(2007, 8, 5),
+                popularity=30.0,
+            ),
+            # TMDB names the series *Manhunt* and carries the season's title as an
+            # alternative one — exactly the case NEU-1107 added the AKA tier for.
+            Show(id=DRESSED + 2, name="Manhunt", first_air_date=date(2017, 7, 31), popularity=20.0),
+            Show(
+                id=DRESSED + 3, name="Bodyguard", first_air_date=date(2018, 8, 26), popularity=60.0
+            ),
+            # A show whose real name carries quotes, and the show its quoted
+            # segment would name. They must not be the same row.
+            Show(
+                id=DRESSED + 4,
+                name="The Trip's 'Sequel'",
+                first_air_date=date(2010, 11, 1),
+                popularity=10.0,
+            ),
+            Show(id=DRESSED + 5, name="Sequel", first_air_date=date(2010, 1, 1), popularity=99.0),
+        ]
+    )
+    await session.flush()
+    session.add(ShowAka(show_id=DRESSED + 2, title="Manhunt: Unabomber"))
+    await session.commit()
+
+
+class TestATitleTheModelDressed:
+    """NEU-1173. The model intermittently answers with a series from the user's
+    own payload, a possessive, and the real recommendation in quotes. Every one
+    of these is verbatim from the `PROMPT_VERSION` 3 run of 2026-08-17 16:32.
+    """
+
+    @respx.mock
+    async def test_the_four_lost_titles_resolve_to_the_show_inside_the_quotes(
+        self, session, user, provider, dressed_catalog
+    ):
+        _mock(
+            _answer(
+                _recommendation("The Americans' sibling 'The Spy'", 2019),
+                _recommendation("Halt and Catch Fire's 'The Company'", 2007),
+                _recommendation("The Leftovers' 'Manhunt: Unabomber'", 2017),
+                _recommendation("Killing Eve's 'Bodyguard'", 2018),
+            )
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_SUCCEEDED
+        rows = await _rows(session, stored.id)
+        assert [row.show_id for row in rows] == [DRESSED, DRESSED + 1, DRESSED + 2, DRESSED + 3]
+        # The AKA tier does the work for one of them, and recovery does not
+        # change which tier matched — that is why `matched_via` was not widened.
+        assert [row.matched_via for row in rows] == [
+            MATCHED_VIA_NAME,
+            MATCHED_VIA_NAME,
+            MATCHED_VIA_AKA,
+            MATCHED_VIA_NAME,
+        ]
+
+    @respx.mock
+    async def test_a_title_that_resolves_as_written_never_reaches_the_fallback(
+        self, session, user, provider, dressed_catalog
+    ):
+        """AC 2 is structural rather than tested into existence — the fallback
+        fires only where `resolve` already answered `None`. The seeded pair makes
+        it visible: the raw title and its quoted segment name different shows,
+        and the raw one wins."""
+        _mock(_answer(_recommendation("The Trip's 'Sequel'", 2010)))
+
+        assert await run(_parse_args([])) == 0
+
+        rows = await _rows(session, (await _only_set(session, user.id)).id)
+        assert [(row.show_id, row.recovered_from) for row in rows] == [(DRESSED + 4, None)]
+
+    @respx.mock
+    async def test_a_recovered_row_carries_the_raw_title_and_an_ordinary_one_does_not(
+        self, session, user, provider, dressed_catalog
+    ):
+        """`raw_response` preserves every dressed title regardless; what the
+        column adds is the join from a *stored row* back to the title that
+        produced it, once the container logs have rotated."""
+        _mock(
+            _answer(
+                _recommendation("Killing Eve's 'Bodyguard'", 2018), _recommendation("Dark", 2017)
+            )
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        rows = await _rows(session, (await _only_set(session, user.id)).id)
+        assert [(row.show_id, row.recovered_from) for row in rows] == [
+            (DRESSED + 3, "Killing Eve's 'Bodyguard'"),
+            (CANDIDATE, None),
+        ]
+
+    @respx.mock
+    async def test_it_says_what_it_recovered_and_from_what(
+        self, session, user, provider, dressed_catalog, caplog
+    ):
+        _mock(_answer(_recommendation("Killing Eve's 'Bodyguard'", 2018)))
+
+        assert await run(_parse_args([])) == 0
+
+        assert "recovered \"Killing Eve's 'Bodyguard'\" as 'Bodyguard'" in caplog.text
+
+    @respx.mock
+    @pytest.mark.parametrize(
+        ("title", "year", "tried"),
+        [
+            pytest.param(
+                "The Leftovers' 'A Show That Is Not In The Mirror'",
+                2019,
+                "A Show That Is Not In The Mirror",
+                id="the quoted segment names nothing",
+            ),
+            pytest.param(
+                "The Leftovers' 'Bodyguard'",
+                1999,
+                "Bodyguard",
+                id="the quoted segment names a show whose year disagrees",
+            ),
+        ],
+    )
+    async def test_a_candidate_that_resolves_to_nothing_is_still_unresolved(
+        self, session, user, provider, dressed_catalog, caplog, title, year, tried
+    ):
+        """§8's year window is what makes a wrong extraction fail closed, and the
+        annotation is what tells a wrong extraction rule apart from a catalog gap
+        — three different situations otherwise print the identical line."""
+        _mock(_answer(_recommendation(title, year)))
+
+        assert await run(_parse_args([])) == 0
+
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_NO_MATCHES
+        assert await _rows(session, stored.id) == []
+        assert f"[tried: {tried}]" in caplog.text
+
+    @respx.mock
+    async def test_a_recovered_show_the_user_already_has_is_dropped_like_any_other(
+        self, session, user, provider, dressed_catalog
+    ):
+        """AC 5: recovery decides which show a title names, and nothing else.
+        The exclusion filter runs afterwards, in the same order, on the same
+        terms (§8)."""
+        session.add(UserShowWatch(user_id=user.id, show_id=DRESSED + 3))
+        await session.commit()
+        _mock(
+            _answer(
+                _recommendation("Killing Eve's 'Bodyguard'", 2018), _recommendation("Dark", 2017)
+            )
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        rows = await _rows(session, (await _only_set(session, user.id)).id)
+        assert [row.show_id for row in rows] == [CANDIDATE]
+
+    @respx.mock
+    async def test_a_recovered_show_an_earlier_title_already_named_is_stored_once(
+        self, session, user, provider, dressed_catalog
+    ):
+        _mock(
+            _answer(
+                _recommendation("Bodyguard", 2018),
+                _recommendation("Killing Eve's 'Bodyguard'", 2018),
+            )
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        rows = await _rows(session, (await _only_set(session, user.id)).id)
+        assert [(row.rank, row.show_id, row.recovered_from) for row in rows] == [
+            (1, DRESSED + 3, None)
+        ]

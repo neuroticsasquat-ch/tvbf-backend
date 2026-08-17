@@ -680,6 +680,25 @@ class UserRecommendation(Base):
     )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     matched_via: Mapped[str] = mapped_column(Text, nullable=False)
+    recovered_from: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """The raw dressed title this row was recovered from, or NULL (NEU-1173).
+
+    The model intermittently answers with a comparison rather than a bare title —
+    `"The Leftovers' 'Manhunt: Unabomber'"` — and the pass reads the recommendation
+    back out of the quotes (`recommendations/prompt.quoted_candidate`). The raw
+    form is stored rather than the extracted candidate because the candidate is
+    re-derivable from it and the raw form is the thing that is otherwise lost once
+    the container logs rotate.
+
+    **Not folded into `matched_via`.** That column answers "which catalog tier
+    matched" and its vocabulary stays `name` / `aka`; a recovered title still
+    matched via one of those. Recovery is a property of the *title*, not of the
+    tier, and one column carrying two orthogonal facts is the shape that goes
+    stale. Kept separate, both stay retractable as a batch — `WHERE recovered_from
+    IS NOT NULL` — which is the stated reason `matched_via` exists at all.
+
+    Diagnostic, like `matched_via`: `GET /me/recommendations` does not serve it.
+    """
 
 
 # The append-only trigger rides the table's own create event so the two ways this

@@ -135,6 +135,7 @@ from tvbf.recommendations.prompt import (
     build_prompt,
     describe_dropped,
     parse_suggestions,
+    quoted_candidate,
 )
 
 log = logging.getLogger(__name__)
@@ -292,6 +293,14 @@ where the AKA tier does the work, and the production run above resolved 4 of 25
 the following day at 1 of 25. So this cannot fire on a user whose taste the
 catalog genuinely covers badly — it takes a majority of titles failing, which is
 a property of the answer rather than of the account.
+
+**Its motivating incident is now handled a layer earlier** (NEU-1173): a title
+carrying a comparison is read back out of its quotes by
+`prompt.quoted_candidate`, so a recovered title counts as resolved and this
+threshold no longer sees that shape. What it still stands in front of is the
+answer that names shows which genuinely are not there — a hallucinating model, or
+a catalog that lost its spine. Retiring it on the strength of the recovery would
+be retiring the guard for a case the recovery does not cover.
 """
 
 IGNORED_EXCLUSION_FRACTION = 0.9
@@ -349,6 +358,20 @@ class _Attempt:
     """
     duplicates: int
     """Named titles that resolved onto a show an earlier one already named."""
+    recovered: int
+    """Named titles that resolved only after the quoted segment was read out.
+
+    Reported in the per-user summary rather than judged: recovered titles count
+    as *resolved*, so they collapse `unresolved` and
+    `UNBELIEVABLE_UNRESOLVED_FRACTION` stops firing on this failure mode. That is
+    intended — the retry exists to obtain a usable answer and recovery makes the
+    answer usable — and no threshold replaces it. A "most titles needed recovery,
+    ask again" rule is worse than it looks: `_ask` keeps whichever attempt
+    produced more rows, so a recovery-heavy first attempt usually produces *more*
+    rows than a compliant retry of 25, and the rule would reliably spend a call
+    and then discard its result. `app.user_recommendation.recovered_from` is what
+    restores the observability, by query rather than by tripwire.
+    """
 
     @property
     def resolved(self) -> int:
@@ -468,6 +491,7 @@ async def _attempt(
         named=len(suggestions),
         excluded=resolution_result.excluded,
         duplicates=resolution_result.duplicates,
+        recovered=resolution_result.recovered,
     )
 
 
@@ -484,6 +508,8 @@ class _Resolved:
     unresolved: list[str]
     excluded: int
     duplicates: int
+    recovered: int
+    """Titles that resolved only after the quoted segment was read out of them."""
 
 
 async def _resolve_all(
@@ -502,19 +528,41 @@ async def _resolve_all(
     **The duplicates.** Two model-authored titles can resolve to one show, and
     `uq_user_recommendation_set_rank` would not catch it — a set holding the same
     show twice is two cards of the same thing in a grid of twelve.
+
+    One repair rides along too, and it is the caller's for the same reason
+    (NEU-1173): a title the model dressed with a comparison resolves to nothing
+    as written, so `prompt.quoted_candidate` reads the recommendation back out of
+    its quotes and it goes through the identical `resolve` with the identical
+    year. **Only after the title as written has failed** — a show whose real name
+    carries quotes matches itself above and never reaches it — and a recovered
+    row then passes both filters above exactly as any other row does.
     """
     rows: list[recommendation_repo.NewRecommendation] = []
     unresolved: list[str] = []
     excluded = 0
     duplicates = 0
+    recovered = 0
     seen: set[int] = set()
     for suggestion in suggestions:
         resolved = await resolution.resolve(
             db, title=suggestion.title, year=suggestion.release_year
         )
+        recovered_from: str | None = None
         if resolved is None:
-            unresolved.append(f"{suggestion.title} ({suggestion.release_year})")
-            continue
+            # Only now, and never as a preprocessing step: a show whose real name
+            # carries quotes resolves as itself above, and the fallback is not
+            # reached.
+            candidate = quoted_candidate(suggestion.title)
+            if candidate is not None:
+                resolved = await resolution.resolve(
+                    db, title=candidate, year=suggestion.release_year
+                )
+            if resolved is None:
+                unresolved.append(_unresolved_label(suggestion, candidate))
+                continue
+            recovered += 1
+            recovered_from = suggestion.title
+            log.info("recovered %r as %r — show %d", suggestion.title, candidate, resolved.show_id)
         # Logged rather than dropped in silence: if the model starts echoing the
         # user's own library back, the set shrinks toward `no_matches` and these
         # are the only lines that would say why.
@@ -538,9 +586,30 @@ async def _resolve_all(
                 show_id=resolved.show_id,
                 reason=suggestion.reason,
                 matched_via=resolved.matched_via,
+                recovered_from=recovered_from,
             )
         )
-    return _Resolved(rows=rows, unresolved=unresolved, excluded=excluded, duplicates=duplicates)
+    return _Resolved(
+        rows=rows,
+        unresolved=unresolved,
+        excluded=excluded,
+        duplicates=duplicates,
+        recovered=recovered,
+    )
+
+
+def _unresolved_label(suggestion: Suggestion, candidate: str | None) -> str:
+    """One entry in the "resolved to nothing" log line.
+
+    The candidate is named when there was one, because without it three
+    different situations produce an identical line — no quotes in the title at
+    all, quotes whose contents matched nothing, and quotes whose contents matched
+    a show whose year disagreed. Those are a catalog gap, a wrong extraction
+    rule, and the model sending the *leading* show's year respectively; only the
+    first is expected, and this log is the one window onto which is happening.
+    """
+    named = f"{suggestion.title} ({suggestion.release_year})"
+    return named if candidate is None else f"{named} [tried: {candidate}]"
 
 
 async def _generate_for_user(
@@ -634,11 +703,18 @@ async def _generate_for_user(
         recommendations=rows,
     )
     if rows:
+        # "of the named titles", not "of the stored rows": `recovered` is counted
+        # before the exclusion and duplicate filters, because it measures the
+        # model's compliance rather than the set. A recovered title that is then
+        # dropped as one the user already has would otherwise make this line read
+        # as though a stored row carried a `recovered_from` it does not.
         log.info(
-            "user %s: %d of %d recommendations stored (%d input / %d output tokens)",
+            "user %s: %d of %d recommendations stored, %d of the named titles "
+            "recovered from a dressed one (%d input / %d output tokens)",
             user_id,
             len(rows),
             attempt.named,
+            attempt.recovered,
             response.input_tokens,
             response.output_tokens,
         )

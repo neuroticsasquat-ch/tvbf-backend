@@ -13,6 +13,17 @@ Two tiers, in order, first hit wins:
 and nothing after that — an unresolved title is `None`, which the caller drops
 and logs.
 
+**A third tier does not go here.** The one repair that exists for a title this
+module cannot match — the model answering with a comparison rather than a bare
+name, `"The Leftovers' 'Manhunt: Unabomber'"` — lives in
+`recommendations/prompt.quoted_candidate` and is applied by the weekly pass, only
+after `resolve` has already answered `None` (NEU-1173). That is deliberate: a
+dressed title is not a harder catalog lookup, it is a response that did not
+honour §7's output contract, and repairing it here would hand it to every future
+caller of this function — none of which is reading a model's answer. The
+recovered candidate comes back through `resolve` unchanged, year window and all,
+which is what makes a wrong extraction fail closed.
+
 ## The AKA tier earns its place
 
 A model recommending international television names shows in English, and
