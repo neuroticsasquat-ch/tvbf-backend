@@ -460,6 +460,70 @@ class TestWhenTheModelDisappoints:
         assert [row.show_id for row in await _rows(session, stored.id)] == [CANDIDATE]
 
     @respx.mock
+    async def test_an_answer_that_is_all_the_users_own_shows_is_retried(
+        self, session, user, provider
+    ):
+        """The second way to answer nothing while satisfying every structural
+        rule, and the one that happened the day after the title fix: 25 clean bare
+        titles, 25 of 25 already in the payload, nothing stored, `no_matches`.
+
+        Everything resolves here, so the unresolved rule sees a perfect answer —
+        which is why `believable` asks a second question.
+        """
+        already_theirs = [_recommendation(f"Tracked Show {n}", 2020) for n in range(5)]
+        route = _mock(
+            _answer(*already_theirs),
+            _answer(_recommendation("Dark", 2017), _recommendation("Shōgun", 2024)),
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 2
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_SUCCEEDED
+        assert [row.show_id for row in await _rows(session, stored.id)] == [
+            CANDIDATE,
+            CANDIDATE + 1,
+        ]
+
+    @respx.mock
+    async def test_a_second_all_excluded_answer_is_recorded_as_no_matches(
+        self, session, user, provider
+    ):
+        """One retry, not a loop. A model that hands the library back twice has
+        answered, so the run is `no_matches` rather than `failed` — which leaves
+        the user's current recommendations standing (NEU-1108)."""
+        already_theirs = [_recommendation(f"Tracked Show {n}", 2020) for n in range(5)]
+        route = _mock(_answer(*already_theirs), _answer(*already_theirs))
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 2
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_NO_MATCHES
+        assert await _rows(session, stored.id) == []
+
+    @respx.mock
+    async def test_some_overlap_with_the_library_is_not_disobedience(self, session, user, provider):
+        """Resolution is fold-exact with a ±1 year window, so a model-authored
+        title can legitimately land on a show the user happens to have. The
+        threshold is nine tenths precisely so that costs no second call."""
+        route = _mock(
+            _answer(
+                _recommendation("Dark", 2017),
+                _recommendation("Shōgun", 2024),
+                _recommendation("Money Heist", 2017),
+                _recommendation("Tracked Show 0", 2020),
+            )
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 1
+        rows = await _rows(session, (await _only_set(session, user.id)).id)
+        assert len(rows) == 3
+
+    @respx.mock
     async def test_a_short_answer_is_not_judged_on_its_resolution_rate(
         self, session, user, provider
     ):

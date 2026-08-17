@@ -74,7 +74,10 @@ INSTRUCTION = (
     '"not_liked" are series they did not, and "interested" are series they have '
     'added but not started. In each row, "pct" is how much of that series they '
     'have watched and "stars" is their rating out of five, or null if they have '
-    "not rated it.\n"
+    "not rated it. "
+    '"exclude" is a plain list of further series they already have, with the '
+    'fields "exclude_columns" names and no viewing data — it is there only so '
+    "you can avoid them.\n"
     "Reply with a json object of the form "
     '{"recommendations": [{"title": "...", "release_year": 1234, '
     '"reason": "one sentence"}]} and nothing else. Give exactly '
@@ -86,8 +89,13 @@ INSTRUCTION = (
     "plain sentence saying why this person in particular would like it — prose "
     'only, no markup. Every explanation belongs in "reason": a title carrying '
     "one cannot be looked up, and that recommendation is discarded. "
-    "Never recommend a series that appears anywhere in the user message, and "
-    "never say that you are avoiding one — pick a different series instead."
+    "Every series named anywhere in the user message is one this person already "
+    'has — in "liked", in "not_liked", in "interested" or in "exclude" — so none '
+    "of them may appear in your answer. When the series you were about to "
+    "recommend is one of them, drop it without comment and give the next best "
+    "one you have not used. Do not name it, do not describe it, and do not "
+    "offer it with a caveat: an answer that returns this person's own series to "
+    "them is discarded whole and they see nothing."
 )
 """The instruction that does not vary between users. See the module docstring.
 
@@ -106,12 +114,28 @@ a fuzzy fallback), so a title carrying prose matches nothing and reads in the
 log as a catalog gap. Hence naming the failure modes rather than only asking
 for a title, and saying what it costs.
 
-**The last sentence exists because the exclusion rule provoked the first.**
-That answer editorialised specifically around shows the user had already seen
-("though you've seen it", "but since seen"): the model wanted to explain what
-it was skipping and had nowhere to put it at the point of naming. Telling it
-not to mention the avoidance is cheaper than a field for reasoning nobody
-reads.
+**The exclusion paragraph is the second draft, and the first one made things
+worse.** The prose that broke the run above editorialised specifically around
+shows the user had already seen — `"Industry (though you've seen it), try
+'Billions'"`. Read closely, that was the model *attempting to comply*: naming
+its best fit, noticing the user had it, and redirecting. `PROMPT_VERSION` 2
+answered with "never say that you are avoiding one — pick a different series
+instead", and on 2026-08-17 at 16:00 UTC the model dropped the **redirect**
+rather than the seen show: 25 clean bare titles, 25 of 25 already in its own
+input, nothing stored, recorded `no_matches`. Removing the narration removed
+the mechanism the narration was part of.
+
+So this draft says the same thing in the other direction — it names all four
+groups the ban covers, tells the model what to do *instead* ("drop it without
+comment and give the next best one you have not used"), and states the
+consequence for the person rather than for the parser, because "discarded" is
+not a cost the model has any reason to weigh and "they see nothing" is.
+
+**Which is also why `exclude` exists at all** (`payload.EXCLUDE_COLUMNS`). Under
+versions 1 and 2 the ban covered shows the payload never mentioned — the
+INTERESTED cap's overflow, a show carrying only an episode rating — so the model
+was asked to avoid rows it could not see. An instruction that cannot be followed
+is not an instruction.
 """
 
 

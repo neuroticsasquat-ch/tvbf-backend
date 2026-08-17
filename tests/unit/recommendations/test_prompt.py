@@ -51,7 +51,22 @@ class TestTheInstruction:
     def test_it_states_the_exclusion_rule_the_pass_also_enforces(self):
         """Belt-and-braces (§8): the instruction is the request and the
         post-resolution filter is the guarantee. Neither replaces the other."""
-        assert "Never recommend a series that appears" in INSTRUCTION
+        assert "none of them may appear in your answer" in INSTRUCTION
+
+    def test_the_exclusion_rule_names_every_group_it_covers(self):
+        """Including `exclude`, which is the group that made the rule followable:
+        under versions 1 and 2 the ban reached shows the payload never mentioned,
+        so the model was asked to avoid rows it could not see."""
+        for group in ('"liked"', '"not_liked"', '"interested"', '"exclude"'):
+            assert group in INSTRUCTION
+
+    def test_it_says_what_to_do_instead_of_a_series_the_user_has(self):
+        """Version 2 said only "never say that you are avoiding one", and the
+        model answered by dropping the *redirect* rather than the seen show — 25
+        of 25 titles already in its own input. Saying what to do instead is the
+        half that was missing."""
+        assert "give the next best one you have not used" in INSTRUCTION
+        assert "do not offer it with a caveat" in INSTRUCTION
 
     def test_it_demands_a_bare_title_and_says_what_a_dressed_one_costs(self):
         """A production run stored 5 of 25 because the model wrote its reasoning
@@ -63,10 +78,16 @@ class TestTheInstruction:
         assert "cannot be looked up" in INSTRUCTION
 
     def test_it_tells_the_model_not_to_narrate_the_exclusions(self):
-        """The prose that broke the run editorialised around shows the user had
-        already seen ("though you've seen it"): the model wanted to explain what
-        it was skipping and had nowhere to put it at the point of naming."""
-        assert "never say that you are avoiding one" in INSTRUCTION
+        """The prose that broke the first run editorialised around shows the user
+        had already seen ("though you've seen it"): the model wanted to explain
+        what it was skipping and had nowhere to put it at the point of naming.
+
+        The ban on narrating it survives; what changed in version 3 is that it no
+        longer stands alone — see the test above for the instruction it needs
+        beside it.
+        """
+        assert "drop it without comment" in INSTRUCTION
+        assert "Do not name it, do not describe it" in INSTRUCTION
 
 
 class TestBuildPrompt:

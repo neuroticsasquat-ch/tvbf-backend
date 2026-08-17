@@ -256,6 +256,35 @@ class TestTheInterestedCap:
 
         assert len(payload.excluded_show_ids) == INTERESTED_CAP + 10
 
+    async def test_a_capped_show_is_named_in_the_exclude_group(self, session, make_user):
+        """The rule is only followable if the model can see what it covers.
+
+        The overflow used to be excluded and invisible, so the model was asked to
+        avoid rows it was never shown — which is how a 2026-08-17 production run
+        named 25 of 25 titles already in its own input.
+        """
+        user = await make_user()
+        session.add_all(
+            [
+                Show(id=972_000 + n, name=f"Show {n:03d}", first_air_date=AIRED, status="Ended")
+                for n in range(INTERESTED_CAP + 10)
+            ]
+        )
+        await session.flush()
+        for n in range(INTERESTED_CAP + 10):
+            await _track(session, user.id, 972_000 + n, added_at=NOW - timedelta(days=n))
+
+        payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+        document = _document(payload)
+
+        # The ten the cap dropped, and only those: the surviving 50 are already
+        # visible as `interested` rows.
+        assert payload.excluded_row_count == 10
+        assert {row[0] for row in document["exclude"]} == {
+            f"Show {n:03d}" for n in range(INTERESTED_CAP, INTERESTED_CAP + 10)
+        }
+        assert [row[1] for row in document["exclude"]] == [AIRED.year] * 10
+
 
 class TestExclusion:
     async def test_an_episode_rating_alone_excludes_a_show_it_cannot_label(
@@ -273,6 +302,10 @@ class TestExclusion:
         payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
 
         assert payload.excluded_show_ids == {EPISODE_RATED}
+        # And it is named, because no tier row mentions it — the whole point of
+        # the group is that an unfollowable ban is not a ban.
+        assert payload.excluded_row_count == 1
+        assert _document(payload)["exclude"][0][0] == "Episode Rated"
         assert _document(payload)["liked"] == []
 
     async def test_an_unlabelled_show_is_excluded_without_being_reported(
