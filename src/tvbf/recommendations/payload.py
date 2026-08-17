@@ -57,12 +57,21 @@ the shows that reached a tier, minus whatever the INTERESTED cap dropped. The tw
 deliberately differ, in the safe direction: a show the payload never mentions is
 still one we must never recommend back.
 
-That is why this module asks `episode_rating_repo` for its own list rather than
-reading the tiers. `taste_for_user` deliberately does not let an episode rating
+That is why the set comes from `exclusion.load_show_ids_with_a_record` rather
+than from the tiers. `taste_for_user` deliberately does not let an episode rating
 *enrol* a show — an episode rating refines a show already in the universe and is
 not a signal of its own — but "we have no opinion about this show" and "the user
 has never seen this show" are different claims, and only the second licenses a
 recommendation.
+
+Asking that module rather than unioning the taste signals' keys with a second
+repo call is what stops the two drifting (NEU-1175). The union was correct only
+because `taste_for_user`'s universe happened to be exactly *my_shows ∪
+episode-watched ∪ show-rated*; narrow that universe for a taste reason some day
+and the never-recommend set silently narrows with it — a change to what we *say
+about* a user quietly changing what we *never show* them. The same module is now
+the read path's suppression rule, so the set the payload bans and the set the
+page hides are one sentence.
 
 ## The floor is one expression with two named constants
 
@@ -90,7 +99,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.repos import episode_rating_repo, show_repo
+from tvbf.app.repos import show_repo
+from tvbf.recommendations import exclusion
 from tvbf.recommendations.taste import TasteLabel, TasteSignal, taste_for_user
 
 PROMPT_VERSION = "4"
@@ -221,10 +231,7 @@ async def build_payload(
     now_dt = now if now is not None else datetime.now(UTC)
 
     signals = await taste_for_user(db, user_id=user_id, now=now_dt)
-    episode_rated_show_ids = await episode_rating_repo.mean_stars_per_show_for_user(
-        db, user_id=user_id
-    )
-    excluded = frozenset(signals) | frozenset(episode_rated_show_ids)
+    excluded = await exclusion.load_show_ids_with_a_record(db, user_id=user_id)
 
     grouped, interested_before_cap = _group(signals)
     shown_ids = {sid for ids in grouped.values() for sid in ids}

@@ -129,6 +129,43 @@ Read-time rather than write-time filtering is deliberate for the same reason
 (project spec §8): a write-time copy would be the weaker half of the filter and
 would make a resurrected show permanently unrecommendable.
 
+### 4.1 A show the viewer already has a record for is suppressed (NEU-1175)
+
+The list is **the top twelve stored suggestions the viewer has no record for**.
+A stored set is immutable, so before this the viewer could add a recommended
+show to My Shows and keep watching it occupy a card until Sunday's pass
+superseded the whole set — up to seven days.
+
+"Has a record for" is project spec §8's own phrase and its own four sources:
+
+| Source | Created by |
+| -- | -- |
+| My Shows membership | adding the show |
+| A show rating | rating the show |
+| Any episode watch | marking any episode, season or the show watched |
+| Any episode rating | rating any episode |
+
+**A client must not re-implement this rule** — it is one definition on the
+server (`recommendations/exclusion.py`), used both by the weekly pass's
+never-recommend list and by this read, and a client copy would be a second
+expression of it that drifts. What a client *may* do with the list is decide
+when to refetch: any of the four actions above can change this payload, so the
+grid is stale after one until it is fetched again.
+
+Two consequences of the suppression being a live join rather than a stored flag:
+
+* **`rank` values stay non-contiguous.** Nothing is renumbered — rank is the
+  model's own ordering, and §2 already says a client displays the value rather
+  than its index. A response of ranks `4, 5, 7, 9…` is normal.
+* **Fewer than twelve is a normal answer.** The 25-asked-for headroom is the
+  mechanism; when it runs out, fewer cards is the answer. Nothing is backfilled
+  from an older set, and an empty list is still `200
+  {"recommendations": []}` — never a `204`, never an error.
+
+Removing the record brings the suggestion back, provided no *other* record for
+that show remains: un-adding a show you watched three episodes of does not
+unmake those episodes.
+
 ## 5. What this route does not do
 
 * **No `limit` parameter.** Twelve is a design decision (§11), not a preference.

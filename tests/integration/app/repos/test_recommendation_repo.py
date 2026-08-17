@@ -8,8 +8,10 @@ exist in one module.
 """
 
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 
 import pytest
+from sqlalchemy import select
 
 from tvbf.app.models import (
     MATCHED_VIA_AKA,
@@ -19,11 +21,15 @@ from tvbf.app.models import (
     SET_STATUS_NO_MATCHES,
     SET_STATUS_SUCCEEDED,
     User,
+    UserEpisodeRating,
+    UserEpisodeWatch,
     UserRecommendation,
     UserRecommendationSet,
+    UserShowRating,
+    UserShowWatch,
 )
 from tvbf.app.repos import recommendation_repo
-from tvbf.catalog.models import Show
+from tvbf.catalog.models import Episode, Show
 
 _BASE = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
@@ -303,3 +309,186 @@ class TestWritingASet:
         assert current is not None
         assert current.status == SET_STATUS_SUCCEEDED
         assert current.payload_hash == "abc123"
+
+
+class TestSuppressingShowsTheReaderHasARecordFor:
+    """NEU-1175: §8's never-recommend rule, enforced again at read time.
+
+    A set is immutable, so a show the user acts on after it was generated used to
+    hold one of the twelve cards until Sunday. The suppression is a live join
+    against the four sources `recommendations/exclusion.py` defines, which is what
+    lets it come back when the record does.
+    """
+
+    async def _episode(self, session, show: Show, number: int = 1) -> Episode:
+        episode = Episode(
+            id=show.id + number,
+            show_id=show.id,
+            season_number=1,
+            episode_number=number,
+            air_date=_BASE.date(),
+        )
+        session.add(episode)
+        await session.flush()
+        return episode
+
+    async def test_a_show_in_my_shows_is_suppressed_and_the_next_one_promoted(
+        self, session, make_user
+    ):
+        user = await make_user(email="added@example.com")
+        rec_set = await _set(session, user)
+        added = await _show(session, 920100, "Added")
+        kept = await _show(session, 920101, "Kept")
+        await _rec(session, rec_set, rank=1, show=added)
+        await _rec(session, rec_set, rank=2, show=kept)
+        session.add(UserShowWatch(user_id=user.id, show_id=added.id))
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+
+        assert [show.id for _, show in rows] == [kept.id]
+
+    async def test_each_of_the_four_sources_suppresses_on_its_own(self, session, make_user):
+        user = await make_user(email="foursources@example.com")
+        rec_set = await _set(session, user)
+        membership = await _show(session, 920110, "Membership")
+        show_rated = await _show(session, 920111, "Show Rated")
+        episode_watched = await _show(session, 920112, "Episode Watched")
+        episode_rated = await _show(session, 920113, "Episode Rated")
+        kept = await _show(session, 920114, "Kept")
+        for rank, show in enumerate(
+            (membership, show_rated, episode_watched, episode_rated, kept), start=1
+        ):
+            await _rec(session, rec_set, rank=rank, show=show)
+        watched_episode = await self._episode(session, episode_watched)
+        rated_episode = await self._episode(session, episode_rated)
+        session.add_all(
+            [
+                UserShowWatch(user_id=user.id, show_id=membership.id),
+                UserShowRating(user_id=user.id, show_id=show_rated.id, stars=Decimal("4.0")),
+                UserEpisodeWatch(user_id=user.id, episode_id=watched_episode.id),
+                UserEpisodeRating(
+                    user_id=user.id, episode_id=rated_episode.id, stars=Decimal("3.5")
+                ),
+            ]
+        )
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+
+        assert [show.id for _, show in rows] == [kept.id]
+
+    async def test_the_surviving_ranks_are_the_stored_ones_and_stay_non_contiguous(
+        self, session, make_user
+    ):
+        """Rank is the model's own ordering; a client displays the value, not its
+        index, so nothing is renumbered."""
+        user = await make_user(email="ranks@example.com")
+        rec_set = await _set(session, user)
+        shows = [await _show(session, 920120 + n, f"Show {n}") for n in range(1, 6)]
+        for rank, show in enumerate(shows, start=1):
+            await _rec(session, rec_set, rank=rank, show=show)
+        session.add_all(
+            [
+                UserShowWatch(user_id=user.id, show_id=shows[0].id),
+                UserShowWatch(user_id=user.id, show_id=shows[2].id),
+            ]
+        )
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+
+        assert [rec.rank for rec, _ in rows] == [2, 4, 5]
+
+    async def test_the_sets_rows_are_never_mutated_or_deleted(self, session, make_user):
+        """Immutability is what makes the weekly swap atomic (§9) and what keeps
+        `raw_response` and the stored rows usable as the record of what the model
+        actually said."""
+        user = await make_user(email="immutable@example.com")
+        rec_set = await _set(session, user)
+        added = await _show(session, 920130, "Added")
+        kept = await _show(session, 920131, "Kept")
+        await _rec(session, rec_set, rank=1, show=added)
+        await _rec(session, rec_set, rank=2, show=kept)
+        session.add(UserShowWatch(user_id=user.id, show_id=added.id))
+        await session.commit()
+
+        await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+
+        stored = (
+            (
+                await session.execute(
+                    select(UserRecommendation)
+                    .where(UserRecommendation.set_id == rec_set.id)
+                    .order_by(UserRecommendation.rank)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert [(row.rank, row.show_id) for row in stored] == [(1, added.id), (2, kept.id)]
+
+    async def test_removing_the_only_record_brings_the_suggestion_back(self, session, make_user):
+        """AC 4a: a live join, not a stored flag."""
+        user = await make_user(email="unadded@example.com")
+        rec_set = await _set(session, user)
+        show = await _show(session, 920140, "Re-recommended")
+        await _rec(session, rec_set, rank=1, show=show)
+        membership = UserShowWatch(user_id=user.id, show_id=show.id)
+        session.add(membership)
+        await session.commit()
+        assert (
+            await recommendation_repo.list_current_recommendations(session, user_id=user.id) == []
+        )
+
+        await session.delete(membership)
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+        assert [s.id for _, s in rows] == [show.id]
+
+    async def test_a_watch_keeps_it_suppressed_after_my_shows_is_removed(self, session, make_user):
+        """AC 4b: un-adding a show you watched three episodes of does not unmake
+        those episodes, and the next run would exclude it at generation time
+        regardless."""
+        user = await make_user(email="stillwatched@example.com")
+        rec_set = await _set(session, user)
+        show = await _show(session, 920150, "Watched")
+        await _rec(session, rec_set, rank=1, show=show)
+        episode = await self._episode(session, show)
+        membership = UserShowWatch(user_id=user.id, show_id=show.id)
+        session.add_all([membership, UserEpisodeWatch(user_id=user.id, episode_id=episode.id)])
+        await session.commit()
+
+        await session.delete(membership)
+        await session.commit()
+
+        assert (
+            await recommendation_repo.list_current_recommendations(session, user_id=user.id) == []
+        )
+
+    async def test_another_users_records_suppress_nothing_here(self, session, make_user):
+        user = await make_user(email="unaffected@example.com")
+        other = await make_user(email="theother@example.com")
+        rec_set = await _set(session, user)
+        show = await _show(session, 920160, "Mine")
+        await _rec(session, rec_set, rank=1, show=show)
+        session.add(UserShowWatch(user_id=other.id, show_id=show.id))
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+
+        assert [s.id for _, s in rows] == [show.id]
+
+    async def test_a_record_for_every_show_reads_as_an_empty_set(self, session, make_user):
+        user = await make_user(email="allacted@example.com")
+        rec_set = await _set(session, user)
+        for n in range(1, 4):
+            show = await _show(session, 920170 + n, f"Show {n}")
+            await _rec(session, rec_set, rank=n, show=show)
+            session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+        await session.commit()
+
+        assert (
+            await recommendation_repo.list_current_recommendations(session, user_id=user.id) == []
+        )

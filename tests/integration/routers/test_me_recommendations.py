@@ -17,6 +17,7 @@ from tvbf.app.models import (
     SET_STATUS_SUCCEEDED,
     UserRecommendation,
     UserRecommendationSet,
+    UserShowWatch,
 )
 from tvbf.catalog.models import Genre, Network, Show, ShowGenre, ShowNetwork
 from tvbf.main import app
@@ -211,3 +212,132 @@ async def test_another_users_set_is_not_visible(authed_client, session, make_use
 
     r = await authed_client.get("/me/recommendations")
     assert r.json() == {"recommendations": []}
+
+
+@pytest.mark.asyncio
+async def test_shows_the_viewer_has_added_are_suppressed_and_the_next_ones_promoted(
+    authed_client, session
+):
+    """AC 1: fifteen stored rows, the first three added, twelve cards from rank 4."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    for rank in range(1, 16):
+        show = await _show(session, 811500 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        if rank <= 3:
+            session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    r = await authed_client.get("/me/recommendations")
+    items = r.json()["recommendations"]
+    assert [i["rank"] for i in items] == list(range(4, 16))
+
+
+@pytest.mark.asyncio
+async def test_fewer_than_twelve_is_a_normal_answer(authed_client, session):
+    """AC 2: thirteen rows, five suppressed, eight cards and a 200. Nothing is
+    backfilled from an older set to refill the grid."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    for rank in range(1, 14):
+        show = await _show(session, 811600 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        if rank % 2 == 1 and rank <= 9:
+            session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    r = await authed_client.get("/me/recommendations")
+    assert r.status_code == 200
+    items = r.json()["recommendations"]
+    assert [i["rank"] for i in items] == [2, 4, 6, 8, 10, 11, 12, 13]
+
+
+@pytest.mark.asyncio
+async def test_a_record_for_every_show_is_the_same_body_as_no_set_at_all(authed_client, session):
+    """AC 3: never a 204, never a 500."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    for rank in range(1, 6):
+        show = await _show(session, 811700 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    r = await authed_client.get("/me/recommendations")
+    assert r.status_code == 200
+    assert r.json() == {"recommendations": []}
+
+
+@pytest.mark.asyncio
+async def test_serves_the_list_in_a_fixed_number_of_queries(authed_client, session):
+    """AC 6: the rows with their anti-join, plus `hydrate_show_refs`' pair —
+    three, whatever the size of the set and however many rows are suppressed."""
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    for rank in range(1, 26):
+        show = await _show(session, 811800 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        if rank % 2 == 1:
+            session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        r = await authed_client.get("/me/recommendations")
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    payload_queries = [
+        s
+        for s in statements
+        if "user_recommendation" in s or "show_genre" in s or "show_network" in s
+    ]
+    assert len(r.json()["recommendations"]) == 12
+    assert len(payload_queries) == 3, payload_queries
+
+
+@pytest.mark.asyncio
+async def test_nothing_surviving_costs_one_query(authed_client, session):
+    """The other half of AC 6: `hydrate_show_refs` short-circuits on an empty
+    list, so a fully suppressed set spends the rows query and nothing else."""
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    for rank in range(1, 6):
+        show = await _show(session, 811900 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        session.add(UserShowWatch(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        r = await authed_client.get("/me/recommendations")
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    payload_queries = [
+        s
+        for s in statements
+        if "user_recommendation" in s or "show_genre" in s or "show_network" in s
+    ]
+    assert r.json() == {"recommendations": []}
+    assert len(payload_queries) == 1, payload_queries

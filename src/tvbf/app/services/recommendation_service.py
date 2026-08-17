@@ -40,12 +40,18 @@ async def list_recommendations(db: AsyncSession, *, user_id: UUID) -> Recommenda
     The rows arrive ordered by rank and are never re-sorted; the slice is taken
     off the front of that order, so it is the model's own top twelve.
 
+    Fewer than `DISPLAY_LIMIT` is a normal answer, not an empty state: the repo
+    suppresses the shows this reader already has a record for (NEU-1175), and the
+    25-asked-for headroom is what absorbs that. Nothing is backfilled from an
+    older set to refill the grid.
+
     `hydrate_my_ratings` is deliberately not called, unlike every other `/me`
-    list route, so `ShowSummary.my_rating` is always null here. A show the user
-    has rated is a show they have a record for, and §8's never-recommend filter
-    is the union of exactly those records — so a non-null value would mean the
-    exclusion had failed rather than that the field was worth filling. Adding
-    the query would spend a round trip to display nothing.
+    list route, so `ShowSummary.my_rating` is always null here — and the reason is
+    now stronger rather than weaker. A show the user has rated is a show they have
+    a record for, so §8's never-recommend rule excludes it at generation time
+    *and*, for a rating made since, the repo suppresses it at read time. A
+    non-null value would mean the rule had failed at both ends, and the round trip
+    would still display nothing.
     """
     rows = (await recommendation_repo.list_current_recommendations(db, user_id=user_id))[
         :DISPLAY_LIMIT
