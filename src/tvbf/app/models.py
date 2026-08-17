@@ -630,9 +630,14 @@ class UserRecommendation(Base):
     and the tombstone/adult filtering that happens at *read* time, since a set
     generated in March can name a show tombstoned in June.
 
-    `reason` is the first LLM-authored prose TVBF shows users. It renders as
-    plain text, never markup, and it can assert things about a show that are
-    untrue.
+    `reason` is model-authored prose. It is **written and never served**: the
+    card has one truncated 10px line for it, which is not room for a sentence,
+    so `RecommendationOut` stopped carrying it. It stays here because it is
+    where the model puts its explanations, and taking that away from the prompt
+    is what pushes them into `title` — see `recommendations/prompt.INSTRUCTION`
+    for the run that proved it. Treat the stored value as diagnostic, not as
+    content: it can assert things about a show that are untrue, and nothing
+    renders it.
     """
 
     __tablename__ = "user_recommendation"

@@ -219,24 +219,32 @@ class SeasonProgress(BaseModel):
 
 
 class RecommendationOut(ShowSummary):
-    """One suggestion: a `ShowSummary` **flattened**, plus the two fields that
-    make it a recommendation rather than a search result (NEU-1112).
+    """One suggestion: a `ShowSummary` **flattened**, plus its rank (NEU-1112).
 
     Flattened rather than nested under a `show` key, unlike every other entry
     shape in this module. Those carry per-show *progress* — watched counts, a
     next episode — which is a second object with its own identity; a
-    recommendation carries a sentence and a position, and nesting would cost
-    the frontend a wrapper type for nothing when `ShowGrid` and `ShowCard`
-    already take a `ShowSummary`.
+    recommendation carries a position, and nesting would cost the frontend a
+    wrapper type for nothing when `ShowGrid` and `ShowCard` already take a
+    `ShowSummary`.
 
-    `reason` is model-authored prose and renders as plain text, never markup
-    (project spec §7). `rank` is the model's own ordering, carried through so a
-    client can display it and so "the order is the ranking" survives a client
-    that re-serializes the list.
+    `rank` is the model's own ordering, carried through so a client can display
+    it and so "the order is the ranking" survives a client that re-serializes
+    the list.
+
+    **`reason` is deliberately not here, and it is still asked for and still
+    stored.** The card has one truncated 10px line for it, which is not enough
+    room for a sentence, so serving it only put model-authored prose on the wire
+    for nobody to read. It stays in `app.user_recommendation.reason` and in the
+    set's `raw_response`, because removing it from the *prompt* is a different
+    and riskier change: `reason` is where the model puts its explanations, and a
+    2026-08-17 production run showed what happens when it has nowhere to put
+    them — they land in `title`, which resolves to nothing (see
+    `recommendations/prompt.INSTRUCTION`). Cheap insurance at ~1,100 output
+    tokens a call.
     """
 
     rank: int
-    reason: str
 
 
 class RecommendationsOut(BaseModel):

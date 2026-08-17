@@ -53,26 +53,37 @@ GET /me/recommendations
       "matched_aka": null,
       "rating_average": 8.4,
       "my_rating": null,
-      "rank": 1,
-      "reason": "One sentence of model-authored prose."
+      "rank": 1
     }
   ]
 }
 ```
 
-Each item is **`ShowSummary` flattened, plus `rank` and `reason`**. Flattened
-rather than nested under a `show` key, unlike `MyShowEntry` / `WatchNextEntry` /
+Each item is **`ShowSummary` flattened, plus `rank`**. Flattened rather than
+nested under a `show` key, unlike `MyShowEntry` / `WatchNextEntry` /
 `UpcomingEntry`: those carry per-show *progress*, which is a second object with
-its own identity, where a recommendation carries a sentence and a position.
+its own identity, where a recommendation carries a position.
 `ShowSummary` already mirrors exactly across both repos, so the frontend adds one
 type and `ShowGrid` / `ShowCard` stay usable unchanged.
 
 * **`rank`** is the model's own ordering, 1-based, and the array is returned in
   it. The server never re-sorts, and neither should a client — the ranking is the
   only ordering in the payload that carries information.
-* **`reason`** is model-authored prose. It **renders as plain text, never
-  markup** (project spec §7). It can assert things about a show that are untrue,
-  and can describe a show subtly different from the one resolution landed on.
+
+### `reason` was removed from this payload on 2026-08-17
+
+It used to be here, described as model-authored prose rendering as plain text.
+The card has **one truncated 10px line** for it — not room for a sentence — so
+serving it put prose on the wire that nothing displayed.
+
+It is **still asked for and still stored** (`app.user_recommendation.reason`,
+plus the whole answer in `user_recommendation_set.raw_response`), because
+removing it from the *prompt* is a separate and riskier change: `reason` is
+where the model puts its explanations, and a production run that day showed what
+happens when it has nowhere to put them — they land in `title`, which resolves
+to nothing. Treat the stored value as diagnostic rather than as content.
+
+A client must not reintroduce `reason`; it is not served.
 
 Ranks are the stored ranks and are therefore **not guaranteed contiguous or to
 start at 1**: a filtered row (§3) takes its rank with it. A client displaying

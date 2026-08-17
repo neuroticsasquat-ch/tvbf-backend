@@ -61,7 +61,6 @@ async def list_recommendations(db: AsyncSession, *, user_id: UUID) -> Recommenda
                     networks_by_show=networks_by_show,
                 ).model_dump(),
                 rank=rec.rank,
-                reason=rec.reason,
             )
             for rec, show in rows
         ]
