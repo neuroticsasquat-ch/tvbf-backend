@@ -52,10 +52,14 @@ the same call `jobs/scheduled.run_scheduled_delta` makes for its in-flight guard
   and no calls at all, which is the half §5.4 actually cares about.
 - **`failed`** — the call did not produce a usable answer. Isolated: logged,
   recorded, and the pass moves to the next user.
-- **`no_matches`** — the model answered and *nothing* resolved. Deliberately not
+- **`no_matches`** — the model answered and *no row survived*. Deliberately not
   `succeeded`: reads take the newest succeeded set, so this leaves last week's
   recommendations standing rather than silently emptying the section, and makes
-  a systematic resolution break visible instead of looking like a quiet week.
+  a systematic break visible instead of looking like a quiet week. **The status
+  does not say which break**, because three different losses reach it — nothing
+  resolved, everything was already the user's, everything collapsed onto one
+  show — so the log spells the breakdown out. Both of the first two have now
+  happened in production a day apart.
 - **`succeeded`** — at least one title resolved. Resolution failures are not run
   failures (§10.1); 25 titles returning 19 rows is a success with 19 rows, on
   exactly the terms NEU-1043 treats unmatched shows as expected output.
@@ -290,6 +294,26 @@ catalog genuinely covers badly — it takes a majority of titles failing, which 
 a property of the answer rather than of the account.
 """
 
+IGNORED_EXCLUSION_FRACTION = 0.9
+"""Above this share of named titles being ones the user already has, ask again.
+
+**A second way to answer nothing while satisfying every structural rule**, and
+the one that actually happened next: on 2026-08-17 at 16:00 UTC, the run
+following the title fix returned 25 clean bare titles of which **25 of 25** were
+already in the payload it had been given. Everything resolved, so the unresolved
+rule above saw a perfect answer; everything was then dropped by §8's filter, and
+the user was recorded `no_matches` while last week's set stayed up.
+
+The threshold is deliberately far higher than the unresolved one. Some overlap is
+not disobedience: resolution is fold-exact with a ±1 year window, so a
+model-authored title can legitimately land on a *different* show the user
+happens to have. A large library makes that more likely, which is exactly why
+NEU-1109's first version kept exclusions out of the believability question
+altogether. Nine tenths is not that — it is the instruction having been ignored
+wholesale, which one more call can fix and which no amount of library size
+explains.
+"""
+
 MIN_JUDGED_SUGGESTIONS = 4
 """Below this many named titles, a fraction is noise and the answer stands.
 
@@ -315,6 +339,16 @@ class _Attempt:
     dropped: list[Any]
     named: int
     """How many suggestions §7's parser accepted, before any of them resolved."""
+    excluded: int
+    """Named titles that resolved onto a show the user already has (§8).
+
+    Counted rather than only logged because it is the second thing that can make
+    an answer unbelievable — see `IGNORED_EXCLUSION_FRACTION`. Kept apart from
+    `duplicates` because two titles naming one show is the model repeating
+    itself, not the model ignoring the exclusion rule.
+    """
+    duplicates: int
+    """Named titles that resolved onto a show an earlier one already named."""
 
     @property
     def resolved(self) -> int:
@@ -329,10 +363,25 @@ class _Attempt:
 
     @property
     def believable(self) -> bool:
-        """Whether enough of what the model named could be found to be believed."""
+        """Whether the answer is worth believing, on both counts.
+
+        Two independent ways to fail, both settled only after resolution: most of
+        what was named could not be found, or most of it was the user's own
+        library handed back. A short answer is judged on neither — see
+        `MIN_JUDGED_SUGGESTIONS`.
+        """
         if self.named < MIN_JUDGED_SUGGESTIONS:
             return True
-        return len(self.unresolved) <= UNBELIEVABLE_UNRESOLVED_FRACTION * self.named
+        if len(self.unresolved) > UNBELIEVABLE_UNRESOLVED_FRACTION * self.named:
+            return False
+        return self.excluded <= IGNORED_EXCLUSION_FRACTION * self.named
+
+    @property
+    def complaint(self) -> str:
+        """Why this answer is not believable, for the log that asks again."""
+        if len(self.unresolved) > UNBELIEVABLE_UNRESOLVED_FRACTION * self.named:
+            return f"only {self.resolved} of {self.named} titles could be found"
+        return f"{self.excluded} of {self.named} titles were series the user already has"
 
 
 async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePayload) -> _Attempt:
@@ -383,11 +432,7 @@ async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePaylo
     if first.believable:
         return first
 
-    log.warning(
-        "only %d of %d titles the model named could be found; asking once more",
-        first.resolved,
-        first.named,
-    )
+    log.warning("%s; asking once more", first.complaint)
     try:
         second = await _attempt(client, db, prompt, payload)
     except LLMError as exc:
@@ -414,20 +459,37 @@ async def _attempt(
     """One call, read through §7's parser and then through resolution."""
     response = await client.complete_json(prompt)
     suggestions, dropped = parse_suggestions(response.parsed)
-    rows, unresolved = await _resolve_all(db, suggestions, payload)
+    resolution_result = await _resolve_all(db, suggestions, payload)
     return _Attempt(
         response=response,
-        rows=rows,
-        unresolved=unresolved,
+        rows=resolution_result.rows,
+        unresolved=resolution_result.unresolved,
         dropped=dropped,
         named=len(suggestions),
+        excluded=resolution_result.excluded,
+        duplicates=resolution_result.duplicates,
     )
+
+
+@dataclass(frozen=True, slots=True)
+class _Resolved:
+    """What one answer's titles became: rows, and a reason for each one lost.
+
+    The three losses are counted apart rather than summed because they are three
+    different complaints about the model, and `_Attempt.believable` acts on two of
+    them differently — see `IGNORED_EXCLUSION_FRACTION`.
+    """
+
+    rows: list[recommendation_repo.NewRecommendation]
+    unresolved: list[str]
+    excluded: int
+    duplicates: int
 
 
 async def _resolve_all(
     db: AsyncSession, suggestions: Sequence[Suggestion], payload: TastePayload
-) -> tuple[list[recommendation_repo.NewRecommendation], list[str]]:
-    """Resolved rows in the model's own order, and the titles that resolved to nothing.
+) -> _Resolved:
+    """Resolved rows in the model's own order, and what each lost title cost.
 
     Two filters ride along, and both are the caller's rather than
     `resolution.resolve`'s (see that module):
@@ -443,6 +505,8 @@ async def _resolve_all(
     """
     rows: list[recommendation_repo.NewRecommendation] = []
     unresolved: list[str] = []
+    excluded = 0
+    duplicates = 0
     seen: set[int] = set()
     for suggestion in suggestions:
         resolved = await resolution.resolve(
@@ -458,6 +522,7 @@ async def _resolve_all(
             log.info(
                 "dropped %r — the user already has show %d", suggestion.title, resolved.show_id
             )
+            excluded += 1
             continue
         if resolved.show_id in seen:
             log.info(
@@ -465,6 +530,7 @@ async def _resolve_all(
                 suggestion.title,
                 resolved.show_id,
             )
+            duplicates += 1
             continue
         seen.add(resolved.show_id)
         rows.append(
@@ -474,7 +540,7 @@ async def _resolve_all(
                 matched_via=resolved.matched_via,
             )
         )
-    return rows, unresolved
+    return _Resolved(rows=rows, unresolved=unresolved, excluded=excluded, duplicates=duplicates)
 
 
 async def _generate_for_user(
@@ -577,10 +643,18 @@ async def _generate_for_user(
             response.output_tokens,
         )
     else:
+        # Spelled out because the status cannot: `no_matches` is written whenever
+        # no row survived, and "we could not find them" and "the user already had
+        # every one" are different problems with different fixes.
         log.warning(
-            "user %s: nothing the model named resolved — recorded as %s, so their "
-            "current recommendations stand",
+            "user %s: none of %d named titles became a row (%d unresolved, %d already "
+            "theirs, %d duplicated) — recorded as %s, so their current "
+            "recommendations stand",
             user_id,
+            attempt.named,
+            len(attempt.unresolved),
+            attempt.excluded,
+            attempt.duplicates,
             SET_STATUS_NO_MATCHES,
         )
     return UserOutcome(status=status, unresolved=len(attempt.unresolved))
@@ -732,14 +806,20 @@ def _report(user_id: UUID, model: str, payload: TastePayload) -> None:
         # INTERESTED reports what the cap dropped, because the rows cannot say:
         # exactly 50 reads the same whether the user bookmarked 50 shows or 300,
         # and the cap is one of the rules this run exists to check.
+        # The two exclusion numbers are both here on purpose: the total is what
+        # §8's filter enforces, and the `exclude` group is the part the model can
+        # actually see. They were the same number only after PROMPT_VERSION 3 gave
+        # the payload that group — before it, the difference was the model being
+        # asked to avoid rows it was never shown.
         "%d liked, %d not liked, %d interested (of %d before the %d-row cap); "
-        "%d shows excluded from recommendations",
+        "%d shows excluded from recommendations, %d of them named in `exclude`",
         payload.liked_count,
         len(document["not_liked"]),
         payload.interested_count,
         payload.interested_before_cap,
         INTERESTED_CAP,
         len(payload.excluded_show_ids),
+        payload.excluded_row_count,
     )
     verdict = "meets" if payload.meets_floor else "below"
     log.info(

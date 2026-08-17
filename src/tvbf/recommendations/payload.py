@@ -82,7 +82,8 @@ the verdict either way — it caps at 50 and the floor is 10.
 
 import hashlib
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID
@@ -92,7 +93,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.app.repos import episode_rating_repo, show_repo
 from tvbf.recommendations.taste import TasteLabel, TasteSignal, taste_for_user
 
-PROMPT_VERSION = "2"
+PROMPT_VERSION = "3"
 """The version of the prompt this payload is hashed against (§9.1).
 
 It lives here because the hash needs one and the hash is this module's. **Bump it
@@ -102,7 +103,15 @@ instead of never.
 """
 
 COLUMNS = ("title", "year", "pct", "stars")
-"""The one header the payload declares, in the order every row is written."""
+"""The header for the three taste groups, in the order every row is written."""
+
+EXCLUDE_COLUMNS = ("title", "year")
+"""The header for the `exclude` group, which carries no viewing data.
+
+A second shape rather than padding these rows out to `COLUMNS`: there is nothing
+to say about `pct` or `stars` for a show that reached no tier, and two nulls a row
+across a long tail is real tokens spent asserting nothing.
+"""
 
 INTERESTED_CAP = 50
 """How many INTERESTED rows the payload carries, most recently added first.
@@ -118,6 +127,7 @@ GENERATION_FLOOR = 10
 """The weighted total a user needs before anything is generated for them."""
 
 _Row = list[str | int | float | None]
+_ExcludeRow = list[str | int | None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -137,6 +147,13 @@ class TastePayload:
     invisible is one nobody can check.
     """
     excluded_show_ids: frozenset[int]
+    excluded_row_count: int
+    """How many shows the `exclude` group names — those in no tier group.
+
+    Reported rather than derived so `--dry-run` can say how much of the exclusion
+    set the model can actually see. It is **not** `len(excluded_show_ids)`: the
+    tier rows are excluded too, and they are visible as themselves.
+    """
 
     @property
     def meets_floor(self) -> bool:
@@ -144,8 +161,11 @@ class TastePayload:
         return LIKED_WEIGHT * self.liked_count + self.interested_count >= GENERATION_FLOOR
 
 
-def to_canonical_json(rows: Mapping[TasteLabel, list[_Row]]) -> str:
-    """The payload's exact bytes: one header, then the three groups in tier order.
+def to_canonical_json(
+    rows: Mapping[TasteLabel, list[_Row]],
+    excluded_rows: Sequence[_ExcludeRow] = (),
+) -> str:
+    """The payload's exact bytes: the headers, the three tier groups, then `exclude`.
 
     Every group is written whether or not it has rows, and the separators carry no
     incidental whitespace — the hash is over these bytes, so both are load-bearing
@@ -155,9 +175,11 @@ def to_canonical_json(rows: Mapping[TasteLabel, list[_Row]]) -> str:
     return json.dumps(
         {
             "columns": list(COLUMNS),
+            "exclude_columns": list(EXCLUDE_COLUMNS),
             TasteLabel.LIKED.value: rows.get(TasteLabel.LIKED, []),
             TasteLabel.NOT_LIKED.value: rows.get(TasteLabel.NOT_LIKED, []),
             TasteLabel.INTERESTED.value: rows.get(TasteLabel.INTERESTED, []),
+            "exclude": list(excluded_rows),
         },
         separators=(",", ":"),
         ensure_ascii=False,
@@ -195,12 +217,15 @@ async def build_payload(
     excluded = frozenset(signals) | frozenset(episode_rated_show_ids)
 
     grouped, interested_before_cap = _group(signals)
-    titles = await show_repo.titles_for_ids(
-        db, sorted({sid for ids in grouped.values() for sid in ids})
-    )
+    shown_ids = {sid for ids in grouped.values() for sid in ids}
+    # Titles for the whole exclusion set, not just the tiers: the `exclude` group
+    # needs a title for every show the model must not name, and one query over
+    # the union is cheaper than two.
+    titles = await show_repo.titles_for_ids(db, sorted(shown_ids | excluded))
     rows = {label: _rows(ids, signals, titles) for label, ids in grouped.items()}
+    excluded_rows = _exclude_rows(excluded - shown_ids, titles)
 
-    canonical_json = to_canonical_json(rows)
+    canonical_json = to_canonical_json(rows, excluded_rows)
 
     return TastePayload(
         json=canonical_json,
@@ -211,6 +236,7 @@ async def build_payload(
         interested_count=len(rows[TasteLabel.INTERESTED]),
         interested_before_cap=interested_before_cap,
         excluded_show_ids=excluded,
+        excluded_row_count=len(excluded_rows),
     )
 
 
@@ -268,6 +294,32 @@ def _rows(
         ]
         for sid in present
     ]
+
+
+def _exclude_rows(
+    show_ids: AbstractSet[int],
+    titles: dict[int, show_repo.ShowTitle],
+) -> list[_ExcludeRow]:
+    """The `exclude` group: every show the model must not name that no tier shows.
+
+    These are the shows §8's filter drops that the payload otherwise never
+    mentions — the INTERESTED cap's overflow, a show carrying only an episode
+    rating, a show no tier rule covers. Before this group existed the model could
+    not avoid them, because it was never told they were there, and every one it
+    named was silently discarded after the call. A 2026-08-17 production run named
+    25 of 25 titles that were already in its input and stored none of them.
+
+    Sorted on `_rows`' key so the order is total: the hash is over these bytes,
+    and a query-plan change reordering them would regenerate every user for
+    nothing.
+
+    A show with no `catalog.show` row is dropped, on `_rows`' reasoning — there is
+    no title to name it with, and it stays in `excluded_show_ids` regardless,
+    which is the half that matters.
+    """
+    present = [sid for sid in show_ids if sid in titles]
+    present.sort(key=lambda sid: (titles[sid].folded_name, _year_key(titles[sid].year), sid))
+    return [[titles[sid].name, titles[sid].year] for sid in present]
 
 
 def _year_key(year: int | None) -> int:

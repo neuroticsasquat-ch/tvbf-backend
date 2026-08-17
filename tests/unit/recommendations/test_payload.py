@@ -9,6 +9,7 @@ import pytest
 
 from tvbf.recommendations.payload import (
     COLUMNS,
+    EXCLUDE_COLUMNS,
     GENERATION_FLOOR,
     INTERESTED_CAP,
     LIKED_WEIGHT,
@@ -27,6 +28,7 @@ def _payload(*, liked: int = 0, interested: int = 0) -> TastePayload:
         interested_count=interested,
         interested_before_cap=interested,
         excluded_show_ids=frozenset(),
+        excluded_row_count=0,
     )
 
 
@@ -90,20 +92,31 @@ class TestTheCanonicalForm:
                 TasteLabel.LIKED: [["Game of Thrones", 2011, 100, 4.5]],
                 TasteLabel.NOT_LIKED: [["Emily in Paris", 2020, 12, None]],
                 TasteLabel.INTERESTED: [["Dark", 2017, 0, None]],
-            }
+            },
+            [["Slow Horses", 2022]],
         ) == (
             '{"columns":["title","year","pct","stars"],'
+            '"exclude_columns":["title","year"],'
             '"liked":[["Game of Thrones",2011,100,4.5]],'
             '"not_liked":[["Emily in Paris",2020,12,null]],'
-            '"interested":[["Dark",2017,0,null]]}'
+            '"interested":[["Dark",2017,0,null]],'
+            '"exclude":[["Slow Horses",2022]]}'
         )
 
     def test_an_empty_tier_is_still_written(self):
         # A shape that varies with the data is one the model has to infer and one
-        # the hash would churn on.
+        # the hash would churn on. `exclude` is written empty on the same terms.
         assert to_canonical_json({}) == (
-            '{"columns":["title","year","pct","stars"],"liked":[],"not_liked":[],"interested":[]}'
+            '{"columns":["title","year","pct","stars"],'
+            '"exclude_columns":["title","year"],'
+            '"liked":[],"not_liked":[],"interested":[],"exclude":[]}'
         )
+
+    def test_the_exclude_group_carries_no_viewing_data(self):
+        """Two nulls a row across a long tail is real tokens asserting nothing,
+        and there is nothing to assert: an excluded show reached no tier."""
+        assert list(EXCLUDE_COLUMNS) == ["title", "year"]
+        assert '"exclude":[["Dark",2017]]' in to_canonical_json({}, [["Dark", 2017]])
 
     def test_a_non_ascii_title_stays_itself(self):
         assert '"Shōgun"' in to_canonical_json({TasteLabel.LIKED: [["Shōgun", 2024, 100, None]]})

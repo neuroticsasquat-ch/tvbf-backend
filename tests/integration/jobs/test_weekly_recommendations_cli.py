@@ -86,7 +86,16 @@ class TestWhatItPrints:
         assert await run(_args(user.id)) == 0
 
         document = json.loads(capsys.readouterr().out)
-        assert set(document) == {"columns", "liked", "not_liked", "interested"}
+        assert set(document) == {
+            "columns",
+            "exclude_columns",
+            "liked",
+            "not_liked",
+            "interested",
+            # Written whether or not it has entries, like every tier group: a
+            # shape that varies with the data is one the model has to infer.
+            "exclude",
+        }
         assert len(document["interested"]) == GENERATION_FLOOR
 
     async def test_stdout_is_the_exact_bytes_the_hash_covers(
