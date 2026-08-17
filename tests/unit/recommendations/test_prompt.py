@@ -253,8 +253,10 @@ class TestRecoveringADressedTitle:
     )
     def test_a_span_that_cannot_be_read_yields_nothing_rather_than_a_guess(self, raw):
         """Every failure mode is closed. `The Americans' sibling The Spy` is the
-        one worth naming: two apostrophes where the second never opened, and the
-        answer is no candidate rather than `" sibling The Spy"`."""
+        one worth naming: its single apostrophe is a possessive with nothing to
+        its left to partner, so the answer is no candidate at all rather than
+        `The Americans` — which is a real show, and the one the model was
+        comparing *against*."""
         assert quoted_candidate(raw) is None
 
     def test_a_candidate_is_never_the_raw_title_it_came_from(self):

@@ -528,6 +528,14 @@ async def _resolve_all(
     **The duplicates.** Two model-authored titles can resolve to one show, and
     `uq_user_recommendation_set_rank` would not catch it — a set holding the same
     show twice is two cards of the same thing in a grid of twelve.
+
+    One repair rides along too, and it is the caller's for the same reason
+    (NEU-1173): a title the model dressed with a comparison resolves to nothing
+    as written, so `prompt.quoted_candidate` reads the recommendation back out of
+    its quotes and it goes through the identical `resolve` with the identical
+    year. **Only after the title as written has failed** — a show whose real name
+    carries quotes matches itself above and never reaches it — and a recovered
+    row then passes both filters above exactly as any other row does.
     """
     rows: list[recommendation_repo.NewRecommendation] = []
     unresolved: list[str] = []
@@ -695,9 +703,14 @@ async def _generate_for_user(
         recommendations=rows,
     )
     if rows:
+        # "of the named titles", not "of the stored rows": `recovered` is counted
+        # before the exclusion and duplicate filters, because it measures the
+        # model's compliance rather than the set. A recovered title that is then
+        # dropped as one the user already has would otherwise make this line read
+        # as though a stored row carried a `recovered_from` it does not.
         log.info(
-            "user %s: %d of %d recommendations stored, %d of them recovered from a "
-            "dressed title (%d input / %d output tokens)",
+            "user %s: %d of %d recommendations stored, %d of the named titles "
+            "recovered from a dressed one (%d input / %d output tokens)",
             user_id,
             len(rows),
             attempt.named,
