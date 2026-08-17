@@ -15,7 +15,12 @@ import pytest
 from tvbf.app.models import UserShowWatch
 from tvbf.app.repos import episode_rating_repo, episode_watch_repo, show_rating_repo
 from tvbf.catalog.models import Episode, Show
-from tvbf.recommendations.payload import INTERESTED_CAP, build_payload, payload_hash
+from tvbf.recommendations.payload import (
+    INTERESTED_CAP,
+    PROMPT_VERSION,
+    build_payload,
+    payload_hash,
+)
 
 MODEL = "deepseek-ai/DeepSeek-V4-Pro-0813"
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
@@ -180,20 +185,31 @@ class TestRowOrder:
     async def test_a_different_model_or_prompt_version_moves_the_hash(
         self, session, make_user, shows
     ):
-        """Shipping a prompt change re-runs everyone exactly once (§9.1)."""
+        """Shipping a prompt change re-runs everyone exactly once (§9.1).
+
+        Both versions are read off `PROMPT_VERSION` rather than written out: this
+        test pinned the literal `"1"` and used `"2"` as its counter-example, so
+        the first bump failed it on the very behaviour it exists to assert.
+        """
         user = await make_user()
         await _track(session, user.id, THIRD)
 
         payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
 
         assert payload.hash == payload_hash(
-            prompt_version="1", model=MODEL, canonical_json=payload.json
+            prompt_version=PROMPT_VERSION, model=MODEL, canonical_json=payload.json
         )
         assert (
             await build_payload(session, user_id=user.id, model="other", now=NOW)
         ).hash != payload.hash
         assert (
-            await build_payload(session, user_id=user.id, model=MODEL, prompt_version="2", now=NOW)
+            await build_payload(
+                session,
+                user_id=user.id,
+                model=MODEL,
+                prompt_version=f"{PROMPT_VERSION}-next",
+                now=NOW,
+            )
         ).hash != payload.hash
 
 

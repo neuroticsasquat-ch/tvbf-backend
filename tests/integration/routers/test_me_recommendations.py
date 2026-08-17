@@ -87,7 +87,7 @@ async def test_response_is_not_cached(authed_client):
 
 
 @pytest.mark.asyncio
-async def test_returns_show_summary_flattened_with_rank_and_reason(authed_client, session):
+async def test_returns_show_summary_flattened_with_its_rank(authed_client, session):
     user = authed_client.user  # type: ignore[attr-defined]
     show = await _show(
         session,
@@ -114,9 +114,12 @@ async def test_returns_show_summary_flattened_with_rank_and_reason(authed_client
     r = await authed_client.get("/me/recommendations")
     assert r.status_code == 200
     (item,) = r.json()["recommendations"]
-    # The two added fields...
+    # The one added field...
     assert item["rank"] == 1
-    assert item["reason"] == "Because it is about work."
+    # ...and `reason` is written but never served: the card has one truncated
+    # 10px line for it, which is not room for a sentence. It is still stored, so
+    # a client cannot be allowed to start reading it off this payload.
+    assert "reason" not in item
     # ...on a flattened ShowSummary, not a nested one.
     assert "show" not in item
     assert item["id"] == show.id

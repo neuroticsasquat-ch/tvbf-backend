@@ -108,7 +108,13 @@ from tvbf.db import SessionLocal, engine
 from tvbf.jobs.scheduled import ping
 from tvbf.llm.client import OpenAICompatClient
 from tvbf.llm.registry import DEEPINFRA
-from tvbf.llm.types import LLMResponse, LLMResponseInvalid, UnsupportedPromptError
+from tvbf.llm.types import (
+    LLMError,
+    LLMResponse,
+    LLMResponseInvalid,
+    Prompt,
+    UnsupportedPromptError,
+)
 from tvbf.logging_config import configure_logging
 from tvbf.recommendations import resolution
 from tvbf.recommendations.payload import (
@@ -265,40 +271,157 @@ def _client(settings: Settings, model: str) -> OpenAICompatClient:
     )
 
 
-async def _ask(
-    client: OpenAICompatClient, payload: TastePayload
-) -> tuple[LLMResponse, list[Suggestion], list[Any]]:
-    """One user's call **and the reading of its answer**, retried exactly once.
+UNBELIEVABLE_UNRESOLVED_FRACTION = 0.5
+"""Above this share of named titles resolving to nothing, ask once more.
 
-    `LLMResponseInvalid` only — a body that did not decode, decoded to something
-    that is not an object, or decoded to an object that is not the §7 output
-    contract. Malformed model JSON is frequently a one-off and a second call
-    costs a fraction of a cent.
+**A response can satisfy §7 structurally and still be unusable.** On 2026-08-17
+a production run stored 5 of 25 because the model wrote its reasoning into
+`title` (`prompt.INSTRUCTION` records the answer verbatim); every entry carried a
+title, a year and a reason, so `parse_suggestions` dropped none of them and the
+existing retry never fired. What the failure actually looks like is titles that
+match nothing — which is why the threshold is measured on *resolution* and not on
+the parse.
 
-    **The parse is inside the retried block, and that is the whole reason this
-    function returns a triple** rather than just the response. `parse_suggestions`
-    reaches the same verdict as the client for a body missing `recommendations`,
-    and a retry that covered only the client's half would leave the identical
-    failure — "a response arrived and could not be believed" — retried or not
-    depending on which layer noticed it.
+Half is far above anything observed: NEU-1107's recorded fixtures put unresolved
+at 1 of 25 on a clean profile **and** on a deliberately obscure international one
+where the AKA tier does the work, and the production run above resolved 4 of 25
+the following day at 1 of 25. So this cannot fire on a user whose taste the
+catalog genuinely covers badly — it takes a majority of titles failing, which is
+a property of the answer rather than of the account.
+"""
 
-    `LLMRequestFailed` is deliberately **not** retried: the client has already
-    walked its backoff curve, so a failure that reaches here has survived it and
-    asking again immediately buys the same failure while spending this user's
-    turn on it (`llm/types`).
+MIN_JUDGED_SUGGESTIONS = 4
+"""Below this many named titles, a fraction is noise and the answer stands.
+
+Two suggestions of which one resolves is 50%, and it is also a completely
+ordinary answer to a small catalog. The judgement needs a denominator before it
+means anything, and a short answer is `RECOMMENDATION_COUNT`'s problem rather
+than this one's.
+"""
+
+
+@dataclass(frozen=True, slots=True)
+class _Attempt:
+    """One call to the model, read all the way through to resolved rows.
+
+    Resolution is part of an attempt rather than something the caller does
+    afterwards, because `believable` is a question about the answer that only
+    resolution can settle — see `_ask`.
+    """
+
+    response: LLMResponse
+    rows: list[recommendation_repo.NewRecommendation]
+    unresolved: list[str]
+    dropped: list[Any]
+    named: int
+    """How many suggestions §7's parser accepted, before any of them resolved."""
+
+    @property
+    def resolved(self) -> int:
+        """Named titles that found a show — including ones later filtered out.
+
+        Not `len(self.rows)`: the exclusion and duplicate filters are the model
+        echoing the library back, which is a different complaint from a title
+        that matches nothing, and folding them together would let a user with a
+        large library trip the retry every week.
+        """
+        return self.named - len(self.unresolved)
+
+    @property
+    def believable(self) -> bool:
+        """Whether enough of what the model named could be found to be believed."""
+        if self.named < MIN_JUDGED_SUGGESTIONS:
+            return True
+        return len(self.unresolved) <= UNBELIEVABLE_UNRESOLVED_FRACTION * self.named
+
+
+async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePayload) -> _Attempt:
+    """One user's call **and the reading of its answer**, retried at most once.
+
+    Two failures share the one retry, because they are the same complaint —
+    "a response arrived and could not be believed" — reached at different depths:
+
+    `LLMResponseInvalid`, a body that did not decode, decoded to something that
+    is not an object, or decoded to an object that is not the §7 output contract.
+    Malformed model JSON is frequently a one-off and a second call costs a
+    fraction of a cent.
+
+    **Most of the titles resolving to nothing**, which is that same verdict one
+    layer later still — and the reason resolution happens inside an attempt
+    rather than after it. `parse_suggestions` already reaches the client's
+    verdict for a body missing `recommendations`, and NEU-1109 put the parse
+    inside the retried block so the identical failure was not retried-or-not
+    depending on which layer noticed it. A response whose titles carry prose is
+    the third such layer, and the argument is unchanged.
+
+    **Two calls is the ceiling, whichever verdict spent the second one.** The
+    retried attempt is not judged again — a third call would be this job walking
+    its own backoff curve on a provider that has already answered twice.
+
+    The two differ in **what a bad second answer costs**, and deliberately:
+
+    - A second unbelievable *body* raises, and the user is recorded `failed`.
+      That is NEU-1109's contract and there is nothing to keep.
+    - A second answer that resolves no better is **discarded, and the first is
+      kept**. Here there *is* something to keep: 5 rows beat a `failed` set, and
+      a provider failure on the second call must not cost a user the answer the
+      first one already produced. So the better of the two is stored and this
+      path can only improve on the status quo.
+
+    `LLMRequestFailed` is deliberately **not** retried on the first attempt: the
+    client has already walked its backoff curve, so a failure that reaches here
+    has survived it and asking again immediately buys the same failure while
+    spending this user's turn on it (`llm/types`).
     """
     prompt = build_prompt(payload.json)
     try:
-        return _read(await client.complete_json(prompt))
+        first = await _attempt(client, db, prompt, payload)
     except LLMResponseInvalid as exc:
         log.warning("the model's answer could not be believed (%s); asking once more", exc)
-        return _read(await client.complete_json(prompt))
+        return await _attempt(client, db, prompt, payload)
+
+    if first.believable:
+        return first
+
+    log.warning(
+        "only %d of %d titles the model named could be found; asking once more",
+        first.resolved,
+        first.named,
+    )
+    try:
+        second = await _attempt(client, db, prompt, payload)
+    except LLMError as exc:
+        # Every `LLMError`, not just the invalid ones: the first answer is
+        # already usable, so nothing the second call does may take it away.
+        log.warning("the second answer did not arrive (%s); keeping the first", exc)
+        return first
+    if len(second.rows) > len(first.rows):
+        return second
+    log.info(
+        "the second answer resolved no better (%d rows against %d); keeping the first",
+        len(second.rows),
+        len(first.rows),
+    )
+    return first
 
 
-def _read(response: LLMResponse) -> tuple[LLMResponse, list[Suggestion], list[Any]]:
-    """The response beside what §7's contract says it holds."""
+async def _attempt(
+    client: OpenAICompatClient,
+    db: AsyncSession,
+    prompt: Prompt,
+    payload: TastePayload,
+) -> _Attempt:
+    """One call, read through §7's parser and then through resolution."""
+    response = await client.complete_json(prompt)
     suggestions, dropped = parse_suggestions(response.parsed)
-    return response, suggestions, dropped
+    rows, unresolved = await _resolve_all(db, suggestions, payload)
+    return _Attempt(
+        response=response,
+        rows=rows,
+        unresolved=unresolved,
+        dropped=dropped,
+        named=len(suggestions),
+    )
 
 
 async def _resolve_all(
@@ -406,24 +529,29 @@ async def _generate_for_user(
         user_id,
         estimate_tokens(payload.json),
     )
-    response, suggestions, dropped = await _ask(client, payload)
-    if dropped:
+    attempt = await _ask(client, db, payload)
+    response, rows = attempt.response, attempt.rows
+    if attempt.dropped:
         # §7: a recommendation without a `release_year` is dropped, because the
         # year is the only disambiguator resolution has. Logged rather than
         # counted silently — it is preserved in `raw_response` either way.
         log.warning(
             "dropped %d of %d entries that were not the output contract: %s",
-            len(dropped),
-            len(suggestions) + len(dropped),
-            describe_dropped(dropped),
+            len(attempt.dropped),
+            attempt.named + len(attempt.dropped),
+            describe_dropped(attempt.dropped),
         )
 
-    rows, unresolved = await _resolve_all(db, suggestions, payload)
-    if unresolved:
+    if attempt.unresolved:
         # A resolution failure is useful signal, not a defect (§8): an unmatched
         # title is either a hallucination or a genuine catalog gap, and both
         # belong in the logs.
-        log.info("user %s: %d titles resolved to nothing: %s", user_id, len(unresolved), unresolved)
+        log.info(
+            "user %s: %d titles resolved to nothing: %s",
+            user_id,
+            len(attempt.unresolved),
+            attempt.unresolved,
+        )
 
     status = SET_STATUS_SUCCEEDED if rows else SET_STATUS_NO_MATCHES
     await recommendation_repo.write_set(
@@ -444,7 +572,7 @@ async def _generate_for_user(
             "user %s: %d of %d recommendations stored (%d input / %d output tokens)",
             user_id,
             len(rows),
-            len(suggestions),
+            attempt.named,
             response.input_tokens,
             response.output_tokens,
         )
@@ -455,7 +583,7 @@ async def _generate_for_user(
             user_id,
             SET_STATUS_NO_MATCHES,
         )
-    return UserOutcome(status=status, unresolved=len(unresolved))
+    return UserOutcome(status=status, unresolved=len(attempt.unresolved))
 
 
 async def _record_failure(user_id: UUID, model: str) -> None:

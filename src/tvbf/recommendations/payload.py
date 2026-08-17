@@ -92,7 +92,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.app.repos import episode_rating_repo, show_repo
 from tvbf.recommendations.taste import TasteLabel, TasteSignal, taste_for_user
 
-PROMPT_VERSION = "1"
+PROMPT_VERSION = "2"
 """The version of the prompt this payload is hashed against (§9.1).
 
 It lives here because the hash needs one and the hash is this module's. **Bump it

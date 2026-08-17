@@ -388,6 +388,100 @@ class TestWhenTheModelDisappoints:
         assert stored.raw_response is None
 
     @respx.mock
+    async def test_a_majority_resolving_to_nothing_is_retried_and_the_better_answer_kept(
+        self, session, user, provider
+    ):
+        """A response can satisfy §7 structurally and still be unusable. The run
+        that prompted this stored 5 of 25 because the model wrote its reasoning
+        into `title`, so every entry parsed and the existing retry never fired —
+        the failure is only visible at resolution."""
+        route = _mock(
+            _answer(
+                _recommendation("Dark", 2017),
+                _recommendation("The Americans' counterpart, 'The Bureau'", 2015),
+                _recommendation("The Wire's equal, 'Treme'", 2010),
+                _recommendation("Severance's peer, 'Maniac'", 2018),
+                _recommendation("Fargo's anthology peer, 'True Detective'", 2014),
+            ),
+            _answer(
+                _recommendation("Dark", 2017),
+                _recommendation("Shōgun", 2024),
+                _recommendation("Money Heist", 2017),
+            ),
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 2
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_SUCCEEDED
+        rows = await _rows(session, stored.id)
+        assert [row.show_id for row in rows] == [CANDIDATE, CANDIDATE + 1, CANDIDATE + 2]
+
+    @respx.mock
+    async def test_a_second_answer_that_resolves_no_better_keeps_the_first(
+        self, session, user, provider
+    ):
+        """Unlike a second unbelievable *body*, there is something to keep here:
+        one row beats a `failed` set, so this path can only improve on the status
+        quo."""
+        junk = [_recommendation(f"Some Show's peer, 'Thing {n}'", 2000 + n) for n in range(4)]
+        route = _mock(
+            _answer(_recommendation("Dark", 2017), *junk),
+            _answer(_recommendation("Money Heist", 2017), *junk),
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 2
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_SUCCEEDED
+        # The first answer's row, not the second's — equal is not better.
+        assert [row.show_id for row in await _rows(session, stored.id)] == [CANDIDATE]
+
+    @respx.mock
+    async def test_a_provider_failure_on_the_retry_keeps_the_first_answer(
+        self, session, user, provider
+    ):
+        """Every `LLMError` is caught on the second call, not just the invalid
+        ones: the first answer is already usable and nothing the retry does may
+        take it away."""
+        junk = [_recommendation(f"Some Show's peer, 'Thing {n}'", 2000 + n) for n in range(4)]
+        route = _mock(
+            _answer(_recommendation("Dark", 2017), *junk),
+            httpx.Response(400, json={"error": "no such model"}),
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 2
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_SUCCEEDED
+        assert [row.show_id for row in await _rows(session, stored.id)] == [CANDIDATE]
+
+    @respx.mock
+    async def test_a_short_answer_is_not_judged_on_its_resolution_rate(
+        self, session, user, provider
+    ):
+        """Two of three resolving to nothing is 67% and also a completely
+        ordinary answer. The judgement needs a denominator before it means
+        anything, so nothing below `MIN_JUDGED_SUGGESTIONS` spends a second call."""
+        route = _mock(
+            _answer(
+                _recommendation("Dark", 2017),
+                _recommendation("A Show That Is Not In The Mirror", 1999),
+                _recommendation("Another Show That Is Not In The Mirror", 1998),
+            )
+        )
+
+        assert await run(_parse_args([])) == 0
+
+        assert route.call_count == 1
+        assert [
+            row.show_id for row in await _rows(session, (await _only_set(session, user.id)).id)
+        ] == [CANDIDATE]
+
+    @respx.mock
     async def test_a_provider_failure_is_not_retried_by_the_job(self, session, user, provider):
         """The client has already walked its backoff curve, so asking again
         immediately buys the same failure (`llm/types`). One attempt reaches
