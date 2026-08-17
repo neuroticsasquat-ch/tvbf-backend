@@ -21,6 +21,7 @@ from tvbf.recommendations.payload import (
     build_payload,
     payload_hash,
 )
+from tvbf.recommendations.taste import taste_for_user
 
 MODEL = "deepseek-ai/DeepSeek-V4-Pro-0813"
 NOW = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
@@ -333,6 +334,86 @@ class TestExclusion:
         payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
 
         assert payload.excluded_show_ids == frozenset()
+
+    async def test_the_set_is_identical_to_the_python_union_it_replaces(
+        self, session, make_user, shows
+    ):
+        """NEU-1175 moved the exclusion set from a Python union of the taste
+        signals' keys and the episode-rated shows into one query. This is what
+        backs the decision not to bump `PROMPT_VERSION`: same members, so the same
+        `exclude` rows, so the same bytes and the same hash.
+
+        The union is written out here rather than imported, because the point is
+        that the *old* expression and the new one agree. Seed all four sources —
+        a share of them on shows the taste tiers cover and a share on shows they
+        do not.
+
+        It is an argument, not a proof: agreement is asserted over these rows,
+        not over every account. If some real account does turn out to differ, its
+        hash changes and it regenerates on its own next Sunday — self-healing,
+        and the reason §4.5 could decline the bump.
+        """
+        user = await make_user()
+        await _track(session, user.id, FIRST)
+        await _track(session, user.id, SECOND)
+        await episode_watch_repo.bulk_mark(
+            session, user_id=user.id, episode_ids=[THIRD + 1, THIRD + 2], watched_at=RECENTLY
+        )
+        await show_rating_repo.upsert(
+            session, user_id=user.id, show_id=REBOOT_OLD, stars=Decimal("4.0")
+        )
+        await episode_rating_repo.upsert(
+            session, user_id=user.id, episode_id=EPISODE_RATED + 1, stars=Decimal("5.0")
+        )
+        await session.flush()
+
+        payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+
+        signals = await taste_for_user(session, user_id=user.id, now=NOW)
+        episode_stars = await episode_rating_repo.mean_stars_per_show_for_user(
+            session, user_id=user.id
+        )
+        assert payload.excluded_show_ids == frozenset(signals) | frozenset(episode_stars)
+        # And it really is all five, not a subset the old expression also missed.
+        assert payload.excluded_show_ids == {FIRST, SECOND, THIRD, REBOOT_OLD, EPISODE_RATED}
+
+    async def test_the_exclusion_set_costs_one_query_like_the_call_it_replaced(
+        self, session, make_user, shows, test_engine
+    ):
+        """AC 7: a swap, not an addition.
+
+        Pinning an absolute number here would pin `taste_for_user`'s query count
+        too, which is not this ticket's to fix in place. What the swap claims is
+        narrower: on top of the taste signals, the builder spends one query for
+        the exclusion set and one for the titles — where before it spent one for
+        the episode-rated shows and one for the titles.
+        """
+        from sqlalchemy import event
+
+        user = await make_user()
+        await _track(session, user.id, FIRST)
+        await episode_rating_repo.upsert(
+            session, user_id=user.id, episode_id=EPISODE_RATED + 1, stars=Decimal("5.0")
+        )
+        await session.commit()
+
+        statements: list[str] = []
+
+        def _record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        engine = test_engine.sync_engine
+        event.listen(engine, "before_cursor_execute", _record)
+        try:
+            await taste_for_user(session, user_id=user.id, now=NOW)
+            taste_queries = len(statements)
+            statements.clear()
+            await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+            payload_queries = len(statements)
+        finally:
+            event.remove(engine, "before_cursor_execute", _record)
+
+        assert payload_queries == taste_queries + 2
 
 
 class TestTheFloor:
