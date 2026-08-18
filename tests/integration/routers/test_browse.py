@@ -396,6 +396,88 @@ async def test_list_shows_hydrates_my_rating_for_caller(authed_client, session):
     assert items[77002]["my_rating"] is None
 
 
+async def test_list_shows_marks_tracked_shows_without_filtering_them(
+    authed_client, session, make_user
+):
+    """The library mark on browse and search (NEU-1185).
+
+    A tracked show is **marked, never filtered** — search is the surface where
+    "should I add this?" is the actual question, so the answer is a badge rather
+    than a missing row. Somebody else's membership marks nothing, which is what
+    makes the field per-viewer rather than per-show.
+    """
+    from tvbf.app.repos import show_membership_repo
+    from tvbf.catalog.models import Show
+
+    session.add(Show(id=77006, name="MarkedShow1"))
+    session.add(Show(id=77007, name="MarkedShow2"))
+    await session.flush()
+    stranger = await make_user(email="marks@example.com")
+    await show_membership_repo.add(session, user_id=authed_client.user.id, show_id=77006)
+    await show_membership_repo.add(session, user_id=stranger.id, show_id=77007)
+    await session.commit()
+
+    r = await authed_client.get("/shows?search=MarkedShow")
+    assert r.status_code == 200
+    items = {i["id"]: i for i in r.json()["items"]}
+    assert set(items) == {77006, 77007}
+    assert items[77006]["in_my_shows"] is True
+    assert items[77007]["in_my_shows"] is False
+
+
+async def test_two_viewers_of_one_search_see_their_own_marks_and_the_same_rows(
+    authed_client, session, make_user
+):
+    """The per-user fields differ between viewers; the rows and their order do
+    not (NEU-1184 §9 AC 4).
+
+    Asserted with a second authenticated request rather than by reading one
+    viewer's `false`, because the mark rides on a query the search path also
+    filters — "the same shows in the same order" is the half only two real
+    requests can prove.
+    """
+    from decimal import Decimal
+
+    from tvbf.app import tokens
+    from tvbf.app.repos import session_repo, show_membership_repo, show_rating_repo
+    from tvbf.catalog.models import Show
+
+    session.add(Show(id=77008, name="TwoViewers1"))
+    session.add(Show(id=77009, name="TwoViewers2"))
+    await session.flush()
+    other = await make_user(email="viewer2@example.com")
+    await show_membership_repo.add(session, user_id=authed_client.user.id, show_id=77008)
+    await show_rating_repo.upsert(
+        session, user_id=authed_client.user.id, show_id=77008, stars=Decimal("4.5")
+    )
+    await show_membership_repo.add(session, user_id=other.id, show_id=77009)
+    await show_rating_repo.upsert(session, user_id=other.id, show_id=77009, stars=Decimal("2.0"))
+    sess_id = tokens.new_session_id()
+    await session_repo.create(
+        session, session_id=sess_id, user_id=other.id, ttl_days=30, user_agent=None, ip=None
+    )
+    await session.commit()
+
+    mine = (await authed_client.get("/shows?search=TwoViewers&sort=name")).json()["items"]
+
+    # Cookie injected via a request hook rather than the jar, for the reason
+    # `authed_client` gives: httpx will not send a cookie whose domain is a
+    # single-label TLD like "test".
+    async def _inject(request):
+        request.headers["cookie"] = f"tvbf_session={sess_id}"
+
+    async with httpx.AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="https://test",
+        event_hooks={"request": [_inject]},
+    ) as c:
+        theirs = (await c.get("/shows?search=TwoViewers&sort=name")).json()["items"]
+
+    assert [i["id"] for i in mine] == [77008, 77009] == [i["id"] for i in theirs]
+    assert [(i["in_my_shows"], i["my_rating"]) for i in mine] == [(True, 4.5), (False, None)]
+    assert [(i["in_my_shows"], i["my_rating"]) for i in theirs] == [(False, None), (True, 2.0)]
+
+
 async def test_get_show_detail_hydrates_my_rating(authed_client, session):
     from decimal import Decimal
 
@@ -477,6 +559,11 @@ async def test_get_shows_issues_a_fixed_number_of_queries_whatever_the_page_size
     invariant is that nothing moves with the page size**, which is what the batch
     hydration in `hydrate_show_refs` buys and what an accidental per-row `.get()`
     would break; that half is asserted over every statement, catalog or not.
+
+    The library mark NEU-1185 added is outside the pinned number by that same
+    rule — `app.user_show_watch` is an `app` table, one query for the page — so
+    it moves the `len(for_one) == len(for_ten)` half, which stays equal, and the
+    four not at all.
     """
     from sqlalchemy import event
 
