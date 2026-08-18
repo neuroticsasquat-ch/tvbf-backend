@@ -11,9 +11,10 @@ response bodies DeepInfra sent, and `README.md` there records what each one is.
 Run inside the container with `DEEPINFRA_API_KEY` set in `.env`:
 
     docker compose exec tvbf-backend python scripts/record_recommendation_responses.py \
-        --model ByteDance/Seed-2.0-mini
+        --model <the id production runs>
 
-**Pass `--model` unless your `.env` already holds the id `.env.example` records.**
+**Always pass `--model`.** The running id is not recorded in this repo — it is
+set in the Coolify UI, and the umbrella `docs/` holds the measurements behind it.
 It defaults to `RECOMMENDATION_MODEL`, which is a local setting and drifts: a
 recording taken from a model the weekly pass will not call pins the output shape
 of the wrong thing, and nothing downstream can tell. The recorded envelope

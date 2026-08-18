@@ -21,10 +21,12 @@ happens to hold — a fixture recorded from a model the pass will not call pins 
 output shape of the wrong thing. The reasoning model is deliberately a different
 id: it is the failure being recorded.
 
-**These two were recorded from the model `.env.example` named at the time, and it
-is no longer the one the pass calls.** NEU-1180 replaced
-`deepseek-ai/DeepSeek-V4-Pro-0813` with `ByteDance/Seed-2.0-mini` on a capacity
-measurement, so the recordings now sit one model behind production. That is
+**These two were recorded from the model that was current at the time, and it is
+no longer the one the pass calls.** NEU-1180 replaced it on a capacity
+measurement, so the recordings now sit one model behind production. (The
+recorded envelopes still carry the id that answered them, which is a property of
+a faithful recording and is left alone; what production runs today is not
+recorded in this repo.) That is
 tolerable — what they pin is the §7 output *shape*, which is the contract rather
 than the model — but retake them from the current id the next time that contract
 moves, and do not read `clean.json` as evidence of how the running model behaves.

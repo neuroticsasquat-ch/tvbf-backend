@@ -23,11 +23,13 @@ class TestTheDefaultPolicy:
     def test_the_timeout_clears_the_measured_latency_of_the_model_in_production(self):
         """NEU-1180: 60s did not, and the failure was silent.
 
-        `ByteDance/Seed-2.0-mini` runs a 49.2s median and a 57.0s max on a
-        522-row payload (`scripts/probe_deepinfra.py --model`, 2026-08-18).
-        Under the old 60s ceiling both real production accounts exhausted the
-        retry curve on timeouts and were recorded `failed` with no response
-        body at all. Anything at or below the measured max puts that back.
+        The model production runs was measured on a 522-row payload
+        (`scripts/probe_deepinfra.py --model`, 2026-08-18) with a maximum a
+        little under 60s. Under that ceiling both real production accounts
+        exhausted the retry curve on timeouts and were recorded `failed` with no
+        response body at all. The floor below is that measured maximum; the
+        figures themselves are in the umbrella `docs/`, since this repo is
+        public and the running model id is not recorded in it.
         """
         assert DEFAULT_RETRY_POLICY.timeout > 57.0
 

@@ -57,15 +57,16 @@ class RetryPolicy:
     reasoning tokens before the first visible one.
 
     **It is generous by measurement, and 60s was not enough** (NEU-1180). The
-    capacity sweep that chose `ByteDance/Seed-2.0-mini` scored its calls at
+    capacity sweep that chose the current model scored its calls at
     `timeout=240`, so it ranked models on compliance under a ceiling four times
-    production's, and the model it picked runs a **49.2s median / 57.0s max** on
-    a 522-row payload — inside 60s in a lab, outside it in production. Both real
-    accounts were recorded `failed` on 2026-08-18 with a null `raw_response`,
-    four attempts apiece, 4m05s end to end: the retry curve exhausting on
-    timeouts. The number below has to clear the *model's* latency, not the
-    payload's size, so re-measure it with `scripts/probe_deepinfra.py --model`
-    whenever `RECOMMENDATION_MODEL` changes — a model swap moves this.
+    production's, and the model it picked runs a median close enough to 60s that
+    its slower calls exceeded it — inside the ceiling in a lab, outside it in
+    production. Both real accounts were recorded `failed` on 2026-08-18 with a
+    null `raw_response`, four attempts apiece, 4m05s end to end: the retry curve
+    exhausting on timeouts. The number below has to clear the *model's* latency,
+    not the payload's size, so re-measure it with `scripts/probe_deepinfra.py
+    --model` whenever `RECOMMENDATION_MODEL` changes — a model swap moves this.
+    The measured figures are in the umbrella `docs/`, deliberately not here.
 
     Two things it multiplies into, before anyone raises it further. `max_retries`
     makes a wholly dead call cost `4 x timeout` for that user, and the pass is

@@ -228,9 +228,9 @@ async def _confirm_models(raw: httpx.AsyncClient, candidates: list[str]) -> list
             working.append((elapsed, model))
     print(f"\n{len(working)} of {len(candidates)} candidates answered.\n")
     # **This ordering does not rank models for the real workload, and must not
-    # be read as if it did.** Measured 2026-08-15: `V4-Pro-0813` and `V4-Flash`
-    # finish "ok?" within half a second of each other and do not hold their
-    # order across sessions, while on the 522-show payload one is 2.5-3x the
+    # be read as if it did.** Measured 2026-08-15: two chat ids finish "ok?"
+    # within half a second of each other and do not hold their order across
+    # sessions, while on the 522-show payload one is 2.5-3x the
     # other and holds it every run. What a trivial
     # prompt *does* separate is a reasoning model from a chat one — R1 spends
     # seconds thinking before its first visible token — and that is the
