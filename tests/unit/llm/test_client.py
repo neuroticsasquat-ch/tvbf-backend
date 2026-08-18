@@ -444,8 +444,8 @@ class TestPromptAndConstruction:
             _client(api_key=None)
 
     async def test_a_missing_model_raises_at_construction(self):
-        """Not defaulted on purpose: the exact DeepSeek id is NEU-1100's to
-        measure, and one asserted from memory is a non-retryable 404 in prod."""
+        """Not defaulted on purpose: the id is measured rather than recalled,
+        and one asserted from memory is a non-retryable 404 in prod."""
         with pytest.raises(ValueError, match="RECOMMENDATION_MODEL"):
             _client(model=None)
 

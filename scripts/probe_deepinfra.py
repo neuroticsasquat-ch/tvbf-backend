@@ -26,8 +26,15 @@ Run inside the container, with `DEEPINFRA_API_KEY` set in `.env`:
 
 Costs one catalog listing, one small call per candidate model, four small
 JSON-mode calls, and `--runs` full-size calls (3 by default) — cents, not
-dollars. Record what it prints in `CLAUDE.md` and set `RECOMMENDATION_MODEL`
-from it.
+dollars. Record what it prints in `CLAUDE.md`.
+
+**What it prints does not by itself choose the model, and NEU-1180 is the bill
+for reading it as though it did.** Measurement 3 ranks ids that all work; it
+never varies the payload's *size*, so it cannot see the failure that actually
+bit — a model that returns 25 titles the user already has, at the library size
+we already have. `scripts/probe_deepinfra_capacity.py` is the axis that decides
+`RECOMMENDATION_MODEL`; this script says whether the id exists, answers JSON,
+and how long a pass will take once it is chosen.
 
 Two deliberate departures from `scripts/probe_tmdb_*.py`. The JSON-mode and
 catalog requests are made with **raw `httpx`**, not `OpenAICompatClient`: the

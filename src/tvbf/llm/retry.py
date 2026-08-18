@@ -29,8 +29,8 @@ from dataclasses import dataclass
 # Transient by nature: the same request stands a real chance of succeeding
 # shortly. Anything else — a malformed request, a bad credential, a model id
 # that does not exist — fails identically four times and is better raised at
-# once. NEU-1100's probe is what settles the model id, and a 404 on it should
-# surface in seconds rather than after the whole backoff curve.
+# once. A probe under `scripts/` is what settles the model id, and a 404 on it
+# should surface in seconds rather than after the whole backoff curve.
 _RETRYABLE_STATUS = frozenset({408, 409, 429})
 
 

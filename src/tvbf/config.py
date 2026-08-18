@@ -48,8 +48,8 @@ class Settings(BaseSettings):
     )
     tvmaze_retry_max_attempts: int = Field(default=5, alias="TVMAZE_RETRY_MAX_ATTEMPTS")
 
-    # DeepInfra, which serves the DeepSeek model the weekly recommendations pass
-    # asks for JSON (project spec §6). Optional rather than required for the
+    # DeepInfra, which serves the model the weekly recommendations pass asks
+    # for JSON (project spec §6). Optional rather than required for the
     # reason the TMDB token is: an app serving reads needs no credential, and
     # only the recommendations job does. `OpenAICompatClient` raises when either
     # of these is missing, so the failure surfaces at the call site rather than
@@ -59,13 +59,15 @@ class Settings(BaseSettings):
     # rather than of a deployment, so it is a constant in `llm/registry.py`. The
     # model id is the knob that actually gets turned, which is why it is here.
     #
-    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**, and stays that
-    # way now that NEU-1100 has measured which ids exist: the id it settled on
-    # (`deepseek-ai/DeepSeek-V4-Pro-0813`, 2026-08-15) is recorded in
-    # `.env.example`, which a deployment reads once, rather than here, where it
-    # would be a claim the client keeps making after the id is retired upstream.
-    # Asserting one from memory buys a non-retryable 404 that looks like an
-    # outage. Server-side only — nothing about the provider reaches the SPA.
+    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**, and NEU-1180 is
+    # why that stays true rather than why it should be revisited: the id has now
+    # changed once (`ByteDance/Seed-2.0-mini`, 2026-08-18, on the capacity
+    # measurement in `scripts/probe_deepinfra_capacity.py`), and it is recorded
+    # in `.env.example`, which a deployment reads once, rather than here, where
+    # it would be a claim the client keeps making after the id is retired
+    # upstream or outgrown. Asserting one from memory buys a non-retryable 404
+    # that looks like an outage. Server-side only — nothing about the provider
+    # reaches the SPA.
     deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
     recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
     # This ceiling is **ours, not the provider's** (NEU-1099). DeepInfra's own
