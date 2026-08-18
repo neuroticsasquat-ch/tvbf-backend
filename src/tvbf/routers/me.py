@@ -575,6 +575,34 @@ async def list_my_recommendations(
     return await recommendation_service.list_recommendations(db, user_id=user.id)
 
 
+@router.post(
+    "/me/recommendations/{show_id}/dismiss",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def dismiss_recommendation(
+    show_id: Annotated[int, Path()],
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    """Never recommend this show to this user again (NEU-1178).
+
+    `POST …/dismiss` rather than `DELETE /me/recommendations/{show_id}`: a
+    `DELETE` on that path reads as "remove this member from the collection this
+    route serves", and that is three-quarters wrong — the request *creates* a
+    row, the show need not be in the collection at all, and the effect outlives
+    the set the collection is.
+
+    Idempotent, `204` either way, and `404` only for a show id no `catalog.show`
+    row has. There is no un-dismiss.
+    """
+    try:
+        await recommendation_service.dismiss(db, user_id=user.id, show_id=show_id)
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
 # ---------------------------------------------------------------------------
 # Privacy preferences (NEU-180)
 # ---------------------------------------------------------------------------

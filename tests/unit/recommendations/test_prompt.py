@@ -11,6 +11,7 @@ import pytest
 from tests.fixtures import recommendations as recorded
 from tvbf.llm.client import _to_wire
 from tvbf.llm.types import LLMResponseInvalid, Prompt
+from tvbf.recommendations.payload import PROMPT_VERSION
 from tvbf.recommendations.prompt import (
     INSTRUCTION,
     RECOMMENDATION_COUNT,
@@ -53,6 +54,24 @@ class TestTheInstruction:
         """Belt-and-braces (§8): the instruction is the request and the
         post-resolution filter is the guarantee. Neither replaces the other."""
         assert "none of them may appear in your answer" in INSTRUCTION
+
+    def test_it_claims_nothing_about_the_user_having_seen_an_excluded_series(self):
+        """NEU-1178: a dismissal can name a show the user has never met, so both
+        clauses that used to justify the ban with "they already have it" were
+        false for it — and the second made the ban grammatically *derive* from
+        the false premise. The ban itself is unchanged; what is gone is the
+        reasoning a model could find inapplicable.
+        """
+        assert '"exclude" is a plain list of further series to leave out' in INSTRUCTION
+        assert "is one this person must not be recommended" in INSTRUCTION
+        assert "one this person already has" not in INSTRUCTION
+        assert "further series they already have" not in INSTRUCTION
+
+    def test_the_prompt_version_is_bumped_with_the_wording(self):
+        """CLAUDE.md's rule: the constant versions the whole request/response
+        contract and moves in the same commit as the prose, or the change is
+        never evaluated against a real user (§9.1)."""
+        assert PROMPT_VERSION == "5"
 
     def test_the_exclusion_rule_names_every_group_it_covers(self):
         """Including `exclude`, which is the group that made the rule followable:

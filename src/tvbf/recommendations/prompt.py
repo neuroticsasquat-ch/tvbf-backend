@@ -77,7 +77,7 @@ INSTRUCTION = (
     'added but not started. In each row, "pct" is how much of that series they '
     'have watched and "stars" is their rating out of five, or null if they have '
     "not rated it. "
-    '"exclude" is a plain list of further series they already have, with the '
+    '"exclude" is a plain list of further series to leave out, with the '
     'fields "exclude_columns" names and no viewing data — it is there only so '
     "you can avoid them.\n"
     "Reply with a json object of the form "
@@ -91,13 +91,14 @@ INSTRUCTION = (
     "plain sentence saying why this person in particular would like it — prose "
     'only, no markup. Every explanation belongs in "reason": a title carrying '
     "one cannot be looked up, and that recommendation is discarded. "
-    "Every series named anywhere in the user message is one this person already "
-    'has — in "liked", in "not_liked", in "interested" or in "exclude" — so none '
-    "of them may appear in your answer. When the series you were about to "
-    "recommend is one of them, drop it without comment and give the next best "
-    "one you have not used. Do not name it, do not describe it, and do not "
-    "offer it with a caveat: an answer that returns this person's own series to "
-    "them is discarded whole and they see nothing."
+    'Every series named anywhere in the user message — in "liked", in '
+    '"not_liked", in "interested" or in "exclude" — is one this person must not '
+    "be recommended, so none of them may appear in your answer. "
+    "When the series you were about to recommend is one of them, drop it "
+    "without comment and give the next best one you have not used. "
+    "Do not name it, do not describe it, and do not offer it with a caveat: "
+    "an answer that returns this person's own series to them is discarded "
+    "whole and they see nothing."
 )
 """The instruction that does not vary between users. See the module docstring.
 

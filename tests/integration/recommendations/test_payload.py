@@ -12,7 +12,7 @@ from decimal import Decimal
 
 import pytest
 
-from tvbf.app.models import UserShowWatch
+from tvbf.app.models import UserRecommendationDismissal, UserShowWatch
 from tvbf.app.repos import episode_rating_repo, episode_watch_repo, show_rating_repo
 from tvbf.catalog.models import Episode, Show
 from tvbf.recommendations.payload import (
@@ -446,3 +446,117 @@ class TestTheFloor:
 
         assert payload.liked_count == 5
         assert payload.meets_floor is True
+
+
+class TestDismissal:
+    """NEU-1178's fifth source, through the payload (AC 3, 4, 5).
+
+    A dismissal is an exclusion and deliberately not a taste signal, so what is
+    asserted is where it lands (`exclude`, never a tier), what it leaves alone
+    (every count and the floor), and that it moves the hash.
+    """
+
+    async def _dismiss(self, session, user_id, show_id: int) -> None:
+        session.add(UserRecommendationDismissal(user_id=user_id, show_id=show_id))
+        await session.flush()
+
+    async def test_a_dismissed_show_lands_in_exclude_and_in_no_tier(
+        self, session, make_user, shows
+    ):
+        """AC 3. The user has no record of this show at all — a dismissal alone
+        excludes it, which is what the endpoint's "never recommended" case is."""
+        user = await make_user()
+        await self._dismiss(session, user.id, THIRD)
+
+        payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+        document = _document(payload)
+
+        assert payload.excluded_show_ids == {THIRD}
+        assert document["exclude"] == [["Apples", AIRED.year]]
+        assert document["liked"] == document["not_liked"] == document["interested"] == []
+
+    async def test_a_dismissal_moves_no_taste_count_and_no_floor(self, session, make_user, shows):
+        """AC 4: it is not a taste signal, so `taste_for_user` never sees it."""
+        user = await make_user()
+        for show_id in (FIRST, SECOND):
+            await _track(session, user.id, show_id)
+        before = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+
+        await self._dismiss(session, user.id, THIRD)
+        after = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+
+        assert (after.liked_count, after.interested_count, after.interested_before_cap) == (
+            before.liked_count,
+            before.interested_count,
+            before.interested_before_cap,
+        )
+        assert after.meets_floor is before.meets_floor
+        assert after.excluded_show_ids == before.excluded_show_ids | {THIRD}
+
+    async def test_a_dismissal_moves_the_hash(self, session, make_user, shows):
+        """AC 5: the bytes change, so the regeneration gate does not skip this
+        user as unchanged — and only users who dismissed something regenerate."""
+        user = await make_user()
+        await _track(session, user.id, FIRST)
+        before = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+
+        await self._dismiss(session, user.id, THIRD)
+        after = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+
+        assert after.hash != before.hash
+
+    async def test_a_dismissed_show_that_also_reached_a_tier_stays_in_its_tier(
+        self, session, make_user, shows
+    ):
+        """`exclude` is `excluded - shown_ids`, so nothing special is needed for
+        a show the user both tracks and dismissed: it is visible as itself."""
+        user = await make_user()
+        await _track(session, user.id, THIRD)
+        await self._dismiss(session, user.id, THIRD)
+
+        payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+        document = _document(payload)
+
+        assert document["exclude"] == []
+        assert [row[0] for row in document["interested"]] == ["Apples"]
+        assert payload.excluded_show_ids == {THIRD}
+
+    async def test_another_users_dismissal_never_enters(self, session, make_user, shows):
+        """AC 8, at the payload end."""
+        user = await make_user()
+        other = await make_user(email="other-dismisser@example.com")
+        await self._dismiss(session, other.id, THIRD)
+
+        payload = await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+
+        assert payload.excluded_show_ids == frozenset()
+
+    async def test_the_exclusion_set_still_costs_one_query(
+        self, session, make_user, shows, test_engine
+    ):
+        """AC 13's payload half: the fifth source is a `union_all` branch, not a
+        second round trip."""
+        from sqlalchemy import event
+
+        user = await make_user()
+        await _track(session, user.id, FIRST)
+        await self._dismiss(session, user.id, THIRD)
+        await session.commit()
+
+        statements: list[str] = []
+
+        def _record(conn, cursor, statement, parameters, context, executemany):
+            statements.append(statement)
+
+        engine = test_engine.sync_engine
+        event.listen(engine, "before_cursor_execute", _record)
+        try:
+            await taste_for_user(session, user_id=user.id, now=NOW)
+            taste_queries = len(statements)
+            statements.clear()
+            await build_payload(session, user_id=user.id, model=MODEL, now=NOW)
+            payload_queries = len(statements)
+        finally:
+            event.remove(engine, "before_cursor_execute", _record)
+
+        assert payload_queries == taste_queries + 2

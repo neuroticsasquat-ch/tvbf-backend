@@ -20,7 +20,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.repos import recommendation_repo
+from tvbf.app.errors import NotFound
+from tvbf.app.repos import recommendation_dismissal_repo, recommendation_repo, show_repo
 from tvbf.app.schemas import RecommendationOut, RecommendationsOut
 from tvbf.app.services.my_shows_service import build_show_summary_from_refs
 from tvbf.catalog.browse_queries import hydrate_show_refs
@@ -71,3 +72,28 @@ async def list_recommendations(db: AsyncSession, *, user_id: UUID) -> Recommenda
             for rec, show in rows
         ]
     )
+
+
+async def dismiss(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
+    """Never recommend this show to this user again. Idempotent; commits.
+
+    `my_shows_service.add` minus the activity emit — deliberately: a dismissal is
+    a private negative preference and nothing about it belongs in
+    `app.activity_event` or on a friend's feed.
+
+    The show must **exist**, and that is the only thing checked. It need not be in
+    the user's current set and this function never looks at one: the
+    never-recommend list is about future passes as much as the current grid, so
+    dismissing a show found by search is coherent. No `adult` or
+    `deleted_upstream_at` filtering either, on `my_shows_service.add`'s terms — a
+    tombstoned show can be resurrected and an `adult` one is filtered at read time
+    regardless, so any row in the catalog is dismissible.
+
+    Two queries plus the commit: the existence check and the insert. The write
+    itself is `ON CONFLICT DO NOTHING`, so dismissing twice leaves one row and the
+    route answers 204 both times.
+    """
+    if await show_repo.get_by_id(db, show_id) is None:
+        raise NotFound()
+    await recommendation_dismissal_repo.add(db, user_id=user_id, show_id=show_id)
+    await db.commit()

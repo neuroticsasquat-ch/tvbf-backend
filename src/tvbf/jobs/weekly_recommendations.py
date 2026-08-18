@@ -304,7 +304,7 @@ be retiring the guard for a case the recovery does not cover.
 """
 
 IGNORED_EXCLUSION_FRACTION = 0.9
-"""Above this share of named titles being ones the user already has, ask again.
+"""Above this share of named titles being ones the user may never be recommended, ask again.
 
 **A second way to answer nothing while satisfying every structural rule**, and
 the one that actually happened next: on 2026-08-17 at 16:00 UTC, the run
@@ -321,6 +321,12 @@ NEU-1109's first version kept exclusions out of the believability question
 altogether. Nine tenths is not that — it is the instruction having been ignored
 wholesale, which one more call can fix and which no amount of library size
 explains.
+
+A heavy dismisser cannot realistically drift into it either, which is why
+NEU-1178 added no sixth counter and no second threshold: 23 of 25 named titles
+being ones this person has excluded is the instruction ignored wholesale
+whichever of the five sources excluded them, and if a dismissal-heavy account
+ever does trip it, one more call is the right response.
 """
 
 MIN_JUDGED_SUGGESTIONS = 4
@@ -349,7 +355,13 @@ class _Attempt:
     named: int
     """How many suggestions §7's parser accepted, before any of them resolved."""
     excluded: int
-    """Named titles that resolved onto a show the user already has (§8).
+    """Named titles that resolved onto a show this person must not be recommended.
+
+    The never-recommend set, not My Shows: §8's four record sources plus a
+    dismissal (NEU-1178). A dismissed show is put in the payload's `exclude`
+    group and named to the model exactly like the other four, so a model naming
+    one is the same disobedience this counter was built for and needs no
+    threshold of its own.
 
     Counted rather than only logged because it is the second thing that can make
     an answer unbelievable — see `IGNORED_EXCLUSION_FRACTION`. Kept apart from
@@ -404,7 +416,9 @@ class _Attempt:
         """Why this answer is not believable, for the log that asks again."""
         if len(self.unresolved) > UNBELIEVABLE_UNRESOLVED_FRACTION * self.named:
             return f"only {self.resolved} of {self.named} titles could be found"
-        return f"{self.excluded} of {self.named} titles were series the user already has"
+        return (
+            f"{self.excluded} of {self.named} titles were series this user must not be recommended"
+        )
 
 
 async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePayload) -> _Attempt:
@@ -568,7 +582,9 @@ async def _resolve_all(
         # are the only lines that would say why.
         if resolved.show_id in payload.excluded_show_ids:
             log.info(
-                "dropped %r — the user already has show %d", suggestion.title, resolved.show_id
+                "dropped %r — show %d must not be recommended to this user",
+                suggestion.title,
+                resolved.show_id,
             )
             excluded += 1
             continue
@@ -720,11 +736,11 @@ async def _generate_for_user(
         )
     else:
         # Spelled out because the status cannot: `no_matches` is written whenever
-        # no row survived, and "we could not find them" and "the user already had
-        # every one" are different problems with different fixes.
+        # no row survived, and "we could not find them" and "every one was
+        # already off limits" are different problems with different fixes.
         log.warning(
-            "user %s: none of %d named titles became a row (%d unresolved, %d already "
-            "theirs, %d duplicated) — recorded as %s, so their current "
+            "user %s: none of %d named titles became a row (%d unresolved, %d "
+            "excluded, %d duplicated) — recorded as %s, so their current "
             "recommendations stand",
             user_id,
             attempt.named,

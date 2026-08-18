@@ -24,6 +24,7 @@ from tvbf.app.models import (
     UserEpisodeRating,
     UserEpisodeWatch,
     UserRecommendation,
+    UserRecommendationDismissal,
     UserRecommendationSet,
     UserShowRating,
     UserShowWatch,
@@ -311,13 +312,14 @@ class TestWritingASet:
         assert current.payload_hash == "abc123"
 
 
-class TestSuppressingShowsTheReaderHasARecordFor:
-    """NEU-1175: §8's never-recommend rule, enforced again at read time.
+class TestSuppressingShowsTheReaderMustNeverBeRecommended:
+    """NEU-1175 and NEU-1178: the never-recommend set, enforced at read time.
 
     A set is immutable, so a show the user acts on after it was generated used to
     hold one of the twelve cards until Sunday. The suppression is a live join
-    against the four sources `recommendations/exclusion.py` defines, which is what
-    lets it come back when the record does.
+    against the five sources `recommendations/exclusion.py` defines, which is what
+    lets it come back when the record does — for the four §8 record sources at
+    least. A dismissal is deliberately permanent, since nothing removes the row.
     """
 
     async def _episode(self, session, show: Show, number: int = 1) -> Episode:
@@ -348,16 +350,17 @@ class TestSuppressingShowsTheReaderHasARecordFor:
 
         assert [show.id for _, show in rows] == [kept.id]
 
-    async def test_each_of_the_four_sources_suppresses_on_its_own(self, session, make_user):
-        user = await make_user(email="foursources@example.com")
+    async def test_each_of_the_five_sources_suppresses_on_its_own(self, session, make_user):
+        user = await make_user(email="fivesources@example.com")
         rec_set = await _set(session, user)
         membership = await _show(session, 920110, "Membership")
         show_rated = await _show(session, 920111, "Show Rated")
         episode_watched = await _show(session, 920112, "Episode Watched")
         episode_rated = await _show(session, 920113, "Episode Rated")
+        dismissed = await _show(session, 920115, "Dismissed")
         kept = await _show(session, 920114, "Kept")
         for rank, show in enumerate(
-            (membership, show_rated, episode_watched, episode_rated, kept), start=1
+            (membership, show_rated, episode_watched, episode_rated, dismissed, kept), start=1
         ):
             await _rec(session, rec_set, rank=rank, show=show)
         watched_episode = await self._episode(session, episode_watched)
@@ -370,6 +373,7 @@ class TestSuppressingShowsTheReaderHasARecordFor:
                 UserEpisodeRating(
                     user_id=user.id, episode_id=rated_episode.id, stars=Decimal("3.5")
                 ),
+                UserRecommendationDismissal(user_id=user.id, show_id=dismissed.id),
             ]
         )
         await session.commit()
@@ -492,3 +496,66 @@ class TestSuppressingShowsTheReaderHasARecordFor:
         assert (
             await recommendation_repo.list_current_recommendations(session, user_id=user.id) == []
         )
+
+
+class TestDismissalSuppression:
+    """NEU-1178's fifth source, at the grain AC 1 and AC 9 are about.
+
+    The endpoint's own behaviour is tested through the route; what matters here
+    is that a dismissal reaches the same anti-join as the other four and costs
+    the set nothing.
+    """
+
+    async def test_a_dismissed_show_is_suppressed_and_the_next_one_promoted(
+        self, session, make_user
+    ):
+        user = await make_user(email="dismissed@example.com")
+        rec_set = await _set(session, user)
+        dismissed = await _show(session, 920200, "Dismissed")
+        kept = await _show(session, 920201, "Kept")
+        await _rec(session, rec_set, rank=1, show=dismissed)
+        await _rec(session, rec_set, rank=2, show=kept)
+        session.add(UserRecommendationDismissal(user_id=user.id, show_id=dismissed.id))
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=user.id)
+
+        assert [(rec.rank, show.id) for rec, show in rows] == [(2, kept.id)]
+
+    async def test_the_dismissed_row_is_still_stored(self, session, make_user):
+        """AC 9's other half: suppression is a live join, so the set is untouched.
+
+        Immutability is what makes the weekly swap atomic (§9) and what keeps
+        `raw_response` and the stored rows usable as the record of what the model
+        said.
+        """
+        user = await make_user(email="dismissed-immutable@example.com")
+        rec_set = await _set(session, user)
+        dismissed = await _show(session, 920210, "Dismissed")
+        await _rec(session, rec_set, rank=1, show=dismissed)
+        session.add(UserRecommendationDismissal(user_id=user.id, show_id=dismissed.id))
+        await session.commit()
+
+        assert (
+            await recommendation_repo.list_current_recommendations(session, user_id=user.id) == []
+        )
+        stored = (
+            await session.scalars(
+                select(UserRecommendation).where(UserRecommendation.set_id == rec_set.id)
+            )
+        ).all()
+        assert [(row.rank, row.show_id) for row in stored] == [(1, dismissed.id)]
+
+    async def test_another_users_dismissal_suppresses_nothing_here(self, session, make_user):
+        """AC 8, at the read end."""
+        mine = await make_user(email="mine-dismiss@example.com")
+        theirs = await make_user(email="theirs-dismiss@example.com")
+        rec_set = await _set(session, mine)
+        show = await _show(session, 920220, "Shared")
+        await _rec(session, rec_set, rank=1, show=show)
+        session.add(UserRecommendationDismissal(user_id=theirs.id, show_id=show.id))
+        await session.commit()
+
+        rows = await recommendation_repo.list_current_recommendations(session, user_id=mine.id)
+
+        assert [s.id for _, s in rows] == [show.id]
