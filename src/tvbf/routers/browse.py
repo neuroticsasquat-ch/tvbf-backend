@@ -9,6 +9,7 @@ from tvbf.catalog import browse_queries
 from tvbf.catalog.schemas import (
     ALLOWED_SORT_KEYS,
     AnticipatedShowOut,
+    BrowseShowOut,
     CastMemberOut,
     CrewMemberOut,
     EpisodeOut,
@@ -21,7 +22,7 @@ from tvbf.catalog.schemas import (
     ShowDetail,
     ShowFilters,
     ShowListPage,
-    ShowSummary,
+    SimilarShowOut,
     TrendingOut,
     TrendingShowOut,
     build_cast_member,
@@ -104,17 +105,27 @@ async def list_shows_route(
     )
     genres_by_show, networks_by_show = await browse_queries.hydrate_show_refs(session, rows)
     matched_aka_by_show = await browse_queries.hydrate_matched_aka(session, rows, search)
+    show_ids = [s.id for s in rows]
     my_ratings = await browse_queries.hydrate_my_ratings(
-        session, viewer_id=user.id, show_ids=[s.id for s in rows]
+        session, viewer_id=user.id, show_ids=show_ids
+    )
+    # Marked, never filtered: a show the viewer already tracks still appears in
+    # browse and in search results — knowing you have it is the answer to
+    # "should I add this?", not a reason to hide the row (NEU-1184 §2.2).
+    tracked = await show_membership_repo.tracked_show_ids(
+        session, user_id=user.id, show_ids=show_ids
     )
 
-    items: list[ShowSummary] = [
-        build_show_summary(
-            show,
-            genre_names=genres_by_show.get(show.id, []),
-            network=build_network_ref(networks_by_show.get(show.id)),
-            matched_aka=matched_aka_by_show.get(show.id),
-            my_rating=my_ratings.get(show.id),
+    items: list[BrowseShowOut] = [
+        BrowseShowOut(
+            **build_show_summary(
+                show,
+                genre_names=genres_by_show.get(show.id, []),
+                network=build_network_ref(networks_by_show.get(show.id)),
+                matched_aka=matched_aka_by_show.get(show.id),
+                my_rating=my_ratings.get(show.id),
+            ).model_dump(),
+            in_my_shows=show.id in tracked,
         )
         for show in rows
     ]
@@ -158,39 +169,65 @@ async def get_show_seasons_route(
     return [build_season_out(s) for s in await browse_queries.get_show_seasons(session, show_id)]
 
 
-@router.get("/shows/{show_id}/similar", response_model=list[ShowSummary])
+@router.get("/shows/{show_id}/similar", response_model=list[SimilarShowOut])
 async def get_show_similar_route(
+    response: Response,
     show_id: int,
     session: AsyncSession = Depends(get_session),
-) -> list:
+    user: User = Depends(get_current_user),
+) -> list[SimilarShowOut]:
     """The twelve shows TMDB recommends alongside this one (NEU-1053).
 
-    `ShowSummary`, so the SPA reuses `ShowCard` / `ShowGrid` unchanged. A show
-    with no recommendations answers `200 []` rather than a 404 — that is roughly
-    8% of the long tail and the section simply does not render — while an unknown
-    show still 404s, on `/cast`'s reasoning: an empty result cannot stand in for a
-    missing show once empty is ordinary.
+    A `ShowSummary` plus the viewer's two fields, so the SPA reuses `ShowCard` /
+    `ShowGrid` unchanged. A show with no recommendations answers `200 []` rather
+    than a 404 — that is roughly 8% of the long tail and the section simply does
+    not render — while an unknown show still 404s, on `/cast`'s reasoning: an
+    empty result cannot stand in for a missing show once empty is ordinary.
 
-    **The payload carries no per-user field**, which is what lets this route keep
-    the router-level `private, max-age=300` instead of the `no-store` the show
-    and episode routes need. That is a trade rather than a free win, and it is
-    `my_rating` that pays: `ShowCard` *does* render a badge for it, so a
-    recommended show the viewer has already rated shows one here where it would
-    on any other grid. Filling it costs a query and, by `_SHOW_EP_CACHE`'s rule,
-    the cacheability of a list that is identical for every viewer — so the badge
-    goes.
+    **The payload is per-user, and that is the trade NEU-1184 made deliberately.**
+    NEU-1053 built this route with no per-user field, which is what let it keep
+    the router-level `private, max-age=300`, and it gave two reasons for
+    declining `my_rating`: the query it costs, and the cacheability of a body
+    byte-identical for every viewer. The mark spends the second — a tracked show
+    is marked here as it is on every other grid, and the alternative was the one
+    surface in the app that knows you have the show and declines to say so. Once
+    that is spent only the weaker reason stands against `my_rating`, so it is
+    filled too, for one query on a list of at most twelve rows.
 
-    Genres and the network are left empty on the cheaper reasoning: `ShowCard`
-    renders neither, so hydrating them is two more round trips for fields nothing
-    displays, against an acceptance criterion of one query for the list. A
-    consumer wanting the list-view shape (`ShowList` reads both) would need them
-    hydrated here.
+    The header follows: `_SHOW_EP_CACHE`, not merely `private`. Both fields are
+    not only per-user but *mutable by that user*, and there is no way to
+    invalidate the browser's HTTP cache — so any max-age lets a refetch after a
+    My Shows toggle read the pre-toggle body back out and revert the optimistic
+    update. `/trending` and `/anticipated` carry the identical mark and resolved
+    it the identical way.
+
+    Genres and the network stay empty on the cheaper reasoning, which is
+    unchanged rather than re-decided: `ShowCard` renders neither, so hydrating
+    them is two more round trips for fields nothing displays. A consumer wanting
+    the list-view shape (`ShowList` reads both) would need them hydrated here.
     """
+    response.headers["Cache-Control"] = _SHOW_EP_CACHE
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
+    shows = await browse_queries.list_similar_shows(session, show_id)
+    show_ids = [show.id for show in shows]
+    tracked = await show_membership_repo.tracked_show_ids(
+        session, user_id=user.id, show_ids=show_ids
+    )
+    my_ratings = await browse_queries.hydrate_my_ratings(
+        session, viewer_id=user.id, show_ids=show_ids
+    )
     return [
-        build_show_summary(show, genre_names=[], network=None)
-        for show in await browse_queries.list_similar_shows(session, show_id)
+        SimilarShowOut(
+            **build_show_summary(
+                show,
+                genre_names=[],
+                network=None,
+                my_rating=my_ratings.get(show.id),
+            ).model_dump(),
+            in_my_shows=show.id in tracked,
+        )
+        for show in shows
     ]
 
 
