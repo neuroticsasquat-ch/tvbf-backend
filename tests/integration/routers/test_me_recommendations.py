@@ -1,26 +1,43 @@
-"""Route tests for GET /me/recommendations (NEU-1112).
+"""Route tests for the recommendations contract (NEU-1112, NEU-1178).
 
-The route is the whole of the frontend's contract, so the properties asserted
+The routes are the whole of the frontend's contract, so the properties asserted
 here are contract properties rather than implementation details: an empty answer
 is a 200 with an empty list and never a 204, the twelve-item cap is the server's
 to apply, and the model's rank order is returned untouched.
+
+`POST /me/recommendations/{show_id}/dismiss` is tested here rather than in a file
+of its own, because NEU-1112's contract doc names this module as its test home
+and because AC 1 is naturally one test that dismisses and then refetches.
 """
 
 from datetime import UTC, datetime, timedelta
 
 import pytest
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
 from tvbf.app.models import (
     MATCHED_VIA_NAME,
     SET_STATUS_FAILED,
     SET_STATUS_SUCCEEDED,
+    ActivityEvent,
     UserRecommendation,
+    UserRecommendationDismissal,
     UserRecommendationSet,
+    UserShowRating,
     UserShowWatch,
 )
-from tvbf.catalog.models import Genre, Network, Show, ShowGenre, ShowNetwork
+from tvbf.catalog.models import (
+    Genre,
+    Network,
+    Show,
+    ShowGenre,
+    ShowNetwork,
+    ShowRecommendation,
+    TrendingShow,
+)
 from tvbf.main import app
+from tvbf.recommendations import exclusion
 
 _BASE = datetime(2026, 8, 15, 12, 0, tzinfo=UTC)
 
@@ -341,3 +358,237 @@ async def test_nothing_surviving_costs_one_query(authed_client, session):
     ]
     assert r.json() == {"recommendations": []}
     assert len(payload_queries) == 1, payload_queries
+
+
+# ---------------------------------------------------------------------------
+# POST /me/recommendations/{show_id}/dismiss (NEU-1178)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_dismiss_refuses_an_anonymous_caller(session):
+    """403 rather than 401: `require_csrf` is a route-level dependency and runs
+    before `get_current_user`, so a caller with neither is refused on the CSRF
+    token first. Either way nothing is written."""
+    show = await _show(session, 812000, "Anon")
+    await session.commit()
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="https://test") as c:
+        r = await c.post(f"/me/recommendations/{show.id}/dismiss")
+    assert r.status_code == 403
+    assert (await session.scalars(select(UserRecommendationDismissal))).all() == []
+
+
+@pytest.mark.asyncio
+async def test_dismiss_requires_csrf(authed_client, session):
+    show = await _show(session, 812001, "No CSRF")
+    await session.commit()
+
+    r = await authed_client.post(
+        f"/me/recommendations/{show.id}/dismiss",
+        headers={"X-CSRF-Token": ""},
+    )
+
+    assert r.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_dismiss_is_204_with_no_body(authed_client, session):
+    show = await _show(session, 812002, "Dismissed")
+    await session.commit()
+
+    r = await authed_client.post(f"/me/recommendations/{show.id}/dismiss")
+
+    assert r.status_code == 204
+    assert r.content == b""
+
+
+@pytest.mark.asyncio
+async def test_dismiss_is_idempotent_and_leaves_one_row(authed_client, session):
+    """AC 2: 204 both times, `ON CONFLICT DO NOTHING`, one row."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    show = await _show(session, 812003, "Twice")
+    await session.commit()
+
+    first = await authed_client.post(f"/me/recommendations/{show.id}/dismiss")
+    second = await authed_client.post(f"/me/recommendations/{show.id}/dismiss")
+
+    assert [first.status_code, second.status_code] == [204, 204]
+    rows = (
+        await session.scalars(
+            select(UserRecommendationDismissal).where(
+                UserRecommendationDismissal.user_id == user.id
+            )
+        )
+    ).all()
+    assert [row.show_id for row in rows] == [show.id]
+
+
+@pytest.mark.asyncio
+async def test_dismiss_404s_on_a_show_that_does_not_exist(authed_client):
+    r = await authed_client.post("/me/recommendations/812999/dismiss")
+
+    assert r.status_code == 404
+    assert r.json() == {"detail": "not_found"}
+
+
+@pytest.mark.asyncio
+async def test_dismissing_a_show_never_recommended_succeeds(authed_client, session):
+    """AC 7: the never-recommend list is about future passes as much as the
+    current set, so the endpoint never looks at the set."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    show = await _show(session, 812004, "Found By Search")
+    await session.commit()
+
+    r = await authed_client.post(f"/me/recommendations/{show.id}/dismiss")
+
+    assert r.status_code == 204
+    assert await exclusion.load_show_ids_never_to_recommend(session, user_id=user.id) == {show.id}
+
+
+@pytest.mark.asyncio
+async def test_dismissing_removes_the_card_and_promotes_the_next(authed_client, session):
+    """AC 1, end to end: dismiss, refetch, the replacement appears, ranks intact."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    shows = []
+    for rank in range(1, 14):
+        show = await _show(session, 812100 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        shows.append(show)
+    await session.commit()
+
+    before = (await authed_client.get("/me/recommendations")).json()["recommendations"]
+    assert [i["rank"] for i in before] == list(range(1, 13))
+
+    assert (
+        await authed_client.post(f"/me/recommendations/{shows[0].id}/dismiss")
+    ).status_code == 204
+
+    after = (await authed_client.get("/me/recommendations")).json()["recommendations"]
+    assert [i["rank"] for i in after] == list(range(2, 14))
+    assert shows[0].id not in [i["id"] for i in after]
+
+
+@pytest.mark.asyncio
+async def test_dismissing_writes_no_activity_event(authed_client, session):
+    """AC 9: a dismissal is private. Nothing reaches the friend feed, and
+    `my_shows_service.add`'s activity emit is exactly what `dismiss` omits."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    show = await _show(session, 812005, "Quiet")
+    await session.commit()
+
+    assert (await authed_client.post(f"/me/recommendations/{show.id}/dismiss")).status_code == 204
+
+    events = (
+        await session.scalars(select(ActivityEvent).where(ActivityEvent.actor_id == user.id))
+    ).all()
+    ratings = (
+        await session.scalars(select(UserShowRating).where(UserShowRating.user_id == user.id))
+    ).all()
+    memberships = (
+        await session.scalars(select(UserShowWatch).where(UserShowWatch.user_id == user.id))
+    ).all()
+    assert events == []
+    assert ratings == []
+    assert memberships == []
+
+
+@pytest.mark.asyncio
+async def test_one_users_dismissal_never_affects_anothers_list(authed_client, session, make_user):
+    """AC 8, at the surface."""
+    user = authed_client.user  # type: ignore[attr-defined]
+    other = await make_user(email="other-dismisser@example.com", display_name="Other")
+    rec_set = await _set(session, user)
+    show = await _show(session, 812006, "Shared")
+    await _rec(session, rec_set, rank=1, show=show)
+    session.add(UserRecommendationDismissal(user_id=other.id, show_id=show.id))
+    await session.commit()
+
+    items = (await authed_client.get("/me/recommendations")).json()["recommendations"]
+
+    assert [i["id"] for i in items] == [show.id]
+
+
+@pytest.mark.asyncio
+async def test_a_dismissal_costs_the_read_no_extra_queries(authed_client, session):
+    """AC 13: still three — the rows with their anti-join, plus
+    `hydrate_show_refs`' pair — however many rows a dismissal suppresses."""
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    user = authed_client.user  # type: ignore[attr-defined]
+    rec_set = await _set(session, user)
+    for rank in range(1, 26):
+        show = await _show(session, 812200 + rank, f"Show {rank:02d}")
+        await _rec(session, rec_set, rank=rank, show=show)
+        if rank % 2 == 1:
+            session.add(UserRecommendationDismissal(user_id=user.id, show_id=show.id))
+    await session.commit()
+
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        r = await authed_client.get("/me/recommendations")
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    payload_queries = [
+        s
+        for s in statements
+        if "user_recommendation" in s or "show_genre" in s or "show_network" in s
+    ]
+    assert len(r.json()["recommendations"]) == 12
+    assert len(payload_queries) == 3, payload_queries
+
+
+@pytest.mark.asyncio
+async def test_a_dismissal_does_not_reach_any_other_surface(authed_client, session):
+    """AC 12 / spec §9: dismissal is scoped to `/me/recommendations` and the
+    weekly pass, and nothing else.
+
+    Trending, most anticipated and similar shows are catalog facts rather than
+    personal suggestions — "what is trending this week" is a statement about the
+    world, and removing yourself from it silently is a different feature with a
+    different name. Most decisively, this ticket ships **no un-dismiss**: under a
+    wider rule one tap would permanently remove a show from browse-adjacent
+    surfaces with no way back, so a user must still be able to *find* what they
+    dismissed.
+
+    All five surfaces are asserted rather than the two a user reaches for most,
+    because "none of them consults `recommendations/exclusion.py`" is the kind of
+    claim that stays true only until somebody adds the anti-join for symmetry.
+    """
+    dismissed = await _show(session, 812007, "Still Findable", first_air_date=_BASE.date())
+    source = await _show(session, 812008, "Source", first_air_date=_BASE.date())
+    upcoming = await _show(
+        session, 812009, "Still Anticipated", first_air_date=_BASE.date() + timedelta(days=30)
+    )
+    session.add_all(
+        [
+            TrendingShow(rank=1, show_id=dismissed.id, captured_at=_BASE),
+            ShowRecommendation(source_show_id=source.id, target_show_id=dismissed.id, rank=1),
+        ]
+    )
+    await session.commit()
+    for show_id in (dismissed.id, upcoming.id):
+        assert (
+            await authed_client.post(f"/me/recommendations/{show_id}/dismiss")
+        ).status_code == 204
+
+    detail = await authed_client.get(f"/shows/{dismissed.id}")
+    listed = await authed_client.get("/shows", params={"search": "Still Findable"})
+    trending = await authed_client.get("/trending")
+    similar = await authed_client.get(f"/shows/{source.id}/similar")
+    anticipated = await authed_client.get("/anticipated")
+
+    assert detail.status_code == 200
+    assert [item["id"] for item in listed.json()["items"]] == [dismissed.id]
+    assert dismissed.id in [item["id"] for item in trending.json()["shows"]]
+    assert [item["id"] for item in similar.json()] == [dismissed.id]
+    assert upcoming.id in [item["id"] for item in anticipated.json()]

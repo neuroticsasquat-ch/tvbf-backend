@@ -86,13 +86,17 @@ async def list_current_recommendations(
     what absorbs the loss. A write-time copy of this filter would be the weaker
     half of it and would make a resurrected show permanently unrecommendable.
 
-    A show the reader has a record for is suppressed on the same terms and for
-    the same reason (NEU-1175). §8's never-recommend rule was enforced only at
-    generation time, so a show added to My Shows on Monday held a card until
-    Sunday's pass superseded the whole set. It belongs *here* rather than in the
-    service because what a reader's current set **is** already includes what they
-    have not already met — put it a layer up and the weekly pass and the API can
-    come to disagree about it, which is the thing this module exists to prevent.
+    A show this reader must never be recommended is suppressed on the same terms
+    and for the same reason (NEU-1175). §8's never-recommend rule was enforced
+    only at generation time, so a show added to My Shows on Monday held a card
+    until Sunday's pass superseded the whole set. Since NEU-1178 that set also
+    carries the shows the reader has **dismissed**, which is what makes the
+    dismiss endpoint take effect on the very next read of this function.
+
+    It belongs *here* rather than in the service because what a reader's current
+    set **is** already includes what they must never be recommended — put it a
+    layer up and the weekly pass and the API can come to disagree about it, which
+    is the thing this module exists to prevent.
     The rule itself is `recommendations/exclusion.py`'s, expressed once and used
     at both ends. The weekly pass is untouched by it: the pass reads
     `get_current_set` for the hash, and this function's only `src/` caller is the
@@ -118,7 +122,7 @@ async def list_current_recommendations(
                 UserRecommendation.set_id == _current_set_id(user_id),
                 Show.adult.is_(False),
                 Show.deleted_upstream_at.is_(None),
-                UserRecommendation.show_id.not_in(exclusion.show_ids_with_a_record(user_id)),
+                UserRecommendation.show_id.not_in(exclusion.show_ids_never_to_recommend(user_id)),
             )
             .order_by(UserRecommendation.rank)
         )

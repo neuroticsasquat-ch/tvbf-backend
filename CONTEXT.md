@@ -168,10 +168,22 @@ It is a label, not a magnitude: there is no ranking layer downstream that a numb
 _Avoid_: score, weight
 
 **Taste payload**:
-The compiled JSON describing one user's watch behaviour, sent to the model as its entire input. **Columnar** — one header naming the fields, then rows grouped by taste signal — so the label and the field names are paid for once rather than once per show. One object doing **three jobs**: it is the model's input, it is the input to the regeneration hash, and it is the exclusion list, since every row in it names a show the user already has a record for.
+The compiled JSON describing one user's watch behaviour, sent to the model as its entire input. **Columnar** — one header naming the fields, then rows grouped by taste signal — so the label and the field names are paid for once rather than once per show. One object doing **three jobs**: it is the model's input, it is the input to the regeneration hash, and it is the exclusion list. Most of its rows name a show the user already has a record for; its `exclude` group does not have to, because a **dismissal** can name a show the user has never seen.
 
 Being the model's *entire* input is what makes the regeneration gate provably rather than approximately correct: identical bytes mean identical output. The exclusion job is the loosest of the three — the payload caps its INTERESTED rows, so it is what the prompt is told rather than the guarantee, and a post-resolution filter is what actually enforces the rule.
 _Avoid_: prompt, profile, feature vector
+
+**Never-recommend set**:
+Every show one user must never be recommended: the four project-spec §8 sources they have a record for — My Shows membership, a show rating, any episode watch, any episode rating — plus every show they have **dismissed**.
+
+Defined **once**, in `recommendations/exclusion.py`, and enforced at both ends: the weekly pass bans them in the payload it sends and filters them out of what comes back, and `GET /me/recommendations` suppresses them at read time as a live join. Two expressions of one sentence, one in Python and one in SQL, is exactly the drift that module exists to prevent — so a sixth source goes there and nowhere else, and a client never re-implements the rule.
+_Avoid_: blocklist, exclusion list
+
+**Dismissal**:
+A user removing one show from their recommendations. An *exclusion*, deliberately **not** a taste signal: it never reaches `taste_for_user`, never lands in `not_liked`, and the model is never told the user disliked anything — `not_liked` is something the model generalises from, while a dismissal is a statement about one row. Dismiss three prestige dramas you have already seen elsewhere and a taste-signal implementation teaches the model to stop recommending prestige drama.
+
+The show need not have been recommended: one found by search is dismissible, which is why this is the one source of the never-recommend set that is not a record of having seen anything. Permanent and, today, not reversible.
+_Avoid_: not interested, negative rating, thumbs down
 
 **Resolution**:
 Turning a model-authored `title` + `release_year` into a `catalog.show` surrogate id. Entirely local — fold-exact on the show name within ±1 year, then the same against its AKAs, then drop — so no upstream call is involved at any point (ADR-0002), and no fuzzy threshold either.

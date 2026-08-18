@@ -701,6 +701,65 @@ class UserRecommendation(Base):
     """
 
 
+class UserRecommendationDismissal(Base):
+    """One show this user has removed from their recommendations, for good (NEU-1178).
+
+    The fifth source of the never-recommend set (`recommendations/exclusion.py`),
+    and deliberately **not** a taste signal. It never reaches `taste_for_user`
+    and never lands in `not_liked`: `not_liked` is something the model
+    generalises from, while a dismissal is a statement about one row. Dismiss
+    three prestige dramas you have already seen elsewhere and a `not_liked`
+    implementation teaches the model to stop recommending prestige drama — a
+    lesson the user never gave.
+
+    A dismissal outlives every set the user will ever be given, which is why it
+    is a table of its own rather than a column on `user_recommendation`: the
+    show need not have been recommended at all (a show found by search is
+    dismissible), and the sets are immutable so that the weekly swap stays
+    atomic.
+
+    The pair **is** the fact, so `(user_id, show_id)` is the primary key rather
+    than a surrogate — `user_show_watch`'s shape, and the sibling whose access
+    pattern this one copies exactly. `user_recommendation` carries a UUID
+    because a recommendation is a row with its own identity (rank, reason,
+    `recovered_from`); this is not that. The key also gives
+    `ON CONFLICT DO NOTHING` its index target for free.
+
+    **No standalone index on `show_id`**, unlike `user_recommendation` — again
+    `user_show_watch`'s call. No query filters on `show_id` alone; the only
+    consumer would be Postgres's FK-cascade check when a `catalog.show` row is
+    deleted, and shows are *tombstoned*, not deleted (ADR-0005).
+
+    `created_at` is carried so a future settings surface can list a user's
+    dismissals (NEU-1177). Nothing reads it today.
+    """
+
+    __tablename__ = "user_recommendation_dismissal"
+    __table_args__ = (
+        PrimaryKeyConstraint("user_id", "show_id", name="pk_user_recommendation_dismissal"),
+        {"schema": "app"},
+    )
+
+    # Every constraint here is named, including the two foreign keys — stricter
+    # than `user_show_watch`, which names only its cross-schema one. The test
+    # suite builds this table with `create_all` and production builds it with
+    # Alembic, and the two only agree because the names are stated rather than
+    # defaulted.
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_urd_user"),
+        nullable=False,
+    )
+    show_id: Mapped[int] = mapped_column(
+        BigInteger,
+        ForeignKey("catalog.show.id", ondelete="CASCADE", name="fk_urd_show"),
+        nullable=False,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
 # The append-only trigger rides the table's own create event so the two ways this
 # table comes into being — `alembic upgrade` in dev and prod, `create_all` in the
 # test suite — produce the same object. Wiring it only into the migration would

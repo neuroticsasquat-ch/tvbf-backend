@@ -108,8 +108,8 @@ LEDGER: dict[str, str] = {
     # recommendations/exclusion (NEU-1175) — the never-recommend rule's two
     # episode-grain branches. A special somebody watched or rated is a record
     # they have met the show, exactly like a regular episode.
-    "exclusion.show_ids_with_a_record": EXCLUDE_NOTHING,
-    "exclusion.load_show_ids_with_a_record": EXCLUDE_NOTHING,
+    "exclusion.show_ids_never_to_recommend": EXCLUDE_NOTHING,
+    "exclusion.load_show_ids_never_to_recommend": EXCLUDE_NOTHING,
 }
 
 

@@ -31,6 +31,7 @@ from tvbf.app.models import (
     SET_STATUS_NO_MATCHES,
     SET_STATUS_SUCCEEDED,
     UserRecommendation,
+    UserRecommendationDismissal,
     UserRecommendationSet,
     UserShowWatch,
 )
@@ -874,3 +875,72 @@ class TestATitleTheModelDressed:
         assert [(row.rank, row.show_id, row.recovered_from) for row in rows] == [
             (1, DRESSED + 3, None)
         ]
+
+
+class TestADismissedShow:
+    """NEU-1178's AC 6, at the only grain that can settle it.
+
+    The never-recommend set the pass filters against is the same object the
+    payload was built from, so a dismissal reaches the pass without a second
+    query and without a threshold of its own. What the pass has to get right is
+    that a dismissed show is *named to* the model in `exclude` and is dropped —
+    and counted as an exclusion, not as an unresolved title — if it comes back
+    anyway.
+    """
+
+    @respx.mock
+    async def test_the_payload_names_it_in_exclude_and_the_row_is_dropped(
+        self, session, user, provider
+    ):
+        session.add(UserRecommendationDismissal(user_id=user.id, show_id=CANDIDATE))
+        await session.commit()
+        _mock(_answer(_recommendation("Dark", 2017), _recommendation("Shōgun", 2024)))
+
+        assert await run(_parse_args([])) == 0
+
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_SUCCEEDED
+        assert [row.show_id for row in await _rows(session, stored.id)] == [CANDIDATE + 1]
+        assert ["Dark", 2017] in stored.compiled_payload["exclude"]
+
+    @respx.mock
+    async def test_naming_only_dismissed_shows_is_counted_as_excluded_not_unresolved(
+        self, session, user, provider, caplog
+    ):
+        """The distinction the counter exists for: "we could not find them" and
+        "every one was already off limits" are different problems with different
+        fixes, and only the second is the model ignoring the instruction."""
+        session.add_all(
+            [
+                UserRecommendationDismissal(user_id=user.id, show_id=CANDIDATE),
+                UserRecommendationDismissal(user_id=user.id, show_id=CANDIDATE + 1),
+            ]
+        )
+        await session.commit()
+        route = _mock(_answer(_recommendation("Dark", 2017), _recommendation("Shōgun", 2024)))
+
+        assert await run(_parse_args([])) == 0
+
+        # One call, not two: two named titles is below `MIN_JUDGED_SUGGESTIONS`,
+        # so a fraction over them is noise and the answer is not judged at all.
+        # What is being pinned here is the counter, not the retry.
+        assert route.call_count == 1
+        stored = await _only_set(session, user.id)
+        assert stored.status == SET_STATUS_NO_MATCHES
+        assert await _rows(session, stored.id) == []
+        assert "(0 unresolved, 2 excluded, 0 duplicated)" in caplog.text
+
+    @respx.mock
+    async def test_another_users_dismissal_does_not_reach_this_pass(
+        self, session, user, provider, make_user
+    ):
+        """AC 8, at the pass end."""
+        other = await make_user(email="other-dismisser@example.com")
+        session.add(UserRecommendationDismissal(user_id=other.id, show_id=CANDIDATE))
+        await session.commit()
+        _mock(_answer(_recommendation("Dark", 2017)))
+
+        assert await run(_parse_args(["--user", str(user.id)])) == 0
+
+        stored = await _only_set(session, user.id)
+        assert [row.show_id for row in await _rows(session, stored.id)] == [CANDIDATE]

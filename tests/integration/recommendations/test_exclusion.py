@@ -1,11 +1,14 @@
-"""The never-recommend set, source by source (NEU-1175).
+"""The never-recommend set, source by source (NEU-1175, NEU-1178).
 
 Project spec §8 names four sources and this module is where that sentence lives,
 so what is asserted here is that each one suppresses on its own, that they
-compose, and that they are scoped to the user asking. Both shapes of the answer
-are exercised against the same rows, because a `Select` used as an anti-join
-operand and a materialised `frozenset` disagreeing is exactly the drift the
-module exists to prevent.
+compose, and that they are scoped to the user asking. NEU-1178's dismissal is the
+fifth, and the one that is *not* a §8 record source: it can name a show the user
+has never met, which is the property its own test below turns on.
+
+Both shapes of the answer are exercised against the same rows, because a `Select`
+used as an anti-join operand and a materialised `frozenset` disagreeing is
+exactly the drift the module exists to prevent.
 """
 
 from datetime import UTC, datetime, timedelta
@@ -17,6 +20,7 @@ from sqlalchemy import select
 from tvbf.app.models import (
     UserEpisodeRating,
     UserEpisodeWatch,
+    UserRecommendationDismissal,
     UserShowRating,
     UserShowWatch,
 )
@@ -30,9 +34,10 @@ MEMBERSHIP = 971_000
 SHOW_RATED = 971_100
 EPISODE_WATCHED = 971_200
 EPISODE_RATED = 971_300
+DISMISSED = 971_500
 UNTOUCHED = 971_400
 
-ALL_SHOWS = (MEMBERSHIP, SHOW_RATED, EPISODE_WATCHED, EPISODE_RATED, UNTOUCHED)
+ALL_SHOWS = (MEMBERSHIP, SHOW_RATED, EPISODE_WATCHED, EPISODE_RATED, DISMISSED, UNTOUCHED)
 
 
 @pytest.fixture
@@ -61,11 +66,11 @@ async def _ids(session, user) -> frozenset[int]:
 
     Every test goes through here so that neither shape can pass alone.
     """
-    materialised = await exclusion.load_show_ids_with_a_record(session, user_id=user.id)
+    materialised = await exclusion.load_show_ids_never_to_recommend(session, user_id=user.id)
     via_select = frozenset(
         (
             await session.scalars(
-                select(Show.id).where(Show.id.in_(exclusion.show_ids_with_a_record(user.id)))
+                select(Show.id).where(Show.id.in_(exclusion.show_ids_never_to_recommend(user.id)))
             )
         ).all()
     )
@@ -114,7 +119,21 @@ async def test_an_episode_rating_suppresses_its_show_on_its_own(session, make_us
     assert await _ids(session, user) == {EPISODE_RATED}
 
 
-async def test_all_four_sources_compose_and_the_untouched_show_is_absent(session, make_user, shows):
+async def test_a_dismissal_suppresses_on_its_own(session, make_user, shows):
+    """The fifth source, and the one no §8 record backs (NEU-1178).
+
+    The user has never watched, rated or added this show — a dismissal is the
+    whole reason it is excluded, which is what makes the endpoint's "the show
+    need not be in the current set" rule coherent.
+    """
+    user = await make_user()
+    session.add(UserRecommendationDismissal(user_id=user.id, show_id=DISMISSED))
+    await session.commit()
+
+    assert await _ids(session, user) == {DISMISSED}
+
+
+async def test_all_five_sources_compose_and_the_untouched_show_is_absent(session, make_user, shows):
     user = await make_user()
     session.add_all(
         [
@@ -122,6 +141,7 @@ async def test_all_four_sources_compose_and_the_untouched_show_is_absent(session
             UserShowRating(user_id=user.id, show_id=SHOW_RATED, stars=Decimal("5.0")),
             UserEpisodeWatch(user_id=user.id, episode_id=EPISODE_WATCHED + 1),
             UserEpisodeRating(user_id=user.id, episode_id=EPISODE_RATED + 1, stars=Decimal("2.0")),
+            UserRecommendationDismissal(user_id=user.id, show_id=DISMISSED),
         ]
     )
     await session.commit()
@@ -131,6 +151,7 @@ async def test_all_four_sources_compose_and_the_untouched_show_is_absent(session
         SHOW_RATED,
         EPISODE_WATCHED,
         EPISODE_RATED,
+        DISMISSED,
     }
 
 
@@ -161,12 +182,18 @@ async def test_another_users_records_never_appear(session, make_user, shows):
             UserEpisodeRating(
                 user_id=theirs.id, episode_id=EPISODE_RATED + 1, stars=Decimal("1.0")
             ),
+            UserRecommendationDismissal(user_id=theirs.id, show_id=DISMISSED),
         ]
     )
     await session.commit()
 
     assert await _ids(session, mine) == {MEMBERSHIP}
-    assert await _ids(session, theirs) == {SHOW_RATED, EPISODE_WATCHED, EPISODE_RATED}
+    assert await _ids(session, theirs) == {
+        SHOW_RATED,
+        EPISODE_WATCHED,
+        EPISODE_RATED,
+        DISMISSED,
+    }
 
 
 async def test_removing_the_record_removes_the_exclusion(session, make_user, shows):

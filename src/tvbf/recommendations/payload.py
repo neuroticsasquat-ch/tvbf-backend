@@ -51,13 +51,14 @@ hash input, which is a silent skip rather than a loud one.
 
 ## Exclusion is a wider set than the rows
 
-`excluded_show_ids` is every show the user has any record for — My Shows, any
-episode watch, any show rating, **any episode rating** — while the rows are only
-the shows that reached a tier, minus whatever the INTERESTED cap dropped. The two
-deliberately differ, in the safe direction: a show the payload never mentions is
-still one we must never recommend back.
+`excluded_show_ids` is every show the user must never be recommended — the four
+sources they have a record for (My Shows, any episode watch, any show rating,
+**any episode rating**) plus every show they have **dismissed** (NEU-1178) —
+while the rows are only the shows that reached a tier, minus whatever the
+INTERESTED cap dropped. The two deliberately differ, in the safe direction: a
+show the payload never mentions is still one we must never recommend back.
 
-That is why the set comes from `exclusion.load_show_ids_with_a_record` rather
+That is why the set comes from `exclusion.load_show_ids_never_to_recommend` rather
 than from the tiers. `taste_for_user` deliberately does not let an episode rating
 *enrol* a show — an episode rating refines a show already in the universe and is
 not a signal of its own — but "we have no opinion about this show" and "the user
@@ -103,7 +104,7 @@ from tvbf.app.repos import show_repo
 from tvbf.recommendations import exclusion
 from tvbf.recommendations.taste import TasteLabel, TasteSignal, taste_for_user
 
-PROMPT_VERSION = "4"
+PROMPT_VERSION = "5"
 """The version of the request/response contract this payload is hashed against (§9.1).
 
 It lives here because the hash needs one and the hash is this module's. **Bump it
@@ -120,6 +121,16 @@ contract rather than for the prose. Without the bump a user whose taste has not
 moved keeps the set that is missing those rows until something in their history
 changes, and the fix is never exercised against a real user — which is the only
 way to evaluate it.
+
+Version 5 is a prose change and bumps for the ordinary reason (NEU-1178): two
+clauses of the instruction asserted that everything named in the user message is
+a series the person *already has*, which a dismissal makes false — the endpoint
+deliberately allows dismissing a show the user has never met. The operative ban
+is unchanged, and the bump is still right: this project's own record shows the
+model reasoning *from* those justification clauses rather than merely obeying the
+imperative, so a model finding something in `exclude` it is confident the user
+has not seen has a plausible route to deciding the premise does not apply.
+Dismissal is permanent, so that failure is the expensive one.
 """
 
 COLUMNS = ("title", "year", "pct", "stars")
@@ -231,7 +242,7 @@ async def build_payload(
     now_dt = now if now is not None else datetime.now(UTC)
 
     signals = await taste_for_user(db, user_id=user_id, now=now_dt)
-    excluded = await exclusion.load_show_ids_with_a_record(db, user_id=user_id)
+    excluded = await exclusion.load_show_ids_never_to_recommend(db, user_id=user_id)
 
     grouped, interested_before_cap = _group(signals)
     shown_ids = {sid for ids in grouped.values() for sid in ids}
@@ -319,12 +330,14 @@ def _exclude_rows(
 ) -> list[_ExcludeRow]:
     """The `exclude` group: every show the model must not name that no tier shows.
 
-    These are the shows §8's filter drops that the payload otherwise never
-    mentions — the INTERESTED cap's overflow, a show carrying only an episode
-    rating, a show no tier rule covers. Before this group existed the model could
-    not avoid them, because it was never told they were there, and every one it
-    named was silently discarded after the call. A 2026-08-17 production run named
-    25 of 25 titles that were already in its input and stored none of them.
+    These are the shows the never-recommend filter drops that the payload
+    otherwise never mentions — the INTERESTED cap's overflow, a show carrying
+    only an episode rating, a show no tier rule covers, and since NEU-1178 a show
+    the user dismissed, which may be one they have never seen at all. Before this
+    group existed the model could not avoid them, because it was never told they
+    were there, and every one it named was silently discarded after the call. A
+    2026-08-17 production run named 25 of 25 titles that were already in its input
+    and stored none of them.
 
     Sorted on `_rows`' key so the order is total: the hash is over these bytes,
     and a query-plan change reordering them would regenerate every user for
