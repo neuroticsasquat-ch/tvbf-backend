@@ -61,13 +61,15 @@ class Settings(BaseSettings):
     #
     # `RECOMMENDATION_MODEL` is deliberately **not defaulted**, and NEU-1180 is
     # why that stays true rather than why it should be revisited: the id has now
-    # changed once (`ByteDance/Seed-2.0-mini`, 2026-08-18, on the capacity
-    # measurement in `scripts/probe_deepinfra_capacity.py`), and it is recorded
-    # in `.env.example`, which a deployment reads once, rather than here, where
-    # it would be a claim the client keeps making after the id is retired
-    # upstream or outgrown. Asserting one from memory buys a non-retryable 404
-    # that looks like an outage. Server-side only — nothing about the provider
-    # reaches the SPA.
+    # changed once, on the capacity measurement in
+    # `scripts/probe_deepinfra_capacity.py`. A default here would be a claim the
+    # client keeps making after the id is retired upstream or outgrown, and
+    # asserting one from memory buys a non-retryable 404 that looks like an
+    # outage. **The running id is not recorded anywhere in this repo** — not
+    # here and not in `.env.example` — because the repo is public and the id is
+    # the output of an expensive two-stage screen; it is set in the Coolify UI,
+    # and the measurements behind it are in the umbrella `docs/`. Server-side
+    # only — nothing about the provider reaches the SPA.
     deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
     recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
     # This ceiling is **ours, not the provider's** (NEU-1099). DeepInfra's own

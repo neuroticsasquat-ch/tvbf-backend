@@ -82,36 +82,33 @@ Ctrl-C — keeps everything already measured.
         --payload /tmp/failed_payload.json --padding /tmp/padding_shows.json \
         --budget 4.00 --out /tmp/capacity.jsonl
 
-## What it found (2026-08-18, ~$5 of API spend, 100 models)
+## What it found
 
-Usable of 25, at each payload size, for the finalists:
+**Deliberately not recorded here.** The results — the finalists' curves, their
+cost per user per year, and the id production runs — live in the umbrella
+`docs/recommendations-model-measurements.md`, which is not a git repo. This
+repository is public and the running model id is the one part of this subsystem
+worth keeping to ourselves.
 
-| model                              |  260 |  500 | 1000 | 2000 | $/user/yr |
-| ---------------------------------- | ---: | ---: | ---: | ---: | --------: |
-| ByteDance/Seed-2.0-pro             |   25 |   25 |   25 |   21 |     $0.25 |
-| openai/gpt-oss-120b-Ultra          |  err |   23 |   23 |   20 |     $0.09 |
-| ByteDance/Seed-2.0-mini            |   25 |   25 |   24 |   20 |     $0.04 |
-| deepseek-ai/DeepSeek-V4-Pro-0813   |   19 |   23 |   20 |   18 |     $0.38 |
-| deepseek-ai/DeepSeek-V4-Flash-0731 |    0 |    0 |    1 |    0 |     $0.02 |
+Two findings are worth carrying in the open, because they are about *method*
+rather than about any model, and re-running this script without them wastes the
+spend:
 
-`DeepSeek-V4-Flash-0731` was the id production had been running, and it scores
-**0 at the size the library already is** — so this is a model that cannot do the
-job today, not one that will stop scaling later. Everything else listed clears
-the 12 a full grid needs at 2,000 series, eight times the current library.
+**The best-complying model gave the worst answers.** A model that topped the
+curve returned coherent-but-generic prestige-adjacent titles for a profile that
+wanted something specific, while a lower scorer on the same payload matched the
+account's known-good set from the day before. This sweep screens out models that
+cannot obey the exclusion rule; it does not pick among the ones that can. **Any
+model change needs both stages — this curve, then a human reading one real
+payload's output.**
 
-`ByteDance/Seed-2.0-mini` is what NEU-1180 set, and deliberately not the best
-scorer. Run against the real payload, `Seed-2.0-pro` returned Boardwalk Empire,
-Justified and The Shield, then Dexter, Prison Break, The Mentalist, Heroes,
-Modern Family and The Big Bang Theory — for a profile topped by prestige cable
-drama. `mini` returned Broadchurch, Happy Valley, Line of Duty, The Bridge, Top
-of the Lake, Sharp Objects, Station Eleven, Normal People and Gentleman Jack,
-coherent with the same account's known-good set from the day before.
+**This sweep cannot screen latency and will hand you a model the client refuses
+to wait for.** It scores at `timeout=240`, far above `retry.DEFAULT_RETRY_POLICY`.
+An id has been chosen on this curve, never timed, and set — and both production
+accounts came back `failed` with four timed-out attempts apiece. Run
+`scripts/probe_deepinfra.py --model <id>` at account scale before setting
+anything.
 
-That is the finding this script cannot reach on its own, and the reason it is
-worth stating here: **the best-complying model gave the worst answers**. The
-curve screens out models that cannot obey; it does not pick among the ones that
-can. Any future model change needs both stages — this sweep, then a human
-reading one real payload's output.
 """
 
 import argparse
