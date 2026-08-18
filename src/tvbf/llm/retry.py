@@ -53,12 +53,31 @@ class RetryPolicy:
     """How many attempts, how long each may take, and how long to wait between.
 
     `timeout` is generous because the workload is: one call carries a user's
-    whole watch history and asks for 25 recommendations, and DeepSeek spends
+    whole watch history and asks for 25 recommendations, and the model spends
     reasoning tokens before the first visible one.
+
+    **It is generous by measurement, and 60s was not enough** (NEU-1180). The
+    capacity sweep that chose `ByteDance/Seed-2.0-mini` scored its calls at
+    `timeout=240`, so it ranked models on compliance under a ceiling four times
+    production's, and the model it picked runs a **49.2s median / 57.0s max** on
+    a 522-row payload — inside 60s in a lab, outside it in production. Both real
+    accounts were recorded `failed` on 2026-08-18 with a null `raw_response`,
+    four attempts apiece, 4m05s end to end: the retry curve exhausting on
+    timeouts. The number below has to clear the *model's* latency, not the
+    payload's size, so re-measure it with `scripts/probe_deepinfra.py --model`
+    whenever `RECOMMENDATION_MODEL` changes — a model swap moves this.
+
+    Two things it multiplies into, before anyone raises it further. `max_retries`
+    makes a wholly dead call cost `4 x timeout` for that user, and the pass is
+    sequential, so the ceiling on a weekly run is that times the user count. And
+    a timeout is the *silent* failure of the two: an under-waited call does not
+    surface as an error, it surfaces as a user whose page never changed.
     """
 
     max_retries: int = 3
-    timeout: float = 60.0
+    # 2.6x the measured max, which is headroom for a slower network rather than
+    # for a slower model — a model needing more than this is the wrong model.
+    timeout: float = 150.0
     initial_backoff: float = 0.5
     max_backoff: float = 8.0
     jitter: float = 0.25
