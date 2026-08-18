@@ -225,10 +225,10 @@ class OpenAICompatClient:
             raise ValueError("DEEPINFRA_API_KEY is not set — LLM requests cannot be authenticated")
         if not model:
             raise ValueError(
-                "RECOMMENDATION_MODEL is not set — there is no model to call. The exact "
-                "DeepSeek model id available on DeepInfra is NEU-1100's to measure; it is "
-                "deliberately not defaulted, because a wrong id asserted from memory is a "
-                "non-retryable 404 in production."
+                "RECOMMENDATION_MODEL is not set — there is no model to call. The id "
+                "this deployment should run is recorded in .env.example and has changed "
+                "once already (NEU-1180); it is deliberately not defaulted, because a "
+                "wrong id asserted from memory is a non-retryable 404 in production."
             )
         self._model = model
         # Shared by default; pass `limiter` explicitly for an isolated budget.

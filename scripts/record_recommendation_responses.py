@@ -11,7 +11,7 @@ response bodies DeepInfra sent, and `README.md` there records what each one is.
 Run inside the container with `DEEPINFRA_API_KEY` set in `.env`:
 
     docker compose exec tvbf-backend python scripts/record_recommendation_responses.py \
-        --model deepseek-ai/DeepSeek-V4-Pro-0813
+        --model ByteDance/Seed-2.0-mini
 
 **Pass `--model` unless your `.env` already holds the id `.env.example` records.**
 It defaults to `RECOMMENDATION_MODEL`, which is a local setting and drifts: a

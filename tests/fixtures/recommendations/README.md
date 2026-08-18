@@ -15,11 +15,19 @@ failure modes that matter are the ones nobody would think to write down. The
 | `obscure.json` | `deepseek-ai/DeepSeek-V4-Pro-0813` | Twenty-five from an international taste profile. One (`Twin Peaks: The Return`, 2017) resolves to **nothing** — a real catalog gap rather than a hallucination, since the mirror carries *Twin Peaks* (1990) and models the 2017 revival as a season of it. Four more (`Trapped` → *Ófærð*, `Deadwind` → *Karppi*, `The Chalet` → *Le Chalet*, `Suburra: Blood on Rome` → *Suburra: La Serie*) resolve only through the AKA tier, which is why that tier exists. |
 | `malformed.json` | `deepseek-ai/DeepSeek-R1-0528` | A reasoning model's answer: a `<think>` block ahead of the JSON, so the content does not decode. HTTP 200, `finish_reason: "stop"`, JSON mode requested and honoured as far as the provider is concerned. |
 
-Twenty-five because that is what §7 asks the weekly pass for; the model id is the
-one NEU-1100 measured and `.env.example` sets, not whatever a local `.env`
+Twenty-five because that is what §7 asks the weekly pass for; the model id is
+passed explicitly to the recorder, not inherited from whatever a local `.env`
 happens to hold — a fixture recorded from a model the pass will not call pins the
 output shape of the wrong thing. The reasoning model is deliberately a different
 id: it is the failure being recorded.
+
+**These two were recorded from the model `.env.example` named at the time, and it
+is no longer the one the pass calls.** NEU-1180 replaced
+`deepseek-ai/DeepSeek-V4-Pro-0813` with `ByteDance/Seed-2.0-mini` on a capacity
+measurement, so the recordings now sit one model behind production. That is
+tolerable — what they pin is the §7 output *shape*, which is the contract rather
+than the model — but retake them from the current id the next time that contract
+moves, and do not read `clean.json` as evidence of how the running model behaves.
 
 Two things to know before touching them.
 
