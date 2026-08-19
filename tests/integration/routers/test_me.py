@@ -627,3 +627,21 @@ async def test_my_shows_sort_my_rating_asc(authed_client, session):
     ids = [e["show"]["id"] for e in r.json()]
     # A (2.0), B (4.5), then unrated C last.
     assert ids == [a.id, b.id, c.id]
+
+
+@pytest.mark.asyncio
+async def test_personal_tracking_works_unverified(unverified_client, session):
+    """Personal tracking is never social (NEU-1161 §2) — an unverified account
+    can add a show and mark an episode watched."""
+    show = await _seed_show(session, show_id=920901)
+    await session.commit()
+
+    r = await unverified_client.put(f"/me/shows/{show.id}")
+    assert r.status_code == 204
+
+    r = await unverified_client.post(f"/me/episodes/{show.id * 100 + 1}/watched")
+    assert r.status_code == 201
+
+    r = await unverified_client.get("/me/shows")
+    assert r.status_code == 200
+    assert [row["show"]["id"] for row in r.json()] == [show.id]

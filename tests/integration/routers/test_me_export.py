@@ -50,8 +50,8 @@ async def _seed_show(
 
 
 @pytest.mark.asyncio
-async def test_export_returns_account_my_shows_and_watch_history(authed_client, session):
-    me = authed_client.user
+async def test_export_returns_account_my_shows_and_watch_history(unverified_client, session):
+    me = unverified_client.user
     await _seed_show(session, show_id=101, name="Alpha", episodes=[(10101, 1, 1), (10102, 1, 2)])
     await _seed_show(session, show_id=202, name="Beta", episodes=[(20201, 1, 1)])
 
@@ -87,7 +87,7 @@ async def test_export_returns_account_my_shows_and_watch_history(authed_client, 
     )
     await session.commit()
 
-    r = await authed_client.get("/me/export")
+    r = await unverified_client.get("/me/export")
     assert r.status_code == 200
     assert r.headers["content-type"].startswith("application/json")
     assert "attachment" in r.headers["content-disposition"]

@@ -170,8 +170,8 @@ async def test_verify_unknown_token_fails(client):
 
 
 @pytest.mark.asyncio
-async def test_me_response_includes_email_verified_at(authed_client):
-    r = await authed_client.get("/me")
+async def test_me_response_includes_email_verified_at(unverified_client):
+    r = await unverified_client.get("/me")
     assert r.status_code == 200
     body = r.json()
     assert "email_verified_at" in body

@@ -2,16 +2,20 @@
 
 - require_admin (bearer-token guard) — from test_auth.py
 - require_csrf (CSRF guard) — from test_csrf.py
+- require_verified_user (social-outreach gate, NEU-1161)
 - get_session yields an AsyncSession — no DB tables required
 """
 
+from datetime import UTC, datetime
+
 import pytest
-from fastapi import APIRouter, Depends, FastAPI
+from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from tvbf.app.models import User
 from tvbf.db import SessionLocal
-from tvbf.deps import get_session, require_admin, require_csrf
+from tvbf.deps import get_session, require_admin, require_csrf, require_verified_user
 
 # ---------------------------------------------------------------------------
 # require_admin (test_auth.py)
@@ -119,6 +123,24 @@ async def test_get_does_not_require_csrf():
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as c:
         r = await c.get("/safe")
         assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# require_verified_user (NEU-1161)
+# ---------------------------------------------------------------------------
+
+
+def test_require_verified_user_returns_a_verified_user():
+    user = User(email="v@example.com", display_name="V", email_verified_at=datetime.now(UTC))
+    assert require_verified_user(user) is user
+
+
+def test_require_verified_user_rejects_an_unverified_user():
+    user = User(email="u@example.com", display_name="U", email_verified_at=None)
+    with pytest.raises(HTTPException) as ei:
+        require_verified_user(user)
+    assert ei.value.status_code == 403
+    assert ei.value.detail == "email_not_verified"
 
 
 # ---------------------------------------------------------------------------

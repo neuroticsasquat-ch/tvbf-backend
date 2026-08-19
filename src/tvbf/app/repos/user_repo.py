@@ -76,9 +76,19 @@ async def search(
 
     Email is exact-match only to prevent enumeration. Display name supports
     substring since it's the public handle.
+
+    Unverified users are excluded unconditionally (NEU-1161 §3.2): being
+    discoverable by strangers is one of the two things a verified mailbox buys,
+    and the exclusion is blanket, including for people the caller is already
+    connected to. The predicate lives here rather than in the router so `limit`
+    still returns a full page.
     """
     pattern = f"%{query}%"
-    stmt = select(User).where((User.display_name.ilike(pattern)) | (User.email == query))
+    stmt = (
+        select(User)
+        .where((User.display_name.ilike(pattern)) | (User.email == query))
+        .where(User.email_verified_at.is_not(None))
+    )
     if exclude_ids:
         stmt = stmt.where(User.id.notin_(exclude_ids))
     stmt = stmt.order_by(User.display_name).limit(limit)
