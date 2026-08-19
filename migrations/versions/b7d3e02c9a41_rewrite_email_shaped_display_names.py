@@ -44,9 +44,11 @@ down_revision = "c9f4a1b73e26"
 branch_labels = None
 depends_on = None
 
-# Kept character-for-character in step with `_EMAIL_SHAPED` in
-# `src/tvbf/app/schemas.py`: an `@` and a later dot inside one whitespace-free
-# run, with a non-`@` character on each side.
+# A snapshot of `app/schemas.py:_EMAIL_SHAPED` **as of this revision**, not a
+# copy that tracks it: an `@` and a later dot inside one whitespace-free run,
+# with a non-`@` character on each side. If the validator later loosens, this
+# stays as it is — the pass has already run everywhere it will ever run, and
+# editing a shipped migration to chase it would rewrite history for nothing.
 _EMAIL_SHAPED = r"[^\s@]@[^\s@]*\.[^\s@]"
 
 
