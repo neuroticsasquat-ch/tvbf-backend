@@ -125,10 +125,26 @@ esac
 docker exec -i "$LOCAL_PG_CONTAINER" \
   psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -c "$DROP_SQL"
 
+# Nothing between here and the anonymiser may exit on its own (NEU-1195). Both
+# steps below can legitimately fail against a local database whose `catalog` is
+# behind prod's, and both used to `exit` where they now record a flag -- which
+# meant `set -e` tore the script down *after* pg_restore had written every row
+# and *before* the anonymiser ran, leaving production PII in the local database
+# and reporting a failure that read like nothing had happened. Observed
+# 2026-08-19: five real users, one display name that is an email address, five
+# `auth_token` rows and 9,359 `watch_archive` rows, all sitting locally. The
+# run still ends non-zero, at the consolidated gate below -- but it makes the
+# data safe first, because a partial restore holds exactly the same PII a whole
+# one does.
+RESTORE_FAILED=""
+FK_READD_FAILED=""
+ANONYMIZED=""
+
 echo "→ Restoring dump..."
 docker cp "$DUMP_FILE" "$LOCAL_PG_CONTAINER:/tmp/refresh.dump"
 docker exec -i "$LOCAL_PG_CONTAINER" pg_restore \
-  --no-owner --no-acl -U "$LOCAL_DB_USER" -d "$LOCAL_DB" /tmp/refresh.dump
+  --no-owner --no-acl -U "$LOCAL_DB_USER" -d "$LOCAL_DB" /tmp/refresh.dump \
+  || RESTORE_FAILED=1
 
 if [[ -n "$FK_RESTORE_SQL" ]]; then
   echo "→ Re-adding cross-schema foreign keys..."
@@ -140,7 +156,7 @@ if [[ -n "$FK_RESTORE_SQL" ]]; then
     echo "  prod dump — e.g. a My Shows entry for a show prod no longer has." >&2
     echo "  Delete the offending rows and re-add the constraint by hand:" >&2
     printf '%s\n' "$FK_RESTORE_SQL" | sed 's/^/    /' >&2
-    exit 1
+    FK_READD_FAILED=1
   fi
 fi
 
@@ -223,6 +239,8 @@ SQL
     exit 1
   fi
 
+  ANONYMIZED=1
+
   if [[ -n "$ADMIN_EMAIL_VAL" ]]; then
     echo "  ✓ Admin user preserved (email and display name): log in as $ADMIN_EMAIL_VAL / 'localdev'."
   else
@@ -230,6 +248,25 @@ SQL
     echo "    'User <short>', and password 'localdev'."
     echo "    Set ADMIN_EMAIL in .env.local to keep your real email next time."
   fi
+fi
+
+# The consolidated gate the two deferred failures above land on. It sits ahead
+# of `task migrate` deliberately: a schema that did not restore cleanly is not
+# one to apply migrations to, and the exit code is the only thing standing
+# between a half-restored database and a developer who believes it is whole.
+if [[ -n "$RESTORE_FAILED" || -n "$FK_READD_FAILED" ]]; then
+  echo "ERROR: the restore did not complete cleanly (see the errors above)." >&2
+  if [[ -n "$ANONYMIZED" ]]; then
+    echo "  The app schema WAS anonymized before this check, so the local database" >&2
+    echo "  holds no production PII -- but it is missing whatever could not be" >&2
+    echo "  applied, and no migrations have been run against it." >&2
+  elif [[ "$MODE" == "app" || "$MODE" == "both" ]]; then
+    echo "  ANONYMIZE=0 was set, so this database holds production data as-is." >&2
+  fi
+  echo "  The usual cause is a cross-schema foreign key whose catalog rows are not" >&2
+  echo "  present locally, because the local catalog is behind prod's. Refresh it" >&2
+  echo "  first (task db:refresh), or delete the offending rows, then re-run." >&2
+  exit 1
 fi
 
 echo "→ Applying any newer migrations from dev branch..."
