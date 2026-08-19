@@ -197,6 +197,23 @@ class EpisodeWatchOut(BaseModel):
 
 
 class WatchedEntry(BaseModel):
+    """One show with watch history, for a library's Watched tab.
+
+    **`my_rating` is the row owner's rating, not the requester's** (NEU-1191).
+    The two are the same user on `GET /me/watched` and differ on
+    `GET /users/{id}/watched`, which serves a friend's library: there the value
+    is the friend's rating of the show, and is null when the friend has not
+    rated it however the caller rated it. `MyShowEntry.my_rating` behaves
+    identically, and the frontend attributes both through `ratingOwnerFor`
+    (NEU-1181).
+
+    It is a top-level field rather than `show.my_rating` deliberately:
+    `my_rating` on a `ShowSummary` means the *requester's* rating everywhere it
+    is filled (`BrowseShowOut`, `SimilarShowOut`, `ShowDetail`, `TrendingShow`),
+    so a friend's rating behind that name would reintroduce exactly the
+    confusion NEU-1181 removed from the components.
+    """
+
     show: ShowSummary
     watched_episode_count: int
     aired_episode_count: int
@@ -206,6 +223,7 @@ class WatchedEntry(BaseModel):
     first_watched_at: datetime | None = None
     in_my_shows: bool
     status: WatchedStatus
+    my_rating: float | None = None
 
 
 class BulkSeasonResult(BaseModel):

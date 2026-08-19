@@ -101,3 +101,29 @@ async def test_me_watched_status_filter(authed_client, session):
 async def test_me_watched_invalid_status_rejected(authed_client):
     r = await authed_client.get("/me/watched", params={"status": "bogus"})
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_me_watched_serves_my_rating(authed_client, session):
+    """A rated show carries its stars; an unrated one carries null (NEU-1191)."""
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    me = authed_client.user  # type: ignore[attr-defined]
+    rated = await _seed(session, show_id=940210, name="Rated")
+    unrated = await _seed(session, show_id=940211, name="Unrated")
+    for show in (rated, unrated):
+        session.add(
+            UserEpisodeWatch(
+                user_id=me.id, episode_id=show.id * 100 + 1, watched_at=datetime.now(UTC)
+            )
+        )
+    await show_rating_repo.upsert(session, user_id=me.id, show_id=rated.id, stars=Decimal("4.5"))
+    await session.commit()
+
+    r = await authed_client.get("/me/watched")
+    assert r.status_code == 200
+    by_id = {row["show"]["id"]: row for row in r.json()}
+    assert by_id[rated.id]["my_rating"] == 4.5
+    assert by_id[unrated.id]["my_rating"] is None

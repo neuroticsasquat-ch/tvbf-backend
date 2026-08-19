@@ -164,3 +164,38 @@ async def test_friend_endpoints_dont_leak_callers_data(authed_client, make_user,
     ids = [row["show"]["id"] for row in r.json()]
     assert my_show.id not in ids
     assert friend_show.id in ids
+
+
+@pytest.mark.asyncio
+async def test_watched_serves_the_friends_rating_not_the_callers(authed_client, make_user, session):
+    """`my_rating` on a friend's library is the friend's (NEU-1191).
+
+    The caller rates one show and the friend the other, so a payload built from
+    the requester's ratings would answer exactly backwards.
+    """
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    me = authed_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="rater@example.com", display_name="Rater")
+    await _accept_pair(session, me, friend)
+    theirs = await _seed_show(session, show_id=950010, name="TheyRated")
+    mine = await _seed_show(session, show_id=950011, name="IRated")
+    for show in (theirs, mine):
+        session.add(
+            UserEpisodeWatch(
+                user_id=friend.id, episode_id=show.id * 100 + 1, watched_at=datetime.now(UTC)
+            )
+        )
+    await show_rating_repo.upsert(
+        session, user_id=friend.id, show_id=theirs.id, stars=Decimal("5.0")
+    )
+    await show_rating_repo.upsert(session, user_id=me.id, show_id=mine.id, stars=Decimal("1.0"))
+    await session.commit()
+
+    r = await authed_client.get(f"/users/{friend.id}/watched")
+    assert r.status_code == 200
+    by_id = {row["show"]["id"]: row for row in r.json()}
+    assert by_id[theirs.id]["my_rating"] == 5.0
+    assert by_id[mine.id]["my_rating"] is None
