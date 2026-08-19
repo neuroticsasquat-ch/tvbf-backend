@@ -150,13 +150,34 @@ if [[ ( "$MODE" == "app" || "$MODE" == "both" ) && "$ANONYMIZE" == "1" ]]; then
     "from tvbf.app.passwords import hash_password; print(hash_password('localdev'))")
   ADMIN_EMAIL_VAL="${ADMIN_EMAIL:-}"
   docker exec -i "$LOCAL_PG_CONTAINER" \
-    psql -U "$LOCAL_DB_USER" -d "$LOCAL_DB" \
+    psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" \
     -v "anon_hash=$ANON_HASH" \
     -v "admin_email=$ADMIN_EMAIL_VAL" <<'SQL'
 UPDATE app."user" SET
   email = CASE
     WHEN nullif(:'admin_email', '') IS NOT NULL AND email = :'admin_email' THEN email
     ELSE 'user-' || substring(id::text, 1, 8) || '@anon.local'
+  END,
+  -- `display_name` is rewritten unconditionally (NEU-1195), never only where it
+  -- looks like an address. A conditional rule would be a second copy of
+  -- NEU-1194's email-shaped test living in shell SQL, and it would still leave
+  -- real people's real names sitting in a local copy -- the same class of data
+  -- this statement exists to strip. Nulling the column is not an option either:
+  -- it is NOT NULL and renders as an `h1`, so a refresh would produce blank
+  -- headings across the friends surfaces and every list that names a user.
+  --
+  -- The eight characters are deliberately the same eight `email` takes above,
+  -- which buys two things. `User 3f4a2b1c` is visibly the same account as
+  -- `user-3f4a2b1c@anon.local`, which is what you want when you are staring at
+  -- a local friends list working out who is who. And because `email` carries a
+  -- unique index while `display_name` does not, a prefix collision is one event
+  -- rather than two: it surfaces at `uq_user_email`, so this column's
+  -- uniqueness is enforced by that constraint rather than merely hoped for.
+  -- Changing the email derivation alone silently removes the only collision
+  -- check this one has.
+  display_name = CASE
+    WHEN nullif(:'admin_email', '') IS NOT NULL AND email = :'admin_email' THEN display_name
+    ELSE 'User ' || substring(id::text, 1, 8)
   END,
   password_hash = :'anon_hash';
 -- `watch_archive` denormalises the real email and display name onto every row
@@ -171,13 +192,42 @@ UPDATE app."user" SET
 -- sets are cheap to regenerate and worthless out of their own week, so they
 -- truncate rather than being rewritten; `user_recommendation` goes with them on
 -- the CASCADE.
-TRUNCATE app.session, app.login_attempt, app.invite, app.watch_archive,
-         app.user_recommendation_set CASCADE;
+-- `auth_token.payload` is a third copy one table over (NEU-1195): the email
+-- change flow stores `{"new_email": ...}` there, so a pending change carries a
+-- real address straight past the rewrite above. Truncated rather than
+-- rewritten because a token is a production artifact worthless outside its own
+-- expiry window, and `session` goes in the same statement -- so nothing local
+-- is left holding a token it could still redeem.
+TRUNCATE app.session, app.login_attempt, app.invite, app.auth_token,
+         app.watch_archive, app.user_recommendation_set CASCADE;
 SQL
+
+  # ON_ERROR_STOP above catches a statement that raised. It cannot catch a CASE
+  # a later edit breaks into matching every row, because wrong data is not an
+  # error -- so assert the result. Asserting the derived form rather than the
+  # absence of an address is deliberate: counting '%@%.%' survivors tests only
+  # the one shape we happened to fear, says nothing about real names, and
+  # contradicts the admin carve-out whenever the operator's own display name is
+  # an address.
+  ANON_LEFT=$(docker exec -i "$LOCAL_PG_CONTAINER" \
+    psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -tA \
+    -v "admin_email=$ADMIN_EMAIL_VAL" <<'SQL'
+SELECT count(*) FROM app."user"
+ WHERE display_name !~ '^User [0-9a-f]{8}$'
+   AND (nullif(:'admin_email', '') IS NULL OR email <> :'admin_email');
+SQL
+  )
+  if [[ "$ANON_LEFT" != "0" ]]; then
+    echo "ERROR: anonymization left $ANON_LEFT display_name value(s) unrewritten." >&2
+    echo "  The local database still holds production display names. Do not use it." >&2
+    exit 1
+  fi
+
   if [[ -n "$ADMIN_EMAIL_VAL" ]]; then
-    echo "  ✓ Admin user preserved: log in as $ADMIN_EMAIL_VAL / 'localdev'."
+    echo "  ✓ Admin user preserved (email and display name): log in as $ADMIN_EMAIL_VAL / 'localdev'."
   else
-    echo "  ✓ All users now have email user-<short>@anon.local and password 'localdev'."
+    echo "  ✓ All users now have email user-<short>@anon.local, display name"
+    echo "    'User <short>', and password 'localdev'."
     echo "    Set ADMIN_EMAIL in .env.local to keep your real email next time."
   fi
 fi
