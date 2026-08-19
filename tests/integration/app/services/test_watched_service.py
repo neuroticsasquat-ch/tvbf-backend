@@ -333,3 +333,84 @@ async def test_sort_first_watched_desc(session, make_user):
 
     rows = await my_shows_service.list_watched(session, user_id=user.id, sort="first_watched_desc")
     assert [e.show.id for e in rows] == [started_recently.id, started_long_ago.id]
+
+
+@pytest.mark.asyncio
+async def test_hydrates_the_row_owners_show_rating(session, make_user):
+    """`my_rating` is the rating of the user the pass was called for (NEU-1191).
+
+    On `/users/{id}/watched` that user is the friend, not the requester, so this
+    asserts the value follows `user_id` rather than whoever is logged in.
+    """
+    from decimal import Decimal
+
+    from tvbf.app.repos import show_rating_repo
+
+    owner = await make_user()
+    other = await make_user(email="other@example.com", display_name="Other")
+    rated = await _seed_show(session, show_id=940300, name="Rated", episodes=1)
+    unrated = await _seed_show(session, show_id=940301, name="Unrated", episodes=1)
+    await _watch(session, owner.id, rated.id * 100 + 1)
+    await _watch(session, owner.id, unrated.id * 100 + 1)
+    await show_rating_repo.upsert(session, user_id=owner.id, show_id=rated.id, stars=Decimal("4.5"))
+    # The other user rates the show the owner did not, so a leak reads as 3.0.
+    await show_rating_repo.upsert(
+        session, user_id=other.id, show_id=unrated.id, stars=Decimal("3.0")
+    )
+    await session.commit()
+
+    by_id = {e.show.id: e for e in await my_shows_service.list_watched(session, user_id=owner.id)}
+    assert by_id[rated.id].my_rating == 4.5
+    assert by_id[unrated.id].my_rating is None
+
+
+@pytest.mark.asyncio
+async def test_ratings_are_one_query_whatever_the_row_count(session, test_engine, make_user):
+    """The rating hydration must not scale with the page (NEU-1191).
+
+    Counted the way `test_get_shows_issues_a_fixed_number_of_queries_whatever_the_page_size`
+    counts: by which table the statement touches. Only `app.user_show_rating` is
+    pinned here — `list_watched` loads its shows one at a time, which predates
+    this ticket and is not what the criterion is about.
+    """
+    from decimal import Decimal
+
+    from sqlalchemy import event
+
+    from tvbf.app.repos import show_rating_repo
+
+    user = await make_user()
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    async def _rating_queries_for(row_count: int) -> list[str]:
+        statements.clear()
+        engine = test_engine.sync_engine
+        event.listen(engine, "before_cursor_execute", _record)
+        try:
+            rows = await my_shows_service.list_watched(session, user_id=user.id)
+        finally:
+            event.remove(engine, "before_cursor_execute", _record)
+        assert len(rows) == row_count
+        return [s for s in statements if "user_show_rating" in s]
+
+    async def _seed_rated(show_id: int) -> None:
+        show = await _seed_show(session, show_id=show_id, name=f"R{show_id}", episodes=1)
+        await _watch(session, user.id, show.id * 100 + 1)
+        await show_rating_repo.upsert(
+            session, user_id=user.id, show_id=show.id, stars=Decimal("3.0")
+        )
+
+    await _seed_rated(940310)
+    await session.commit()
+    for_one = await _rating_queries_for(1)
+
+    for i in range(1, 5):
+        await _seed_rated(940310 + i)
+    await session.commit()
+    for_five = await _rating_queries_for(5)
+
+    assert len(for_one) == 1, for_one
+    assert len(for_five) == 1, for_five

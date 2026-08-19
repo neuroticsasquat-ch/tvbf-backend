@@ -649,6 +649,10 @@ async def list_watched(
     )
     my_shows_pairs = await show_membership_repo.list_with_added_at(db, user_id)
     my_shows_ids = {show.id for show, _added in my_shows_pairs}
+    # One batched query for the page, on `list_my_shows`' shape. The ratings are
+    # `user_id`'s, which is the friend's on `/users/{id}/watched` — see
+    # `WatchedEntry.my_rating`.
+    my_ratings = await show_rating_repo.get_many_for_user(db, user_id=user_id, show_ids=show_ids)
 
     entries: list[WatchedEntry] = []
     for show in shows:
@@ -681,6 +685,7 @@ async def list_watched(
                 first_watched_at=first_watched.get(show.id),
                 in_my_shows=show.id in my_shows_ids,
                 status=row_status,  # type: ignore[arg-type]
+                my_rating=my_ratings.get(show.id),
             )
         )
 
