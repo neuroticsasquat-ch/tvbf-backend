@@ -113,6 +113,24 @@ async def test_patch_me_rejects_too_long(authed_client):
 
 
 @pytest.mark.asyncio
+async def test_patch_me_rejects_an_email_shaped_display_name(authed_client, session):
+    """NEU-1194. The refusal is a 422 and the stored name is left alone."""
+    before = authed_client.user.display_name
+    r = await authed_client.patch("/me", json={"display_name": " jeanne_briggs@yahoo.com "})
+    assert r.status_code == 422
+
+    stored = await session.scalar(select(User.display_name).where(User.id == authed_client.user.id))
+    assert stored == before
+
+
+@pytest.mark.asyncio
+async def test_patch_me_accepts_an_at_sign_that_is_not_an_address(authed_client):
+    r = await authed_client.patch("/me", json={"display_name": "@home with Tom"})
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "@home with Tom"
+
+
+@pytest.mark.asyncio
 async def test_patch_me_requires_csrf(authed_client):
     r = await authed_client.patch(
         "/me",

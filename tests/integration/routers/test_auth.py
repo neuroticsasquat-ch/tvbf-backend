@@ -7,7 +7,9 @@ tests/test_route_handlers.py.
 import pytest
 from fastapi import HTTPException, Request, Response
 from httpx import ASGITransport, AsyncClient
+from sqlalchemy import select
 
+from tvbf.app.models import User
 from tvbf.app.schemas import (
     LoginRequest,
     PasswordChangeRequest,
@@ -95,6 +97,41 @@ async def test_signup_rejects_short_password(client):
         },
     )
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_signup_rejects_an_email_shaped_display_name(client, make_invite, session):
+    """NEU-1194. The 422 comes from the schema, so no account is created."""
+    invite = await make_invite()
+    r = await client.post(
+        "/auth/signup",
+        json={
+            "email": "jeanne@example.com",
+            "password": "hunter2hunter2",
+            "display_name": " jeanne_briggs@yahoo.com ",
+            "invite_code": invite,
+        },
+    )
+    assert r.status_code == 422
+
+    existing = await session.scalar(select(User.id).where(User.email == "jeanne@example.com"))
+    assert existing is None
+
+
+@pytest.mark.asyncio
+async def test_signup_accepts_an_at_sign_that_is_not_an_address(client, make_invite):
+    invite = await make_invite()
+    r = await client.post(
+        "/auth/signup",
+        json={
+            "email": "athome@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "@home with Tom",
+            "invite_code": invite,
+        },
+    )
+    assert r.status_code == 201
+    assert r.json()["display_name"] == "@home with Tom"
 
 
 @pytest.mark.asyncio
