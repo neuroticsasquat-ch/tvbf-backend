@@ -75,6 +75,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+    if settings.turnstile_enabled and not settings.turnstile_secret_key:
+        # Two knobs that can disagree, checked at boot rather than at the first
+        # signup: the failure this prevents is signup protection silently absent
+        # in production (NEU-1160 §6.1).
+        raise RuntimeError("TURNSTILE_ENABLED is set but TURNSTILE_SECRET_KEY is missing")
     app = FastAPI(title="tvbf-backend", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,

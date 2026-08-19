@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tvbf.config import Settings
+from tvbf.config import IpThrottle, Settings
 
 
 def test_settings_reads_database_url_from_env(monkeypatch):
@@ -114,3 +114,40 @@ def test_linear_settings_from_env(monkeypatch):
     assert s.linear_api_key == "sk_x"
     assert s.linear_team_id == "team_x"
     assert s.linear_feedback_label_id == "lbl_x"
+
+
+def test_abuse_protection_defaults(monkeypatch):
+    """Off, and calibrated: NEU-1160 §6."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    for key in (
+        "TURNSTILE_ENABLED",
+        "TURNSTILE_SECRET_KEY",
+        "TRUSTED_PROXY_HOPS",
+        "SIGNUP_IP_THROTTLE_MAX",
+        "SIGNUP_IP_THROTTLE_WINDOW_MINUTES",
+        "LOGIN_IP_THROTTLE_MAX",
+        "LOGIN_IP_THROTTLE_WINDOW_MINUTES",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.turnstile_enabled is False
+    assert s.turnstile_secret_key is None
+    assert s.trusted_proxy_hops == 1
+    assert s.signup_ip_throttle == IpThrottle(max_attempts=5, window_minutes=60)
+    # Twice LOGIN_LOCKOUT_THRESHOLD, so one forgetful person trips their own
+    # email lockout well before they trip the network's.
+    assert s.login_ip_throttle == IpThrottle(max_attempts=10, window_minutes=15)
+    assert s.login_ip_throttle.max_attempts == 2 * s.login_lockout_threshold
+
+
+def test_ip_throttle_properties_follow_the_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("SIGNUP_IP_THROTTLE_MAX", "2")
+    monkeypatch.setenv("SIGNUP_IP_THROTTLE_WINDOW_MINUTES", "30")
+    monkeypatch.setenv("LOGIN_IP_THROTTLE_MAX", "3")
+    monkeypatch.setenv("LOGIN_IP_THROTTLE_WINDOW_MINUTES", "5")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.signup_ip_throttle == IpThrottle(max_attempts=2, window_minutes=30)
+    assert s.login_ip_throttle == IpThrottle(max_attempts=3, window_minutes=5)

@@ -1,7 +1,26 @@
+from dataclasses import dataclass
 from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True)
+class IpThrottle:
+    """One inbound per-IP budget (NEU-1160).
+
+    One frozen dataclass rather than two loose integers, for **half** of
+    `rate_budget.Budget`'s reason: a call site states the budget it means, and
+    the pair cannot drift apart across the four settings below. Budget's other
+    half does not transfer — it is one object because `get_rate_limiter` is
+    `functools.cache`d and keys on the literal call, and nothing here is cached.
+    It lives in this module rather than beside `auth_throttle.enforce` because
+    `Settings` returns it and `db` imports `config`, so config cannot import
+    anything under `app` without a cycle.
+    """
+
+    max_attempts: int
+    window_minutes: int
 
 
 class Settings(BaseSettings):
@@ -139,6 +158,52 @@ class Settings(BaseSettings):
     login_lockout_threshold: int = Field(default=5, alias="LOGIN_LOCKOUT_THRESHOLD")
     login_lockout_window_minutes: int = Field(default=15, alias="LOGIN_LOCKOUT_WINDOW_MINUTES")
 
+    # Cloudflare Turnstile on `POST /auth/signup` (NEU-1160). **The switch is an
+    # explicit boolean, not an inference from the secret's presence**, and
+    # `create_app()` raises when it is true with no secret. Two knobs that can
+    # disagree are worth the startup check because the failure they prevent is
+    # the one the ticket exists to close: protection silently absent in
+    # production. Deriving the switch from the credential — the shape
+    # `TMDB_READ_ACCESS_TOKEN` and `DEEPINFRA_API_KEY` use — is right for those,
+    # where an absent credential disables a job that fails loudly at its call
+    # site; here it would mean a secret dropped from the Coolify UI turns signup
+    # protection off with nothing anywhere saying so.
+    #
+    # Off is the default, so tests and localdev need no network. **Nothing in
+    # the repo turns it on** — prod sets it in the Coolify UI. There is no
+    # `TURNSTILE_SITE_KEY` here: the site key is public, is consumed by exactly
+    # one thing (the widget in the SPA, which reads it from its own `env.ts`),
+    # and a copy in backend config would be read by nothing while sitting ready
+    # to disagree with the one the browser actually uses.
+    turnstile_enabled: bool = Field(default=False, alias="TURNSTILE_ENABLED")
+    turnstile_secret_key: str | None = Field(default=None, alias="TURNSTILE_SECRET_KEY")
+
+    # How many `X-Forwarded-For` entries from the right the trusted proxy
+    # boundary sits at — see `client_ip.py`. One in both environments (Traefik).
+    # It exists so that putting Cloudflare, or any second proxy, in front of the
+    # API later is a config change rather than a code change. **Raising it is a
+    # trust decision**: setting it higher than the number of proxies actually in
+    # front of the app hands the throttle key straight to the client.
+    trusted_proxy_hops: int = Field(default=1, alias="TRUSTED_PROXY_HOPS")
+
+    # The inbound per-IP throttle (NEU-1160), which has no switch and is always
+    # on: it is local, needs no network, and the test suite truncates
+    # `app.auth_attempt` between tests, so it is inert unless a test
+    # deliberately exceeds a limit.
+    #
+    # Five signups per hour per address is far above any household and far below
+    # a useful bot run. Ten login failures per fifteen minutes is twice the
+    # per-email threshold above, so one forgetful person trips their own email
+    # lockout well before they trip the network's.
+    signup_ip_throttle_max: int = Field(default=5, alias="SIGNUP_IP_THROTTLE_MAX")
+    signup_ip_throttle_window_minutes: int = Field(
+        default=60, alias="SIGNUP_IP_THROTTLE_WINDOW_MINUTES"
+    )
+    login_ip_throttle_max: int = Field(default=10, alias="LOGIN_IP_THROTTLE_MAX")
+    login_ip_throttle_window_minutes: int = Field(
+        default=15, alias="LOGIN_IP_THROTTLE_WINDOW_MINUTES"
+    )
+
     # Email transport. `smtp` is the default for local dev (Mailpit on the
     # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
     # in production.
@@ -170,6 +235,20 @@ class Settings(BaseSettings):
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
+
+    @property
+    def signup_ip_throttle(self) -> IpThrottle:
+        return IpThrottle(
+            max_attempts=self.signup_ip_throttle_max,
+            window_minutes=self.signup_ip_throttle_window_minutes,
+        )
+
+    @property
+    def login_ip_throttle(self) -> IpThrottle:
+        return IpThrottle(
+            max_attempts=self.login_ip_throttle_max,
+            window_minutes=self.login_ip_throttle_window_minutes,
+        )
 
 
 @lru_cache
