@@ -1,11 +1,42 @@
+import re
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, EmailStr, Field, field_validator
 
 from tvbf.catalog.schemas import EpisodeOut, ShowSummary
+
+# NEU-1194. An `@` and a later dot inside one whitespace-free run, with a
+# non-`@` character on each side. Deliberately narrower than "contains `@` with
+# a dot after it", which would reject `@home with Tom. Really`, and deliberately
+# not RFC 5322: the goal is to stop a user publishing their address, not to
+# parse one. The leading `[^\s@]` is the load-bearing part — it lets a display
+# name *start* with `@`, which NEU-1163 is about to make commonplace by turning
+# `@handle` into a first-class concept.
+_EMAIL_SHAPED = re.compile(r"[^\s@]@[^\s@]*\.[^\s@]")
+
+
+def _strip_display_name(v: object) -> object:
+    return v.strip() if isinstance(v, str) else v
+
+
+def _reject_email_shaped(v: str) -> str:
+    if _EMAIL_SHAPED.search(v):
+        raise ValueError("display_name must not be an email address")
+    return v
+
+
+# One alias over both write sites, on `OptionalDate`'s precedent. It carries the
+# strip as well as the rule: without it the two doors would disagree about the
+# rule itself rather than merely about `max_length`, since `" a@b.c "` would be
+# checked raw at signup and stripped at `PATCH /me`. Each class keeps its own
+# `Field(...)`, so the 100/80 length split is untouched — a real inconsistency,
+# but a different defect with a live-data question behind it.
+DisplayName = Annotated[
+    str, BeforeValidator(_strip_display_name), AfterValidator(_reject_email_shaped)
+]
 
 MyShowsSort = Literal[
     "recent_activity",
@@ -44,7 +75,7 @@ ActivityTargetType = Literal["show", "season", "episode"]
 class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
-    display_name: str = Field(min_length=1, max_length=100)
+    display_name: DisplayName = Field(min_length=1, max_length=100)
     invite_code: str = Field(min_length=1, max_length=128)
 
 
@@ -74,12 +105,7 @@ class SessionSummary(BaseModel):
 class MeUpdateRequest(BaseModel):
     """Body for PATCH /me. Only carries display_name today."""
 
-    display_name: str = Field(min_length=1, max_length=80)
-
-    @field_validator("display_name", mode="before")
-    @classmethod
-    def _strip(cls, v: object) -> object:
-        return v.strip() if isinstance(v, str) else v
+    display_name: DisplayName = Field(min_length=1, max_length=80)
 
 
 class UserOut(BaseModel):
