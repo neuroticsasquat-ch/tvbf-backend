@@ -263,9 +263,15 @@ if [[ -n "$RESTORE_FAILED" || -n "$FK_READD_FAILED" ]]; then
   elif [[ "$MODE" == "app" || "$MODE" == "both" ]]; then
     echo "  ANONYMIZE=0 was set, so this database holds production data as-is." >&2
   fi
-  echo "  The usual cause is a cross-schema foreign key whose catalog rows are not" >&2
-  echo "  present locally, because the local catalog is behind prod's. Refresh it" >&2
-  echo "  first (task db:refresh), or delete the offending rows, then re-run." >&2
+  # The cause -- and so the fix -- differs by mode, and naming only one of them
+  # sends you in a circle: an earlier draft of this message told a `catalog` run
+  # to fix itself by running `task db:refresh`, which is the command that had
+  # just failed.
+  echo "  The usual cause is a row referencing a catalog row the prod dump does not" >&2
+  echo "  have. Which row is stale depends on the mode:" >&2
+  echo "    app     - the local catalog is behind prod's; run 'task db:refresh' first." >&2
+  echo "    catalog - the referencing row is itself stale (often import_ne staging" >&2
+  echo "              data); delete it, then re-add the constraint printed above." >&2
   exit 1
 fi
 
