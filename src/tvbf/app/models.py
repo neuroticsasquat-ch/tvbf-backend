@@ -170,6 +170,36 @@ class LoginAttempt(Base):
     ip: Mapped[str | None] = mapped_column(INET, nullable=True)
 
 
+class AuthAttempt(Base):
+    """One signup or failed-login attempt, keyed on the client address (NEU-1160).
+
+    A new table rather than a widening of `login_attempt`. That table is the
+    email-keyed lockout's, its rows are cleared per-email on a successful login,
+    and holding signups in it would leave a table named for logins where half
+    the rows are not.
+
+    No FK to `app.user` — a signup attempt precedes the user, and a throttled
+    attempt has no user at all. The index leads `(kind, ip, attempted_at)`
+    because every read is "count rows of one kind for one address since a
+    timestamp". A third `kind` is a widening of `ck_auth_attempt_kind`,
+    deliberately loud.
+    """
+
+    __tablename__ = "auth_attempt"
+    __table_args__ = (
+        Index("ix_auth_attempt_kind_ip_at", "kind", "ip", "attempted_at"),
+        CheckConstraint("kind IN ('signup', 'login')", name="ck_auth_attempt_kind"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    ip: Mapped[str] = mapped_column(INET, nullable=False)
+    attempted_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
 class Invite(Base):
     __tablename__ = "invite"
     __table_args__ = {"schema": "app"}

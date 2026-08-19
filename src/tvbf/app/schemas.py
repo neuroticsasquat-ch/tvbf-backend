@@ -77,6 +77,13 @@ class SignupRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     display_name: DisplayName = Field(min_length=1, max_length=100)
     invite_code: str = Field(min_length=1, max_length=128)
+    # **Optional in the schema, required by the handler when verification is
+    # enabled** (NEU-1160 §7). Optional keeps every existing call site working
+    # unchanged; the handler is where "enabled means required" is decided,
+    # because it is the only place that knows. A missing token with verification
+    # on is a 400 `captcha_required`, not a 422 — `api/client.ts` renders
+    # field-level 422s against form fields and there is no form field for this.
+    turnstile_token: str | None = Field(default=None, max_length=2048)
 
 
 class LoginRequest(BaseModel):

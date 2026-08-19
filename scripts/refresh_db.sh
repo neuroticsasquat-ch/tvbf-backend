@@ -214,8 +214,14 @@ UPDATE app."user" SET
 -- rewritten because a token is a production artifact worthless outside its own
 -- expiry window, and `session` goes in the same statement -- so nothing local
 -- is left holding a token it could still redeem.
-TRUNCATE app.session, app.login_attempt, app.invite, app.auth_token,
-         app.watch_archive, app.user_recommendation_set CASCADE;
+-- `auth_attempt` is the IP-keyed throttle's counter (NEU-1160). It carries no
+-- email, but it does carry real users' addresses, which is the same class of
+-- copy `login_attempt.ip` is and which this statement already truncates one
+-- table over. It is also a counter over a window measured in minutes, so a
+-- restored one says nothing true locally -- there is nothing to preserve and a
+-- reason not to keep it.
+TRUNCATE app.session, app.login_attempt, app.auth_attempt, app.invite,
+         app.auth_token, app.watch_archive, app.user_recommendation_set CASCADE;
 SQL
 
   # ON_ERROR_STOP above catches a statement that raised. It cannot catch a CASE

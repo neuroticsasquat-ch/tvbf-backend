@@ -61,3 +61,15 @@ class EmailChangePayloadMissing(DomainError):
 
 class InvalidCursor(DomainError):
     """Pagination cursor is malformed."""
+
+
+class TooManyAttempts(DomainError):
+    """The IP-keyed signup/login throttle rejected the request (NEU-1160).
+
+    Carries the window in seconds so the router can set `Retry-After` without
+    re-deriving the budget it just passed in.
+    """
+
+    def __init__(self, *, retry_after_seconds: int) -> None:
+        super().__init__()
+        self.retry_after_seconds = retry_after_seconds
