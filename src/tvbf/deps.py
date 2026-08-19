@@ -55,6 +55,15 @@ def require_admin_user(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def require_verified_user(user: User = Depends(get_current_user)) -> User:
+    """Social-outreach gate. A verified mailbox is the price of touching other
+    users (NEU-1152). Distinct from `require_admin_user`, which gates on
+    privilege rather than on identity proof."""
+    if user.email_verified_at is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="email_not_verified")
+    return user
+
+
 def get_linear_client(request: Request) -> LinearClient:
     client = getattr(request.app.state, "linear_client", None)
     if client is None:

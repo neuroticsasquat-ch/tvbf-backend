@@ -199,3 +199,22 @@ async def test_watched_serves_the_friends_rating_not_the_callers(authed_client, 
     by_id = {row["show"]["id"]: row for row in r.json()}
     assert by_id[theirs.id]["my_rating"] == 5.0
     assert by_id[mine.id]["my_rating"] is None
+
+
+@pytest.mark.asyncio
+async def test_friend_shows_resolves_for_an_unverified_caller(
+    unverified_client, make_user, session
+):
+    """Consumption is not outreach (NEU-1161 §3.4): an accepted connection is
+    all a friend library needs."""
+    me = unverified_client.user  # type: ignore[attr-defined]
+    friend = await make_user(email="libfriend@example.com", display_name="LibFriend", verified=True)
+    show = await _seed_show(session, show_id=930901, name="Friend Show")
+    session.add(UserShowWatch(user_id=friend.id, show_id=show.id))
+    row = await connection_service.send_request(session, requester_id=friend.id, addressee_id=me.id)
+    await connection_service.accept(session, id=row.id, accepting_user_id=me.id)
+    await session.commit()
+
+    r = await unverified_client.get(f"/users/{friend.id}/shows")
+    assert r.status_code == 200
+    assert [entry["show"]["id"] for entry in r.json()] == [show.id]

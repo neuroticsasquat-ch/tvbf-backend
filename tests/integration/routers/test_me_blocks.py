@@ -132,7 +132,9 @@ async def test_unblock_allows_reconnection(authed_client, make_user, session):
 @pytest.mark.asyncio
 async def test_search_excludes_blocked_user(authed_client, make_user, session):
     me = authed_client.user  # type: ignore[attr-defined]
-    target = await make_user(email="hide@example.com", display_name="HideTarget")
+    # verified=True so the block filter is what excludes the row, not
+    # NEU-1161's verification predicate — otherwise this passes vacuously.
+    target = await make_user(email="hide@example.com", display_name="HideTarget", verified=True)
     await connection_service.block(session, blocker_id=me.id, blocked_id=target.id)
 
     r = await authed_client.get("/users/search", params={"q": "HideTarget"})

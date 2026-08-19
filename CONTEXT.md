@@ -153,6 +153,14 @@ _Avoid_: friend, follow, relationship
 **Invite code**:
 A single-use code required to sign up. Never expires; consumed on use.
 
+**Verified user**:
+A user whose `email_verified_at` is not NULL. The column is **monotone** — nothing ever clears it, and an email change re-stamps it on confirm rather than revoking it — so verification is earned once and cannot be lost mid-flight. Since NEU-1161 it is also the price of social access (below).
+_Avoid_: confirmed, activated, validated
+
+**Outreach** / **consumption**:
+The two halves of the social layer, and the line the verification gate is drawn on (NEU-1152, NEU-1161). **Outreach** is reaching a user who has not consented — sending a connection request, being discoverable in `/users/search` — and requires a verified email. **Consumption** is reading what an accepted connection already agreed to share — a friend's library, friend engagement on a show — and requires only the connection. Defensive acts (blocking) and withdrawal (declining, cancelling, disconnecting) are neither, and are never gated: an unverified user must always be able to protect themselves and to say yes to someone who asked.
+_Avoid_: social actions (it collapses the distinction the gate rests on)
+
 ### Recommendations
 
 **Recommendation set**:

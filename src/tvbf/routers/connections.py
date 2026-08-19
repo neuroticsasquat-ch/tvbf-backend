@@ -22,7 +22,7 @@ from tvbf.app.schemas import (
     UserBrief,
 )
 from tvbf.app.services import connection_service
-from tvbf.deps import get_current_user, get_session, require_csrf
+from tvbf.deps import get_current_user, get_session, require_csrf, require_verified_user
 
 router = APIRouter(tags=["connections"])
 
@@ -46,7 +46,9 @@ def _to_request_out(row: Connection, requester: User, addressee: User) -> Connec
 )
 async def create_connection_request(
     payload: ConnectionRequestCreate,
-    user: User = Depends(get_current_user),
+    # Outreach: gated on a verified email (NEU-1161 §2). Deliberately on this
+    # route rather than the router — accepting must still work unverified.
+    user: User = Depends(require_verified_user),
     db: AsyncSession = Depends(get_session),
 ) -> ConnectionRequestOut:
     addressee = await user_repo.get_by_id(db, payload.addressee_id)
