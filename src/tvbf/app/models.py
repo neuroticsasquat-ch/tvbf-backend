@@ -266,6 +266,81 @@ class Connection(Base):
     responded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
+class ConnectionRequestLog(Base):
+    """Every connection request that was **created**, and how it ended (NEU-1157).
+
+    A new table rather than retained terminal states on `app.connection`, which
+    is the `app.user_report` "the table is its own ledger" shape and was the
+    first thing tried. It collides with `uq_connection_unordered_pair`: a
+    retained `declined` row means `find_pair` returns non-`None` forever, so a
+    declined request could **never** be re-sent — silently converting every
+    decline into a permanent block, which is a product decision this ticket has
+    no mandate to make. The decline cooldown (§4) reaches a bounded version of
+    that deliberately instead.
+
+    `app.connection` cannot answer the throttle's questions on its own because
+    it is **deleted** on both decline and cancel, through one code path that
+    cannot tell the two apart from the row alone. Once a request resolves, the
+    database retains no evidence it existed — so a cap counting `connection`
+    rows is reset by cancelling.
+
+    `outcome` is **`Text` + a `CheckConstraint`, not a Postgres enum** unlike
+    `app.connection.state`, following `app.auth_attempt` and for its stated
+    reason: widening a check constraint is a visible, deliberately loud
+    migration where `ALTER TYPE ... ADD VALUE` is a one-liner that slips through
+    review. A sixth outcome should be hard to add casually.
+
+    `addressee_id` is stored even though **no throttle arithmetic reads it** —
+    every count in §3 is per-requester. It is stored because "who did this
+    account spray, and how did each one go" is the question moderation actually
+    asks, and it is the one thing `app.connection` cannot answer once rows are
+    deleted. The privacy cost is stated rather than discovered: cancelling a
+    request no longer erases the fact you asked. NEU-1155 publishes that.
+
+    **Both FKs cascade**, consistent with every other FK into `app.user`, which
+    makes the retention sentence "for as long as both accounts exist". The
+    accepted cost: a target who deletes their account takes the record of their
+    decline with them, nudging a spammer's adverse rate down — bounded, since it
+    requires the victim to delete everything, and cheaper than a nullable
+    `addressee_id` plus a second code path for "the person I asked is gone".
+
+    Not otherwise pruned. A pruning job would be a fifth Coolify scheduled task
+    with its own deadman for a few thousand rows nobody reads, and this table is
+    moderation evidence — a griefer's history auto-erasing on a 30-day timer is
+    precisely the wrong property for the record an admin consults.
+
+    The index leads `(requester_id, created_at)` because that is the shape of
+    both queries in §3.
+    """
+
+    __tablename__ = "connection_request_log"
+    __table_args__ = (
+        Index("ix_connection_request_log_requester_created", "requester_id", "created_at"),
+        CheckConstraint(
+            "outcome IN ('pending', 'accepted', 'declined', 'cancelled', 'blocked')",
+            name="ck_connection_request_log_outcome",
+        ),
+        {"schema": "app"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    requester_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_connection_request_log_requester"),
+        nullable=False,
+    )
+    addressee_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_connection_request_log_addressee"),
+        nullable=False,
+    )
+    outcome: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
 class UserShowRating(Base):
     __tablename__ = "user_show_rating"
     __table_args__ = (

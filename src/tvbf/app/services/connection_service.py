@@ -12,7 +12,7 @@ from tvbf.app.errors import (
     SelfConnectionForbidden,
 )
 from tvbf.app.models import Connection
-from tvbf.app.repos import connection_repo, user_repo
+from tvbf.app.repos import connection_repo, connection_request_log_repo, user_repo
 
 
 async def send_request(db: AsyncSession, *, requester_id: UUID, addressee_id: UUID) -> Connection:
@@ -34,6 +34,13 @@ async def send_request(db: AsyncSession, *, requester_id: UUID, addressee_id: UU
         addressee_id=addressee_id,
         state="pending",
     )
+    # The ledger row is written here, in the same transaction as the connection
+    # row, because the two record one act. Every refusal above it — and the
+    # throttle, cooldown and 404 the router raises before calling this — writes
+    # nothing and therefore costs no budget (§3.1, AC 7).
+    await connection_request_log_repo.record(
+        db, requester_id=requester_id, addressee_id=addressee_id
+    )
     await db.commit()
     return row
 
@@ -46,8 +53,14 @@ async def accept(db: AsyncSession, *, id: UUID, accepting_user_id: UUID) -> Conn
         raise NotAConnectionParty()
     if row.state != "pending":
         raise ConnectionWrongState()
-    updated = await connection_repo.update_state(
-        db, id=id, state="accepted", responded_at=datetime.now(UTC)
+    now = datetime.now(UTC)
+    updated = await connection_repo.update_state(db, id=id, state="accepted", responded_at=now)
+    await connection_request_log_repo.resolve(
+        db,
+        requester_id=row.requester_id,
+        addressee_id=row.addressee_id,
+        outcome=connection_request_log_repo.ACCEPTED,
+        resolved_at=now,
     )
     await db.commit()
     return updated
@@ -56,13 +69,34 @@ async def accept(db: AsyncSession, *, id: UUID, accepting_user_id: UUID) -> Conn
 async def delete_pending_request(db: AsyncSession, *, id: UUID, caller_id: UUID) -> None:
     """Reject (addressee) or cancel (requester) a pending connection request.
     Raises NotFound if the row doesn't exist or isn't pending; raises
-    NotAConnectionParty if caller isn't requester or addressee."""
+    NotAConnectionParty if caller isn't requester or addressee.
+
+    One code path, two ledger outcomes. The `connection` row is **deleted**
+    either way and cannot tell them apart afterwards — only `caller_id` can, and
+    only here (NEU-1157 §2.1). `cancelled` stays distinct from `declined` rather
+    than being folded in: the scoring rule is a number to be tuned against a
+    userbase that does not exist yet, and every conflation made now is a
+    measurement that can never be taken later.
+
+    Neither act is throttled. Only creation is (AC 4).
+    """
     row = await connection_repo.get(db, id)
     if row is None or row.state != "pending":
         raise NotFound()
     if caller_id not in (row.requester_id, row.addressee_id):
         raise NotAConnectionParty()
     await connection_repo.delete(db, id)
+    await connection_request_log_repo.resolve(
+        db,
+        requester_id=row.requester_id,
+        addressee_id=row.addressee_id,
+        outcome=(
+            connection_request_log_repo.DECLINED
+            if caller_id == row.addressee_id
+            else connection_request_log_repo.CANCELLED
+        ),
+        resolved_at=datetime.now(UTC),
+    )
     await db.commit()
 
 
@@ -88,11 +122,36 @@ async def remove_connection(db: AsyncSession, *, user_a: UUID, user_b: UUID) -> 
 
 async def block(db: AsyncSession, *, blocker_id: UUID, blocked_id: UUID) -> Connection:
     """Block another user. Replaces any existing pair row with a blocked row
-    where the blocker is requester_id."""
+    where the blocker is requester_id.
+
+    **Symmetric in the code and asymmetric in meaning** (NEU-1157 §2.3). This
+    deletes any existing pair row, so it is a request-lifecycle event whether or
+    not it was written as one. If the *addressee* of a pending request blocks,
+    that is the strongest "unwanted" signal the system can observe and it is
+    recorded as `blocked`. If the *requester* blocks someone they had asked,
+    they withdrew — recording that as `blocked` would charge them an adverse
+    outcome for their own decision to disengage, so it is a `cancelled`.
+
+    Nothing is recorded when the replaced row is not pending, and the common
+    case — blocking a stranger nobody ever requested — has no ledger row to
+    resolve, which `resolve` treats as ordinary rather than as an error.
+    """
     if blocker_id == blocked_id:
         raise SelfConnectionForbidden()
     existing = await connection_repo.find_pair(db, blocker_id, blocked_id)
     if existing is not None:
+        if existing.state == "pending":
+            await connection_request_log_repo.resolve(
+                db,
+                requester_id=existing.requester_id,
+                addressee_id=existing.addressee_id,
+                outcome=(
+                    connection_request_log_repo.BLOCKED
+                    if blocker_id == existing.addressee_id
+                    else connection_request_log_repo.CANCELLED
+                ),
+                resolved_at=datetime.now(UTC),
+            )
         await connection_repo.delete(db, existing.id)
         await db.flush()
     row = await connection_repo.insert(
@@ -108,7 +167,19 @@ async def block(db: AsyncSession, *, blocker_id: UUID, blocked_id: UUID) -> Conn
 async def unblock(db: AsyncSession, *, blocker_id: UUID, blocked_id: UUID) -> None:
     """Remove a blocked row. Only the original blocker can unblock.
     Raises NotFound if no blocked row exists; raises NotAConnectionParty if
-    the row exists but caller isn't the blocker."""
+    the row exists but caller isn't the blocker.
+
+    **Writes no ledger row** — outcomes are terminal and nothing reverts
+    (NEU-1157 §2.4). Reverting a `blocked` row to `pending` is incoherent: the
+    `connection` row was deleted at block time, so there is no pending request
+    to revert *to*, and the resurrected row would immediately start aging toward
+    "ignored". Reverting it to `cancelled` avoids that but launders an adverse
+    signal on the strength of the victim's gesture, which is backwards. The mark
+    rolls off the reputation window in 30 days regardless, which is the right
+    amount of forgiveness and it is automatic. `remove_connection` is silent for
+    the simpler version of the same reason: the request *was* accepted, and
+    unfriending later does not make that untrue.
+    """
     row = await connection_repo.find_pair(db, blocker_id, blocked_id)
     if row is None or row.state != "blocked":
         raise NotFound()
