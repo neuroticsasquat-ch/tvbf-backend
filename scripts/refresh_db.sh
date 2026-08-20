@@ -51,20 +51,137 @@ case "$MODE" in
   both)    RESTORED_SCHEMAS="'catalog','app'" ;;
 esac
 
-echo "→ Locating prod Postgres container on $PROD_SSH..."
-PROD_CONTAINER=$(ssh "$PROD_SSH" \
-  "docker ps --filter ancestor=postgres:18-alpine --format '{{.ID}}'" | head -1)
-if [[ -z "$PROD_CONTAINER" ]]; then
-  echo "ERROR: no postgres:18-alpine container found on prod" >&2
+# Preflight, before a byte moves: this target restores `catalog` (or `app`)
+# alone, so anything the dumped objects merely *reference* has to be here
+# already. That is the trgm operator class and `public.immutable_unaccent(text)`
+# three folded indexes are built on, `citext` that columns are typed with, and
+# `app.alembic_version` -- which lives outside both restored schemas
+# (migrations/env.py) and is what the closing `task migrate` reads. A database
+# that never ran `task migrate` has none of them, and without this check that
+# one fact surfaces twice, both times obscurely: first as psql's `database
+# "tvbf" does not exist` from the foreign-key snapshot, a *local* error printed
+# directly beneath a line about prod, and then as five `function
+# public.immutable_unaccent(text) does not exist` failures from pg_restore --
+# after the entire dump has come down the wire. Observed 2026-08-20 on a
+# recreated infra volume. One local query replaces both with a sentence naming
+# the command to run.
+#
+# `pgcrypto` is deliberately not on the list: nothing in either schema's DDL
+# references it (uuid defaults use core gen_random_uuid), so requiring it would
+# fail a refresh over an extension the restore never touches.
+echo "→ Checking the local database can receive a restore..."
+if ! docker exec -i "$LOCAL_PG_CONTAINER" pg_isready -U "$LOCAL_DB_USER" -q; then
+  echo "ERROR: local Postgres in $LOCAL_PG_CONTAINER is not accepting connections." >&2
+  echo "  Start the shared infra first:  task infra:up" >&2
   exit 1
 fi
 
-echo "→ Resolving prod Postgres credentials..."
-# Default to the container's POSTGRES_USER/POSTGRES_DB env vars, but allow
-# overrides via PROD_PG_USER / PROD_PG_DB. Coolify-managed Postgres often
-# starts with POSTGRES_DB=postgres and the real database is created on top.
-PROD_PG_USER="${PROD_PG_USER:-$(ssh "$PROD_SSH" "docker exec $PROD_CONTAINER printenv POSTGRES_USER")}"
-PROD_PG_DB="${PROD_PG_DB:-$(ssh "$PROD_SSH" "docker exec $PROD_CONTAINER printenv POSTGRES_DB")}"
+if ! docker exec -i "$LOCAL_PG_CONTAINER" \
+     psql -U "$LOCAL_DB_USER" -d postgres -tAc \
+     "SELECT 1 FROM pg_database WHERE datname = '$LOCAL_DB'" | grep -q 1; then
+  echo "ERROR: local database \"$LOCAL_DB\" does not exist." >&2
+  echo "  A recreated infra volume starts empty. Build it first:" >&2
+  echo "    task db:init && task migrate" >&2
+  exit 1
+fi
+
+# Reported all at once rather than one per run: on a fresh database every one of
+# these is missing, and a check that stopped at the first would need as many
+# runs as there are objects to tell you the same thing.
+MISSING=$(docker exec -i "$LOCAL_PG_CONTAINER" \
+  psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -tA <<'SQL'
+SELECT string_agg(what, E'\n' ORDER BY what) FROM (
+  SELECT 'table app.alembic_version' AS what
+   WHERE to_regclass('app.alembic_version') IS NULL
+  UNION ALL
+  SELECT 'function public.immutable_unaccent(text)'
+   WHERE to_regprocedure('public.immutable_unaccent(text)') IS NULL
+  UNION ALL
+  SELECT 'extension ' || e.name
+    FROM (VALUES ('citext'), ('pg_trgm'), ('unaccent')) AS e(name)
+   WHERE NOT EXISTS (SELECT 1 FROM pg_extension x WHERE x.extname = e.name)
+) t;
+SQL
+)
+if [[ -n "$MISSING" ]]; then
+  echo "ERROR: \"$LOCAL_DB\" is missing objects this restore depends on:" >&2
+  printf '%s\n' "$MISSING" | sed 's/^/    /' >&2
+  echo "  They live outside the dumped schema(s), so the dump cannot supply" >&2
+  echo "  them. Run 'task migrate' -- preceded by 'task db:init' on a fresh" >&2
+  echo "  volume -- then re-run this command." >&2
+  exit 1
+fi
+
+# Every remote command below rides one multiplexed SSH connection. This script
+# used to open three per run -- container lookup, POSTGRES_USER, POSTGRES_DB --
+# plus a fourth for the dump, and on 2026-08-20 two of four consecutive runs
+# died with "Connection closed by ... port 22" printed immediately after the
+# container lookup had already succeeded: a mid-run failure with nothing wrong
+# at either end.
+#
+# Fewer connections is the fix for that shape of failure, but it is not a cure
+# for the host refusing to talk. The same afternoon, with this code in place, a
+# *first* connection was reset at key exchange
+# ("kex_exchange_identification: read: Connection reset by peer") -- which one
+# connection cannot burst its way into and which no client change will prevent.
+# That is the host throttling (fail2ban's sshd jail, MaxStartups), so if a run
+# fails here, check the server before editing this script: an afternoon of
+# repeated refreshes can trip the limiter on its own. What multiplexing buys is
+# a quarter of the exposure to it, and a dump that reuses the handshake the
+# lookup already paid for.
+#
+# The socket lives under /tmp, not `mktemp -t`'s TMPDIR. A Unix socket path is
+# capped at ~104 bytes, and on macOS TMPDIR is already ~50 of them
+# (/var/folders/xx/<26 chars>/T/) before mktemp's own suffix, the `ctl` name and
+# the random suffix ssh appends while establishing the master. That overflows,
+# and ssh treats it as fatal rather than falling back to an unmultiplexed
+# connection: "unix_listener: path ... too long for Unix domain socket", exit
+# 255, no dump.
+SSH_CTL_DIR=$(mktemp -d /tmp/tvbf-ssh.XXXXXX)
+SSH_OPTS=(-o ControlMaster=auto -o "ControlPath=$SSH_CTL_DIR/ctl" -o ControlPersist=60)
+prod_ssh() { ssh "${SSH_OPTS[@]}" "$PROD_SSH" "$@"; }
+
+# One trap for everything this script creates: the local dump file, the copy
+# inside the local container, and the SSH master socket. Two `trap ... EXIT`
+# lines would silently keep only the second, so new cleanup goes in here.
+cleanup() {
+  local status=$?
+  if [[ -n "${DUMP_FILE:-}" ]]; then
+    rm -f "$DUMP_FILE"
+  fi
+  if [[ -n "${SSH_CTL_DIR:-}" ]]; then
+    ssh -o "ControlPath=$SSH_CTL_DIR/ctl" -O exit "$PROD_SSH" 2>/dev/null || true
+    rm -rf "$SSH_CTL_DIR"
+  fi
+  docker exec -i "$LOCAL_PG_CONTAINER" rm -f /tmp/refresh.dump 2>/dev/null || true
+  return $status
+}
+trap cleanup EXIT
+
+echo "→ Locating prod Postgres container and credentials on $PROD_SSH..."
+# Container id, POSTGRES_USER and POSTGRES_DB all come back from one remote
+# shell. The env vars are read even when PROD_PG_USER / PROD_PG_DB override
+# them -- it costs nothing on a connection that is already open, and it keeps
+# the override a purely local concern. Coolify-managed Postgres often starts
+# with POSTGRES_DB=postgres and the real database is created on top, which is
+# why the overrides exist at all.
+PROD_INFO=$(prod_ssh 'cid=$(docker ps --filter ancestor=postgres:18-alpine --format "{{.ID}}" | head -1)
+  [ -n "$cid" ] || exit 3
+  printf "%s\n%s\n%s\n" "$cid" \
+    "$(docker exec "$cid" printenv POSTGRES_USER)" \
+    "$(docker exec "$cid" printenv POSTGRES_DB)"') || {
+  SSH_STATUS=$?
+  if [[ "$SSH_STATUS" -eq 3 ]]; then
+    echo "ERROR: no postgres:18-alpine container found on prod" >&2
+  else
+    echo "ERROR: could not reach prod over SSH (exit $SSH_STATUS)." >&2
+  fi
+  exit 1
+}
+
+PROD_CONTAINER=$(sed -n 1p <<<"$PROD_INFO")
+PROD_PG_USER="${PROD_PG_USER:-$(sed -n 2p <<<"$PROD_INFO")}"
+PROD_PG_DB="${PROD_PG_DB:-$(sed -n 3p <<<"$PROD_INFO")}"
 echo "  prod user=$PROD_PG_USER db=$PROD_PG_DB container=$PROD_CONTAINER"
 
 DUMP_FLAGS=(--format=custom --no-owner --no-acl)
@@ -75,11 +192,9 @@ case "$MODE" in
 esac
 
 DUMP_FILE=$(mktemp -t tvbf-refresh.XXXXXX.dump)
-trap 'rm -f "$DUMP_FILE"; docker exec -i "$LOCAL_PG_CONTAINER" rm -f /tmp/refresh.dump 2>/dev/null || true' EXIT
 
 echo "→ Dumping schemas [$MODE] from prod (this streams; may take a while for catalog)..."
-ssh "$PROD_SSH" \
-  "docker exec -i $PROD_CONTAINER pg_dump ${DUMP_FLAGS[*]} -U $PROD_PG_USER $PROD_PG_DB" \
+prod_ssh "docker exec -i $PROD_CONTAINER pg_dump ${DUMP_FLAGS[*]} -U $PROD_PG_USER $PROD_PG_DB" \
   > "$DUMP_FILE"
 
 # `DROP SCHEMA ... CASCADE` below silently drops every foreign key pointing
