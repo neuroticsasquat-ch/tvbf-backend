@@ -1,0 +1,7 @@
+2026-08-14T04:30:03 INFO     __main__: 782161 orphan episode(s), 18341 season(s), 2 show(s); 122867 episode(s) would be re-pointed and 659294 deleted
+2026-08-14T04:30:03 INFO     __main__: by tier: tier0_exact_key=880, tier1_same_show_unique_title=116911, tier2_link_offset_key=3565, tier2b_link_title_fallback=1511
+2026-08-14T04:30:03 INFO     __main__: user-touched: 81 orphan(s) move, 108 are deleted
+2026-08-14T04:30:03 INFO     __main__: 166 show link(s) proposed, 4 dropped for carrying more than one candidate; 1 link(s) carry user data and are the ones to review
+2026-08-14T04:30:03 WARNING  __main__: 113 user row(s) would be deleted rather than moved: 95 a genuine loss, 18 a de-duplication a surviving twin already records. Read `losses` before running `retire` — this is the list to review and commit
+2026-08-14T04:30:03 WARNING  __main__: 15 of those de-duplications rest on position and air date rather than on a match the pass itself made (`basis: position_only`) — check those rows first
+2026-08-14T04:30:03 INFO     __main__: 1 My Shows row(s) would be created for history moving to a series the user does not track — an expected reconciliation gain
