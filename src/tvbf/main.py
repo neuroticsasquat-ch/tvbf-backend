@@ -18,6 +18,7 @@ from tvbf.logging_config import configure_logging
 from tvbf.routers import (
     admin,
     admin_invites,
+    admin_reports,
     admin_users,
     auth,
     browse,
@@ -92,6 +93,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(admin.router)
     app.include_router(admin_users.router)
+    app.include_router(admin_reports.router)
     app.include_router(admin_invites.router)
     app.include_router(invites_admin.router)
     app.include_router(browse.router)
