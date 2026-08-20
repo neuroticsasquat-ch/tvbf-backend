@@ -12,7 +12,7 @@ from tvbf.app.errors import (
     SelfConnectionForbidden,
 )
 from tvbf.app.models import Connection
-from tvbf.app.repos import connection_repo
+from tvbf.app.repos import connection_repo, user_repo
 
 
 async def send_request(db: AsyncSession, *, requester_id: UUID, addressee_id: UUID) -> Connection:
@@ -124,15 +124,34 @@ async def is_blocked_either_way(db: AsyncSession, *, user_a: UUID, user_b: UUID)
 
 
 async def accepted_friend_ids(db: AsyncSession, user_id: UUID) -> set[UUID]:
-    """Return the set of user ids with an accepted connection to `user_id`."""
+    """Return the set of user ids with an accepted, **not disabled** connection
+    to `user_id`.
+
+    This is the seam the feed and all four friend-engagement routes read through
+    (NEU-1162 §4), so one predicate here removes a disabled abuser from every
+    surface their harassment actually lives on. Nothing is deleted: clearing the
+    flag restores every one of them, with no backfill step.
+
+    Deliberately *not* the same answer `GET /me/connections` gives — that route
+    reads `connection_repo.list_accepted_for_user` and keeps the row (§4.1),
+    because an existing accepted friend is not the stranger this hides from.
+    """
     pairs = await connection_repo.list_accepted_for_user(db, user_id)
-    return {other for _, other in pairs}
+    return await user_repo.filter_enabled(db, {other for _, other in pairs})
 
 
 async def are_connected(db: AsyncSession, user_a: UUID, user_b: UUID) -> bool:
-    """True iff there is an `accepted` connection between the two users
-    (either direction). Used as a permission gate on friend-scoped endpoints."""
+    """True iff there is an `accepted` connection between two enabled users
+    (either direction). Used as a permission gate on friend-scoped endpoints.
+
+    A disabled user reads as not-connected here, which is what makes their
+    library 404 for a friend (NEU-1162 §4) — `_require_connected_friend` already
+    answers 404 rather than 403 so that "no such user" and "not your friend" are
+    one answer, and this joins them as a third.
+    """
     if user_a == user_b:
         return False
     row = await connection_repo.find_pair(db, user_a, user_b)
-    return row is not None and row.state == "accepted"
+    if row is None or row.state != "accepted":
+        return False
+    return await user_repo.filter_enabled(db, {user_a, user_b}) == {user_a, user_b}

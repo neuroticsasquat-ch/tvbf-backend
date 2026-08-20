@@ -135,10 +135,19 @@ class AdminUserOut(BaseModel):
     display_name: str
     created_at: datetime
     is_admin: bool
+    # The admin list is the one surface that shows moderation state (NEU-1162
+    # AC 8). `UserOut` and `AuthedUserOut` deliberately do **not** gain it: a
+    # disabled user cannot reach either, and a field saying so would be the
+    # machine-readable confirmation §2.2 refuses to hand an abuser.
+    disabled_at: datetime | None
 
 
 class AdminUserUpdateRequest(BaseModel):
     is_admin: bool
+
+
+class AdminUserDisabledUpdateRequest(BaseModel):
+    disabled: bool
 
 
 class MePreferencesUpdate(BaseModel):

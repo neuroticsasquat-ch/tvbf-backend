@@ -78,6 +78,12 @@ class User(Base):
         Boolean, nullable=False, server_default=text("TRUE")
     )
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
+    # Moderation (NEU-1162). A timestamp rather than a boolean because the
+    # question asked of a moderation action later is *when*, and §1.1 made this
+    # column the only record of the act — there is no `disabled_by` and no
+    # `disabled_reason`, the grounds live in the report row and the Linear issue
+    # it created. Re-disabling therefore leaves an existing stamp untouched.
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
 
 class Session(Base):
@@ -785,6 +791,53 @@ class UserRecommendationDismissal(Base):
         ForeignKey("catalog.show.id", ondelete="CASCADE", name="fk_urd_show"),
         nullable=False,
     )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class UserReport(Base):
+    """One user's report of another (NEU-1162).
+
+    The row is not the workflow — the Linear issue `report_service` files is,
+    and it holds the same reason text under a system with states and assignment.
+    What this table adds is durability across a notification failure (§8.1) and
+    the ledger the throttle counts, which is why there is no triage column: a
+    coarse copy of Linear's state here would be a second record that immediately
+    disagrees with the first.
+
+    **Both FKs cascade**, consistent with every other FK into `app.user`. The
+    consequence is stated rather than discovered: an abuser who self-deletes
+    takes their reports with them, and the Linear issue is what survives.
+    `RESTRICT` on `reported_user_id` was rejected outright — it would let anyone
+    block another person's account deletion by reporting them.
+
+    The index is the throttle's exact query (§6): count this reporter's rows
+    since a timestamp.
+    """
+
+    __tablename__ = "user_report"
+    __table_args__ = (
+        Index("ix_user_report_reporter_created", "reporter_id", "created_at"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        primary_key=True,
+        server_default=text("gen_random_uuid()"),
+    )
+    reporter_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_user_report_reporter"),
+        nullable=False,
+    )
+    reported_user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_user_report_reported_user"),
+        nullable=False,
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )

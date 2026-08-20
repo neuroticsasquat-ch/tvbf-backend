@@ -29,10 +29,10 @@ from tvbf.app.errors import TooManyAttempts
 from tvbf.app.repos import auth_attempt_repo
 from tvbf.app.repos.auth_attempt_repo import LOGIN as LOGIN
 from tvbf.app.repos.auth_attempt_repo import SIGNUP as SIGNUP
-from tvbf.config import IpThrottle
+from tvbf.config import Throttle
 
 
-async def enforce(db: AsyncSession, *, kind: str, ip: str | None, throttle: IpThrottle) -> None:
+async def enforce(db: AsyncSession, *, kind: str, ip: str | None, throttle: Throttle) -> None:
     """Raise `TooManyAttempts` when `ip` is at or above the budget for `kind`.
 
     **The count and the insert are not locked together**, unlike
