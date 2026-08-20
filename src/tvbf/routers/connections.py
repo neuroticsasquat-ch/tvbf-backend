@@ -7,9 +7,11 @@ from tvbf.app.errors import (
     ConnectionAlreadyExists,
     ConnectionBlocked,
     ConnectionWrongState,
+    DeclineCooldownActive,
     NotAConnectionParty,
     NotFound,
     SelfConnectionForbidden,
+    TooManyAttempts,
 )
 from tvbf.app.models import Connection, User
 from tvbf.app.repos import connection_repo, user_repo
@@ -21,7 +23,8 @@ from tvbf.app.schemas import (
     ConnectionRequestOut,
     UserBrief,
 )
-from tvbf.app.services import connection_service
+from tvbf.app.services import connection_service, connection_throttle
+from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf, require_verified_user
 
 router = APIRouter(tags=["connections"])
@@ -50,7 +53,48 @@ async def create_connection_request(
     # route rather than the router — accepting must still work unverified.
     user: User = Depends(require_verified_user),
     db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
 ) -> ConnectionRequestOut:
+    """Order of refusals is load-bearing (NEU-1157 §5):
+    **429 → cooldown 409 → 404 → 400 → pair 409 → 201.**
+
+    The throttle runs *before* the addressee lookup, the self check and the pair
+    check, so that at the cap every target returns an identical `429` and the
+    endpoint tells a spent-out account nothing about anybody. Checked last it
+    would be a free, silent oracle: `409` for anyone already related to you or
+    who has blocked you, `429` for everyone else, with no request created,
+    nothing appearing in an inbox and no cost. Today that probe exists but is
+    *not* free — telling `409` from `201` means actually creating a request the
+    target can see. Being at the cap must not make it free.
+
+    The cost, accepted: a caller at their cap who requests *themselves* gets
+    `429` rather than `400`. Harmless, and arguably more truthful — the cap is
+    the binding constraint at that point.
+    """
+    try:
+        await connection_throttle.enforce(db, requester_id=user.id, settings=settings)
+        await connection_throttle.enforce_decline_cooldown(
+            db,
+            requester_id=user.id,
+            addressee_id=payload.addressee_id,
+            settings=settings,
+        )
+    except TooManyAttempts as err:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate_limited",
+            headers={"Retry-After": str(err.retry_after_seconds)},
+        ) from err
+    except DeclineCooldownActive as err:
+        # The *same* vague answer the pair check gives below, deliberately: the
+        # caller cannot tell "they declined me" from "we are already related"
+        # from "they blocked me". It leaks nothing new either — a requester
+        # already learns of a decline by watching the request vanish from
+        # `GET /me/connection-requests`.
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="connection_exists"
+        ) from err
+
     addressee = await user_repo.get_by_id(db, payload.addressee_id)
     if addressee is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="addressee_not_found")

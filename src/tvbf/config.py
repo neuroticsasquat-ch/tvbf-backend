@@ -30,6 +30,24 @@ class Throttle:
     window_minutes: int
 
 
+@dataclass(frozen=True)
+class ReputationRule:
+    """The four knobs of NEU-1157 §3.2's ceiling selection, as one object.
+
+    Same reason as `Throttle` above: four loose integers passed positionally is
+    exactly what a frozen dataclass exists to prevent, and `window_days` and
+    `ignored_after_days` are two day-counts that must not be swapped at a call
+    site. It is a separate type rather than more fields on `Throttle` because it
+    answers a different question — `Throttle` is *how many, over how long*, this
+    is *which of two throttles applies*.
+    """
+
+    window_days: int
+    ignored_after_days: int
+    min_sample: int
+    adverse_percent: int
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
@@ -222,6 +240,56 @@ class Settings(BaseSettings):
         default=1440, alias="REPORT_THROTTLE_WINDOW_MINUTES"
     )
 
+    # The per-requester budget on `POST /connection-requests` (NEU-1157 §3.4),
+    # the harassment vector open registration widens. **Asserted, not measured**
+    # — there is no traffic to measure — which is why every one of these is an
+    # env override: they are meant to be tuned once there is.
+    #
+    # Ten a day is well above an honest first day (each request costs a name
+    # search in `/users/search`, which returns at most 20 users for a >=2
+    # character query) and well below the volume at which a stranger reads the
+    # app as a spam vector. The floor is 2 rather than 1 because *being ignored*
+    # is one of the adverse signals and honest users' friends do ignore them: a
+    # floor of 1 reads as a punishment where 2 reads as a speed limit.
+    connection_request_throttle_max: int = Field(
+        default=10, alias="CONNECTION_REQUEST_THROTTLE_MAX"
+    )
+    connection_request_throttle_floor: int = Field(
+        default=2, alias="CONNECTION_REQUEST_THROTTLE_FLOOR"
+    )
+    # Rolling, not a calendar day: a calendar day hands everyone a fresh
+    # allowance at midnight and makes the burst predictable.
+    connection_request_throttle_window_minutes: int = Field(
+        default=1440, alias="CONNECTION_REQUEST_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The reputation rule that selects between those two ceilings (§3.2).
+    # A minimum sample of 10 would exceed the entire userbase, making the rule
+    # dead code — and a rule that cannot fire is worse than no rule, because it
+    # reads as protection. Three is not a sample. 14 days for "ignored" because
+    # an annoyed recipient declines within minutes; a week of not opening a
+    # TV-tracking app is an ordinary week, and 30 days makes the signal
+    # vestigial.
+    connection_request_reputation_window_days: int = Field(
+        default=30, alias="CONNECTION_REQUEST_REPUTATION_WINDOW_DAYS"
+    )
+    connection_request_ignored_after_days: int = Field(
+        default=14, alias="CONNECTION_REQUEST_IGNORED_AFTER_DAYS"
+    )
+    connection_request_reputation_min_sample: int = Field(
+        default=5, alias="CONNECTION_REQUEST_REPUTATION_MIN_SAMPLE"
+    )
+    connection_request_adverse_percent: int = Field(
+        default=50, alias="CONNECTION_REQUEST_ADVERSE_PERCENT"
+    )
+
+    # How long a decline locks that pair (§4). **Its own knob**, not a reuse of
+    # the reputation window despite both defaulting to 30 days: they answer
+    # different questions and will be tuned apart.
+    connection_request_decline_cooldown_days: int = Field(
+        default=30, alias="CONNECTION_REQUEST_DECLINE_COOLDOWN_DAYS"
+    )
+
     # Email transport. `smtp` is the default for local dev (Mailpit on the
     # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
     # in production.
@@ -280,6 +348,34 @@ class Settings(BaseSettings):
         return Throttle(
             max_attempts=self.report_throttle_max,
             window_minutes=self.report_throttle_window_minutes,
+        )
+
+    @property
+    def connection_request_throttle(self) -> Throttle:
+        """The full ceiling — what an account with no adverse history gets."""
+        return Throttle(
+            max_attempts=self.connection_request_throttle_max,
+            window_minutes=self.connection_request_throttle_window_minutes,
+        )
+
+    @property
+    def connection_request_floor_throttle(self) -> Throttle:
+        """The tightened ceiling. Two properties of one type rather than a
+        `Throttle` plus a loose floor integer, so `current_ceiling` reads as
+        *selecting between two budgets* and the count/window pair still cannot
+        drift apart at a call site."""
+        return Throttle(
+            max_attempts=self.connection_request_throttle_floor,
+            window_minutes=self.connection_request_throttle_window_minutes,
+        )
+
+    @property
+    def connection_request_reputation(self) -> ReputationRule:
+        return ReputationRule(
+            window_days=self.connection_request_reputation_window_days,
+            ignored_after_days=self.connection_request_ignored_after_days,
+            min_sample=self.connection_request_reputation_min_sample,
+            adverse_percent=self.connection_request_adverse_percent,
         )
 
 

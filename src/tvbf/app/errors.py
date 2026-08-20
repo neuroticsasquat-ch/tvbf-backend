@@ -67,6 +67,17 @@ class SelfReportForbidden(DomainError):
     """
 
 
+class DeclineCooldownActive(DomainError):
+    """The addressee declined this requester within the cooldown (NEU-1157 §4).
+
+    Its own error, mapped by the router to **the same vague `409
+    connection_exists`** the pair check returns — deliberately indistinguishable
+    from "we already have a relationship" and from "they blocked you". It is not
+    `ConnectionAlreadyExists` because no `app.connection` row exists to carry,
+    and conflating them would make the router's two reasons one.
+    """
+
+
 class InvalidCursor(DomainError):
     """Pagination cursor is malformed."""
 
@@ -74,9 +85,10 @@ class InvalidCursor(DomainError):
 class TooManyAttempts(DomainError):
     """A request budget rejected the request.
 
-    Raised by the IP-keyed signup/login throttle (NEU-1160) and by the
-    per-reporter report budget (NEU-1162) — named for the refusal rather than
-    for the key, the same reason `config.Throttle` is.
+    Raised by the IP-keyed signup/login throttle (NEU-1160), by the
+    per-reporter report budget (NEU-1162) and by the per-requester connection
+    budget (NEU-1157) — named for the refusal rather than for the key, the same
+    reason `config.Throttle` is.
 
     Carries the window in seconds so the router can set `Retry-After` without
     re-deriving the budget it just passed in.
