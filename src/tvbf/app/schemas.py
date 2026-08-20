@@ -142,6 +142,64 @@ class AdminUserOut(BaseModel):
     disabled_at: datetime | None
 
 
+class AdminReportUserRef(BaseModel):
+    """One party to a report (NEU-1197 §3).
+
+    No `email`. An admin who needs it has `GET /admin/users`, which already
+    exposes it for every account; carrying it here widens what leaks if this
+    route is ever mis-gated, for a field nobody triages on. The id is the
+    identity, the display name is the label.
+
+    `disabled_at` is a **live join** to `app.user`, not a flag stored on the
+    report — it cannot drift, and clearing the flag restores the truth with no
+    backfill.
+    """
+
+    id: UUID
+    display_name: str
+    disabled_at: datetime | None
+
+
+class AdminReportOut(BaseModel):
+    """One row of the admin report queue (NEU-1197 §3).
+
+    **Nested refs, not flat prefixes.** `AdminUserOut` is flat because it *is*
+    one user; this row is a relationship between two, and
+    `reporter_id` / `reporter_display_name` / `reporter_disabled_at` at three
+    fields each is where that starts reading as two structs pretending not to
+    be.
+
+    The *reporter's* `disabled_at` is carried though the ticket names only the
+    reported user's: five rows under `?reported_user_id=` means five *reports*,
+    not five people, and three from an account already disabled as a griefer is
+    the difference between a pile-on and a campaign.
+
+    `reason` is returned **in full and verbatim** (§3.1) — untruncated, because
+    reading the reason text is the whole point, and unescaped, because escaping
+    belongs to the renderer. Whatever renders this must not render it as HTML.
+    """
+
+    id: UUID
+    reporter: AdminReportUserRef
+    reported_user: AdminReportUserRef
+    reason: str
+    created_at: datetime
+
+
+class AdminReportPage(BaseModel):
+    """`ShowListPage`'s shape, which is the only pagination vocabulary this API
+    has. `total` is load-bearing rather than decorative: without it
+    `?reported_user_id=X` reports a count only while it fits under the page cap,
+    so the answer degrades to "at least N" exactly when the number is alarming.
+    """
+
+    items: list[AdminReportOut]
+    page: int
+    per_page: int
+    total: int
+    total_pages: int
+
+
 class AdminUserUpdateRequest(BaseModel):
     is_admin: bool
 
