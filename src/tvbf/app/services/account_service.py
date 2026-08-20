@@ -94,6 +94,27 @@ async def authenticate(
         await db.commit()
         raise InvalidCredentials()
 
+    # A disabled account is refused with the *same* generic error a wrong
+    # password gets (NEU-1162 §2.3) — an abuser who has just been disabled is
+    # not told they were caught. Three properties hold this up, and all three
+    # come from where the check sits:
+    #
+    # * **After `verify_password`, deliberately.** Argon2 is slow on purpose;
+    #   answering a disabled account before it would take milliseconds where
+    #   every other 401 takes ~100ms, which is a timing oracle saying exactly
+    #   what the generic error refuses to say.
+    # * **No `app.login_attempt` row.** That ledger answers "is this *account*
+    #   being guessed at?" and the guess was correct — recording it would poison
+    #   the brute-force signal and eventually lock the account out for an
+    #   unrelated reason.
+    # * **Before `clear_for_email`,** so a disabled account cannot be used as a
+    #   reset button on the email-keyed lockout.
+    #
+    # The IP throttle still records an attempt, with no code here: the router's
+    # existing `except InvalidCredentials` branch does it.
+    if user.disabled_at is not None:
+        raise InvalidCredentials()
+
     # Successful login — wipe the slate clean.
     await login_attempt_repo.clear_for_email(db, email=email)
 
@@ -172,6 +193,17 @@ async def resolve_session_user(db: AsyncSession, *, session_id: str | None) -> U
 
     user = await user_repo.get_by_id(db, sess.user_id)
     if user is None:  # pragma: no cover  -- defensive: FK cascade prevents this
+        return None
+
+    # A disabled account's session is not a valid session (NEU-1162 §2.1). This
+    # function has exactly one caller — `deps.get_current_user` — so one
+    # predicate here covers browse, `/me`, connections, friend engagement, admin
+    # and everything added later, at once, rather than route by route. The
+    # caller's existing `401 auth_required` is what the request sees: no new
+    # status code and no `account_disabled` detail, because a machine-readable
+    # confirmation on every request tells the abuser precisely what happened,
+    # and they get one per retry (§2.2).
+    if user.disabled_at is not None:
         return None
 
     await session_repo.touch(db, session_id)

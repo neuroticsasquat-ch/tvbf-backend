@@ -16,6 +16,7 @@ from urllib.parse import urlencode
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.app.errors import InvalidAuthToken
 from tvbf.app.models import User
 from tvbf.app.passwords import hash_password
 from tvbf.app.repos import session_repo, user_repo
@@ -43,6 +44,14 @@ async def request_reset(
     """
     user = await user_repo.get_by_email(db, email)
     if user is None:
+        return
+
+    # A disabled account gets no reset link (NEU-1162 §3). The route already
+    # answers 202 unconditionally to avoid enumeration, so a silent no-op leaks
+    # nothing — and after `reset` below, a link mailed here would be dead on
+    # arrival anyway.
+    if user.disabled_at is not None:
+        log.info("password_reset.disabled_user user_id=%s", user.id)
         return
 
     if not await auth_token_service.can_issue(
@@ -77,6 +86,14 @@ async def reset(db: AsyncSession, *, raw_token: str, new_password: str) -> User:
     user = await auth_token_service.verify_and_consume(
         db, raw_token=raw_token, purpose=auth_token_service.PURPOSE_PASSWORD_RESET
     )
+    # This route takes a token instead of a session, so `get_current_user` never
+    # runs on it and §2.1's one predicate does not reach here. A disabled user is
+    # refused with the route's **existing** generic failure — nothing an abuser
+    # can tell apart from an expired token. The token is consumed either way,
+    # which is correct: it was redeemed.
+    if user.disabled_at is not None:
+        await db.commit()
+        raise InvalidAuthToken()
     await user_repo.update_password_hash(db, user, hash_password(new_password))
     await session_repo.delete_all_for_user(db, user.id)
     await db.commit()

@@ -59,12 +59,24 @@ class EmailChangePayloadMissing(DomainError):
     """Token has no payload — should be unreachable, but we surface it as 400."""
 
 
+class SelfReportForbidden(DomainError):
+    """A user attempted to report themselves (NEU-1162 §7.2).
+
+    Its own error rather than `SelfConnectionForbidden`, which is named for the
+    act it refuses and maps to a different status code.
+    """
+
+
 class InvalidCursor(DomainError):
     """Pagination cursor is malformed."""
 
 
 class TooManyAttempts(DomainError):
-    """The IP-keyed signup/login throttle rejected the request (NEU-1160).
+    """A request budget rejected the request.
+
+    Raised by the IP-keyed signup/login throttle (NEU-1160) and by the
+    per-reporter report budget (NEU-1162) — named for the refusal rather than
+    for the key, the same reason `config.Throttle` is.
 
     Carries the window in seconds so the router can set `Retry-After` without
     re-deriving the budget it just passed in.

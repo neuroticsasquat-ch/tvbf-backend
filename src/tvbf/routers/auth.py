@@ -18,7 +18,7 @@ from tvbf.app.schemas import (
 )
 from tvbf.app.services import account_service, auth_throttle
 from tvbf.client_ip import client_ip
-from tvbf.config import IpThrottle, Settings, get_settings
+from tvbf.config import Settings, Throttle, get_settings
 from tvbf.cookies import clear_auth_cookies, set_auth_cookies
 from tvbf.deps import get_current_user, get_session, require_csrf
 from tvbf.integrations import turnstile
@@ -29,7 +29,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 async def _enforce_ip_throttle(
-    db: AsyncSession, *, kind: str, ip: str | None, throttle: IpThrottle
+    db: AsyncSession, *, kind: str, ip: str | None, throttle: Throttle
 ) -> None:
     """429 when this address has spent its budget. `detail` is the same
     `rate_limited` string `email_change.py` and `email_verification.py` already

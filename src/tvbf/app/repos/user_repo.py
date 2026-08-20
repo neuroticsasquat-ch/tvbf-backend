@@ -43,10 +43,37 @@ async def list_ids(db: AsyncSession) -> list[UUID]:
     Ordered by `created_at` so a pass that aborts on consecutive failures
     (`jobs/weekly_recommendations`) covered the same users it would have covered
     yesterday, rather than a different arbitrary prefix each week.
+
+    Disabled accounts are excluded (NEU-1162 §9). One of them cannot see a
+    recommendation, so the DeepInfra call their changed taste would buy is money
+    spent on nobody. This narrows the *universe*, not the floor — the reasoning
+    above about every user rather than every user with history is untouched.
     """
     return list(
-        (await db.execute(select(User.id).order_by(User.created_at, User.id))).scalars().all()
+        (
+            await db.execute(
+                select(User.id).where(User.disabled_at.is_(None)).order_by(User.created_at, User.id)
+            )
+        )
+        .scalars()
+        .all()
     )
+
+
+async def filter_enabled(db: AsyncSession, ids: set[UUID]) -> set[UUID]:
+    """The subset of `ids` belonging to accounts that are not disabled.
+
+    The set-shaped half of the NEU-1162 §4 predicate, for the two seams that
+    already hold a set of ids rather than a query they can join
+    (`connection_service.accepted_friend_ids` and `are_connected`). An id no
+    account owns is dropped, which is the same answer disabling gives.
+    """
+    if not ids:
+        return set()
+    rows = (
+        await db.execute(select(User.id).where(User.id.in_(ids), User.disabled_at.is_(None)))
+    ).scalars()
+    return set(rows)
 
 
 async def get_many_by_ids(db: AsyncSession, ids: set[UUID]) -> dict[UUID, User]:
@@ -80,14 +107,17 @@ async def search(
     Unverified users are excluded unconditionally (NEU-1161 §3.2): being
     discoverable by strangers is one of the two things a verified mailbox buys,
     and the exclusion is blanket, including for people the caller is already
-    connected to. The predicate lives here rather than in the router so `limit`
-    still returns a full page.
+    connected to. Disabled users are excluded beside them (NEU-1162 §4) — people
+    discovery is where a new target is found, so it is the one surface where
+    leaving a disabled abuser visible would actively help them. Both predicates
+    live here rather than in the router so `limit` still returns a full page.
     """
     pattern = f"%{query}%"
     stmt = (
         select(User)
         .where((User.display_name.ilike(pattern)) | (User.email == query))
         .where(User.email_verified_at.is_not(None))
+        .where(User.disabled_at.is_(None))
     )
     if exclude_ids:
         stmt = stmt.where(User.id.notin_(exclude_ids))

@@ -13,7 +13,7 @@ from urllib.parse import urlencode
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import AuthTokenRateLimited
+from tvbf.app.errors import AuthTokenRateLimited, InvalidAuthToken
 from tvbf.app.models import User
 from tvbf.app.services import auth_token_service
 from tvbf.email import EmailSendError, send_email
@@ -89,6 +89,13 @@ async def verify(db: AsyncSession, *, raw_token: str) -> User:
         raw_token=raw_token,
         purpose=auth_token_service.PURPOSE_EMAIL_VERIFICATION,
     )
+    # Token instead of session, so §2.1's predicate never runs here (NEU-1162
+    # §3) — and verification is the flag that makes an account visible in people
+    # search, which is precisely what disabling took away. Refused with the
+    # route's existing generic failure; the token stays consumed.
+    if user.disabled_at is not None:
+        await db.commit()
+        raise InvalidAuthToken()
     if user.email_verified_at is None:
         user.email_verified_at = datetime.now(UTC)
     await db.commit()

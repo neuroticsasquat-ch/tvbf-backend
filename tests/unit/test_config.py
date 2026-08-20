@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tvbf.config import IpThrottle, Settings
+from tvbf.config import Settings, Throttle
 
 
 def test_settings_reads_database_url_from_env(monkeypatch):
@@ -128,17 +128,23 @@ def test_abuse_protection_defaults(monkeypatch):
         "SIGNUP_IP_THROTTLE_WINDOW_MINUTES",
         "LOGIN_IP_THROTTLE_MAX",
         "LOGIN_IP_THROTTLE_WINDOW_MINUTES",
+        "REPORT_THROTTLE_MAX",
+        "REPORT_THROTTLE_WINDOW_MINUTES",
     ):
         monkeypatch.delenv(key, raising=False)
     s = Settings()  # type: ignore[call-arg]
     assert s.turnstile_enabled is False
     assert s.turnstile_secret_key is None
     assert s.trusted_proxy_hops == 1
-    assert s.signup_ip_throttle == IpThrottle(max_attempts=5, window_minutes=60)
+    assert s.signup_ip_throttle == Throttle(max_attempts=5, window_minutes=60)
     # Twice LOGIN_LOCKOUT_THRESHOLD, so one forgetful person trips their own
     # email lockout well before they trip the network's.
-    assert s.login_ip_throttle == IpThrottle(max_attempts=10, window_minutes=15)
+    assert s.login_ip_throttle == Throttle(max_attempts=10, window_minutes=15)
     assert s.login_ip_throttle.max_attempts == 2 * s.login_lockout_threshold
+    # A **daily** window (NEU-1162 §6): griefing is a volume problem measured in
+    # days, and five per day caps a determined griefer at five Linear issues
+    # rather than the 72 an hourly window of the same size would allow.
+    assert s.report_throttle == Throttle(max_attempts=5, window_minutes=1440)
 
 
 def test_ip_throttle_properties_follow_the_env(monkeypatch):
@@ -149,5 +155,23 @@ def test_ip_throttle_properties_follow_the_env(monkeypatch):
     monkeypatch.setenv("LOGIN_IP_THROTTLE_MAX", "3")
     monkeypatch.setenv("LOGIN_IP_THROTTLE_WINDOW_MINUTES", "5")
     s = Settings()  # type: ignore[call-arg]
-    assert s.signup_ip_throttle == IpThrottle(max_attempts=2, window_minutes=30)
-    assert s.login_ip_throttle == IpThrottle(max_attempts=3, window_minutes=5)
+    assert s.signup_ip_throttle == Throttle(max_attempts=2, window_minutes=30)
+    assert s.login_ip_throttle == Throttle(max_attempts=3, window_minutes=5)
+
+
+def test_report_throttle_property_follows_the_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("REPORT_THROTTLE_MAX", "2")
+    monkeypatch.setenv("REPORT_THROTTLE_WINDOW_MINUTES", "60")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.report_throttle == Throttle(max_attempts=2, window_minutes=60)
+
+
+def test_linear_report_label_id_defaults_to_none(monkeypatch):
+    """Unset means no label — reports are still filed, just unlabelled."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.delenv("LINEAR_REPORT_LABEL_ID", raising=False)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.linear_report_label_id is None

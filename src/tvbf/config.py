@@ -6,17 +6,24 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 @dataclass(frozen=True)
-class IpThrottle:
-    """One inbound per-IP budget (NEU-1160).
+class Throttle:
+    """One inbound request budget — a count and the window it is counted over.
 
     One frozen dataclass rather than two loose integers, for **half** of
     `rate_budget.Budget`'s reason: a call site states the budget it means, and
-    the pair cannot drift apart across the four settings below. Budget's other
-    half does not transfer — it is one object because `get_rate_limiter` is
+    the pair cannot drift apart across the settings below. Budget's other half
+    does not transfer — it is one object because `get_rate_limiter` is
     `functools.cache`d and keys on the literal call, and nothing here is cached.
     It lives in this module rather than beside `auth_throttle.enforce` because
     `Settings` returns it and `db` imports `config`, so config cannot import
     anything under `app` without a cycle.
+
+    **Named for the shape, not for the key** (NEU-1162 §6.1). It arrived as
+    `IpThrottle` with NEU-1160 and every budget it held was keyed on an address;
+    the report throttle is keyed on a *user*, and NEU-1157 adds a second
+    user-keyed budget of exactly this shape. A second identical dataclass whose
+    only difference is its name is the alternative, and it is worse. The
+    `Settings` properties keep their own names, which is where the key is said.
     """
 
     max_attempts: int
@@ -204,6 +211,17 @@ class Settings(BaseSettings):
         default=15, alias="LOGIN_IP_THROTTLE_WINDOW_MINUTES"
     )
 
+    # The per-reporter budget on `POST /reports` (NEU-1162 §6), so the report
+    # channel does not itself become a harassment vector. A **daily** window
+    # because griefing is a volume problem measured in days; five is far above
+    # any honest use — most users will file zero for life — while capping a
+    # determined griefer at five Linear issues rather than the 72 an hourly
+    # window of the same size would allow.
+    report_throttle_max: int = Field(default=5, alias="REPORT_THROTTLE_MAX")
+    report_throttle_window_minutes: int = Field(
+        default=1440, alias="REPORT_THROTTLE_WINDOW_MINUTES"
+    )
+
     # Email transport. `smtp` is the default for local dev (Mailpit on the
     # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
     # in production.
@@ -224,12 +242,19 @@ class Settings(BaseSettings):
     linear_api_key: str | None = Field(default=None, alias="LINEAR_API_KEY")
     linear_team_id: str | None = Field(default=None, alias="LINEAR_TEAM_ID")
     linear_feedback_label_id: str | None = Field(default=None, alias="LINEAR_FEEDBACK_LABEL_ID")
+    # Optional label on the issues `report_service` files, so reports are
+    # filterable apart from feedback. Unset means no label.
+    linear_report_label_id: str | None = Field(default=None, alias="LINEAR_REPORT_LABEL_ID")
 
     # Optional recipient for a server-sent notification email each time a
     # feedback issue is created. Linear itself suppresses notifications when
     # the API actor is the recipient (i.e., when the personal API key is
     # owned by the same human you'd want to notify), so this is a workaround
     # without spinning up an OAuth app. Leave unset to disable.
+    # It also carries the user-report notification (NEU-1162 §8.2): it means
+    # "the maintainer's mailbox", and a second variable for the same human is a
+    # second place to get it wrong. The name is now slightly narrow; noting that
+    # beats renaming a live production variable.
     feedback_notify_email: str | None = Field(default=None, alias="FEEDBACK_NOTIFY_EMAIL")
 
     @property
@@ -237,17 +262,24 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
 
     @property
-    def signup_ip_throttle(self) -> IpThrottle:
-        return IpThrottle(
+    def signup_ip_throttle(self) -> Throttle:
+        return Throttle(
             max_attempts=self.signup_ip_throttle_max,
             window_minutes=self.signup_ip_throttle_window_minutes,
         )
 
     @property
-    def login_ip_throttle(self) -> IpThrottle:
-        return IpThrottle(
+    def login_ip_throttle(self) -> Throttle:
+        return Throttle(
             max_attempts=self.login_ip_throttle_max,
             window_minutes=self.login_ip_throttle_window_minutes,
+        )
+
+    @property
+    def report_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.report_throttle_max,
+            window_minutes=self.report_throttle_window_minutes,
         )
 
 

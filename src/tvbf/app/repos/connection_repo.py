@@ -1,11 +1,11 @@
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import and_, or_, select, update
+from sqlalchemy import and_, case, or_, select, update
 from sqlalchemy import delete as sa_delete
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.models import Connection
+from tvbf.app.models import Connection, User
 
 
 async def find_pair(db: AsyncSession, user_a: UUID, user_b: UUID) -> Connection | None:
@@ -32,7 +32,14 @@ async def get(db: AsyncSession, connection_id: UUID) -> Connection | None:
 
 
 async def list_accepted_for_user(db: AsyncSession, user_id: UUID) -> list[tuple[Connection, UUID]]:
-    """All accepted connections for the user, paired with the *other* user_id."""
+    """All accepted connections for the user, paired with the *other* user_id.
+
+    Disabled accounts are **not** filtered here (NEU-1162 §4.1). This is the row
+    `GET /me/connections` renders, and an existing accepted friend is not the
+    stranger invisibility exists to protect: hiding the row makes a connection
+    vanish and re-appear for someone who did nothing wrong. The *engagement*
+    surfaces filter instead, in `connection_service.accepted_friend_ids`.
+    """
     rows = (
         (
             await db.execute(
@@ -54,16 +61,34 @@ async def list_accepted_for_user(db: AsyncSession, user_id: UUID) -> list[tuple[
 async def list_pending_for_user(
     db: AsyncSession, user_id: UUID
 ) -> tuple[list[Connection], list[Connection]]:
-    """Return (incoming, outgoing) pending requests for the user."""
+    """Return (incoming, outgoing) pending requests for the user.
+
+    A request whose *other* party is disabled is dropped from both lists
+    (NEU-1162 §4): the request a griefer sent before being disabled is sitting
+    in a stranger's inbox, and it is exactly the harassment disabling exists to
+    stop. The row is not deleted — clearing the flag brings it back, with no
+    backfill step, which is the reversibility the whole feature is buying.
+
+    The predicate lives here rather than in the router because it is a join, not
+    a post-filter: the caller has one query's worth of rows and no user rows to
+    test.
+    """
+    other_id = case(
+        (Connection.requester_id == user_id, Connection.addressee_id),
+        else_=Connection.requester_id,
+    )
     rows = (
         (
             await db.execute(
-                select(Connection).where(
+                select(Connection)
+                .join(User, User.id == other_id)
+                .where(
                     Connection.state == "pending",
                     or_(
                         Connection.requester_id == user_id,
                         Connection.addressee_id == user_id,
                     ),
+                    User.disabled_at.is_(None),
                 )
             )
         )
