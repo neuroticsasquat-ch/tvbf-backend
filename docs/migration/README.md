@@ -22,7 +22,7 @@ pointing at unmapped rows.
 
 | Pass | Task | Ordering | Run in prod |
 | -- | -- | -- | -- |
-| Watch archive (NEU-1029) | `task archive:watches` | before anything else | ✅ 2026-08-09 — 9,359 rows |
+| Watch archive (NEU-1029, table dropped in NEU-1158) | `task archive:watches` | before anything else | ✅ 2026-08-09 — 9,359 rows |
 | Reconciliation baseline (NEU-1030) | `task reconcile:capture` | before cutover | ✅ 2026-08-09, **re-captured 2026-08-11** after the prune — 5 users, 621 tracked shows, 8,569 episode watches, 97 show ratings, 78 episode ratings, 802 activity events |
 | Catalog copy (NEU-1042) | `task copy:catalog` | before enrichment | ✅ 2026-08-09 — 89,025 shows |
 | TMDB id enrichment (NEU-1043) | `task enrich:tmdb-ids` | after copy, **before ingest** | ✅ 2026-08-10 — 62,882 matched, 26,143 unmatched, 107 collisions |
@@ -131,10 +131,10 @@ anything next time.
 
 Nothing in `app` has referenced `tvmaze` since NEU-1046 repointed all five
 foreign keys onto `catalog`, so the `CASCADE` has no inbound constraint to
-follow. `app.watch_archive` has no foreign keys at all and describes every watch
-in human terms, so it survives intact and stays the recovery path of last resort
-— it is also the reason this ticket could be deferred safely for as long as it
-was.
+follow. `app.watch_archive` (since dropped in NEU-1158) had no foreign keys at
+all and described every watch in human terms, so it survived intact and stayed
+the recovery path of last resort — it was also the reason this ticket could be
+deferred safely for as long as it was.
 
 ### Reverting
 
@@ -574,9 +574,10 @@ Five things to know before running it in production:
    has added since the baseline. **A `LOST` line that is not on the report's loss
    list is a stop.**
 2. **It is not reversible.** The pre-drop `tvmaze` dump is the only source for the
-   deleted catalog rows and it cannot restore `app` rows at all. What can is
-   `app.watch_archive` — a human-readable snapshot of every watch and rating, no
-   foreign keys, unaffected by the schema drop. Recovery is by hand, from there.
+    deleted catalog rows and it cannot restore `app` rows at all. What could is
+    the pre-drop `app.watch_archive` dump (NEU-1158) — a human-readable snapshot of
+    every watch and rating, no foreign keys, unaffected by the schema drop.
+    Recovery is by hand, from there.
 3. **Criterion 7 is a query, and the frontend half waits on it.** After the pass,
    `catalog.episode`, `catalog.season` and `catalog.show` must hold **zero** rows
    with `tmdb_id IS NULL`; the run says so itself and logs a warning naming what
@@ -1711,8 +1712,8 @@ whether something broke it and something else repaired it — and moving a
 correct row a day the *other* way is exactly what the per-network rule §2.6
 rejected would have done to 17 Prime Video rows.
 
-`app.watch_archive` is append-only (NEU-1029), so the baseline keeps
-indefinitely. It just has to be taken first.
+`app.watch_archive` was append-only (NEU-1029, table dropped in NEU-1158), so
+the baseline kept indefinitely. It just had to be taken first.
 
 ```bash
 # production, immediately before the first `airdate_reconcile` run — read-only

@@ -576,8 +576,9 @@ async def test_without_air_dates_a_collapse_is_reported_as_a_loss_it_may_not_be(
     it reads as a genuine loss, even though this *is* the two-parter shape.
 
     That asymmetry is deliberate and runs the safe way: telling a reviewer
-    something was lost when it was not costs them a look at `app.watch_archive`,
-    where the converse tells them nothing was lost when it was — before a pass
+    something was lost when it was not costs them a look at the pre-drop
+    `app.watch_archive` dump (NEU-1158), where the converse tells them nothing was
+    lost when it was — before a pass
     that cannot be undone.
 
     The dated version, where the inference succeeds, is
