@@ -25,6 +25,16 @@ Nothing outside this repo is required to work in it. There is no umbrella-level 
 `docs/` any more — everything relocated into the two repos on 2026-08-20 so a `git clone` is
 sufficient on a new machine.
 
+**Doing frontend work from a backend-rooted session.** PyCharm holds both repos in one project with
+this one as the root, so a session started here loads this file and not the SPA's. If the task
+touches anything under `tvbf-frontend/`, **read `../tvbf-frontend/.claude/CLAUDE.md` in full before
+the first edit** — it is the same load-bearing prose this file is, not a summary, and the frontend's
+patterns are no more guessable from here than these are from there. It is a pointer rather than an
+`@` import on purpose: this file is already ~22k tokens and the SPA's is another ~6k, which every
+backend-only session would otherwise pay for nothing. Editing across the boundary also needs the
+directory added to the session — `permissions.additionalDirectories` in the gitignored
+`.claude/settings.local.json`, or `/add-dir ../tvbf-frontend` for a one-off.
+
 - `.claude/docs/` — the five split-out pattern files, listed under *Non-obvious patterns* below.
   Not optional reading; each says when you must read it.
 - `docs/adr/` — architecture decision records, cited by number throughout this file.
