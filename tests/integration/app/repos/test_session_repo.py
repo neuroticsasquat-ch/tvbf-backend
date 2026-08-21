@@ -9,6 +9,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import Session, User
 from tvbf.app.repos import session_repo
 from tvbf.app.tokens import new_session_id
@@ -34,7 +35,7 @@ async def _create_session(db, *, user_id, ttl_days):
 
 @pytest.mark.asyncio
 async def test_create_and_lookup_session(session):
-    user = User(email="g@example.com", password_hash="x", display_name="G")
+    user = User(email="g@example.com", password_hash="x", display_name="G", handle=new_handle())
     session.add(user)
     await session.flush()
 
@@ -49,7 +50,7 @@ async def test_create_and_lookup_session(session):
 
 @pytest.mark.asyncio
 async def test_lookup_session_returns_none_when_expired(session):
-    user = User(email="h@example.com", password_hash="x", display_name="H")
+    user = User(email="h@example.com", password_hash="x", display_name="H", handle=new_handle())
     session.add(user)
     await session.flush()
     sess = Session(
@@ -69,7 +70,7 @@ async def test_lookup_session_returns_none_for_unknown(session):
 
 @pytest.mark.asyncio
 async def test_touch_session_updates_last_seen(session):
-    user = User(email="i@example.com", password_hash="x", display_name="I")
+    user = User(email="i@example.com", password_hash="x", display_name="I", handle=new_handle())
     session.add(user)
     await session.flush()
     sess_id = await _create_session(session, user_id=user.id, ttl_days=30)
@@ -100,7 +101,7 @@ async def test_touch_session_updates_last_seen(session):
 
 @pytest.mark.asyncio
 async def test_delete_session(session):
-    user = User(email="j@example.com", password_hash="x", display_name="J")
+    user = User(email="j@example.com", password_hash="x", display_name="J", handle=new_handle())
     session.add(user)
     await session.flush()
     sess_id = await _create_session(session, user_id=user.id, ttl_days=30)
@@ -121,7 +122,7 @@ async def test_make_user_fixture(make_user):
 
 @pytest.mark.asyncio
 async def test_delete_user_sessions(session):
-    user = User(email="k@example.com", password_hash="x", display_name="K")
+    user = User(email="k@example.com", password_hash="x", display_name="K", handle=new_handle())
     session.add(user)
     await session.flush()
     a = await _create_session(session, user_id=user.id, ttl_days=30)

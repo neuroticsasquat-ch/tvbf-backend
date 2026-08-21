@@ -92,7 +92,7 @@ Database:
 - `task db:init` — create `tvbf` and `tvbf_test` databases in the shared Postgres (idempotent)
 - `task migrate` — `alembic upgrade head` against `tvbf`
 - `task makemigration -- "message"` — autogenerate a new migration
-- `task db:refresh` — replace the local `app` schema with prod's (anonymizes users by default; `ANONYMIZE=0` opts out). Anonymisation rewrites `email`, `display_name` and `password_hash`, preserving the first two only for `ADMIN_EMAIL`; `display_name` is rewritten **unconditionally** rather than only when it looks like an address (NEU-1195), because a conditional rule would be a second copy of NEU-1194's email-shaped test and would still leave real names in a local copy. It takes the same eight id characters the email rewrite takes, so `User 3f4a2b1c` and `user-3f4a2b1c@anon.local` are visibly one account and a prefix collision surfaces once, at `uq_user_email` — **changing the email derivation alone silently removes `display_name`'s only collision check**. The pass then asserts its own result (every non-admin row matches `^User [0-9a-f]{8}$`) and aborts, because `ON_ERROR_STOP` catches a statement that raised and not a `CASE` a later edit breaks into matching everyone. `scripts/refresh_db.sh` also takes a `catalog` mode, which replaced the `tvmaze` one in NEU-1051 and is far larger than it was; `both` does the pair. Needs `PROD_SSH` in the gitignored `.env.local`. Runs `task migrate` at the end, so migrations on your branch that prod lacks are applied on top of the restored data.
+- `task db:refresh` — replace the local `app` schema with prod's (anonymizes users by default; `ANONYMIZE=0` opts out). Anonymisation rewrites `email`, `display_name`, `handle` and `password_hash` and truncates `app.handle_release`, preserving the first three only for `ADMIN_EMAIL`; `handle` is rewritten unconditionally for `display_name`'s reason and to the same `user_<8 hex>` shape off the same eight id characters, and unlike `display_name` a prefix collision there actually raises, at `uq_user_handle` (NEU-1163); `display_name` is rewritten **unconditionally** rather than only when it looks like an address (NEU-1195), because a conditional rule would be a second copy of NEU-1194's email-shaped test and would still leave real names in a local copy. It takes the same eight id characters the email rewrite takes, so `User 3f4a2b1c` and `user-3f4a2b1c@anon.local` are visibly one account and a prefix collision surfaces once, at `uq_user_email` — **changing the email derivation alone silently removes `display_name`'s only collision check**. The pass then asserts its own result (every non-admin row matches `^User [0-9a-f]{8}$`) and aborts, because `ON_ERROR_STOP` catches a statement that raised and not a `CASE` a later edit breaks into matching everyone. `scripts/refresh_db.sh` also takes a `catalog` mode, which replaced the `tvmaze` one in NEU-1051 and is far larger than it was; `both` does the pair. Needs `PROD_SSH` in the gitignored `.env.local`. Runs `task migrate` at the end, so migrations on your branch that prod lacks are applied on top of the restored data.
 - `task db:set-password -- email [password]` — reset a local user's password (default `localdev`)
 
 Quality gates:
@@ -151,11 +151,15 @@ header, per-user fields and status codes.
   `/episodes/{id}/guest-cast`, `/episodes/{id}/crew`.
 - **Auth** — cookie session + CSRF; session cookie is httpOnly, scoped to `.tvbf.localhost`; CSRF token
   returned in the body and required on mutating `/me/*` via `X-CSRF-Token`: `POST /signup` (invite code
-  required), `POST /login`, `POST /logout`, `POST /password-change`. Signup and login also carry
+  and a required `handle`), `POST /login`, `POST /logout`, `POST /password-change`.
+  Since NEU-1163 signup answers `409 handle_unavailable` for a taken *or* previously released
+  handle, byte-identical for both, beside the unchanged `409 email_in_use`. Signup and login also carry
   NEU-1160's IP throttle and (signup only) Turnstile, and since NEU-1162 `POST /login` refuses a
   **disabled** account with the same generic `401 invalid_credentials` a wrong password gets — see
   `.claude/docs/patterns-auth-and-abuse.md`.
-- **Me** — `get_current_user` dep, mutating routes also `require_csrf`: `GET /me`, `DELETE /me`,
+- **Me** — `get_current_user` dep, mutating routes also `require_csrf`: `GET /me`,
+  `PATCH /me/handle` (NEU-1163; its own route, 3 changes per 30 days, `429 rate_limited` +
+  `Retry-After`, `409 handle_unavailable`), `DELETE /me`,
   `GET/PUT/DELETE /me/shows` and `/me/shows/{id}`, `GET /me/watch-next`, `GET /me/upcoming`,
   `/me/upcoming/seasons`, `/me/upcoming/shows`, `GET /me/shows/{id}/episodes/watched`,
   `GET /me/shows/{id}/seasons/progress`, `POST/DELETE /me/episodes/{id}/watched`,
@@ -215,7 +219,9 @@ migration-era history. Read it before adding a table or writing a migration.
 - `app` — user / auth / tracking / social data: `user`, `session`, `auth_token`, `login_attempt`,
   `auth_attempt`, `invite`, `user_show_watch`, `user_episode_watch`, `user_show_rating`,
   `user_episode_rating`, `connection`, `connection_request_log`, `activity_event`, `watch_archive`,
-  `user_recommendation_set`, `user_recommendation`, `user_recommendation_dismissal`, `user_report`.
+  `user_recommendation_set`, `user_recommendation`, `user_recommendation_dismissal`, `user_report`,
+  `handle_release` (NEU-1163 — a released handle is never claimable by anyone but its original owner,
+  and it is the handle-change throttle's ledger).
   One Alembic version table
   (`app.alembic_version`); migrations live in `migrations/versions/`.
 - `import_ne` — staging tables for the one-off Next Episode data import (`series`, `episode_mark`,
@@ -264,7 +270,7 @@ src/tvbf/
   routers/
     health.py          # /healthz, /readyz
     auth.py            # /signup, /login, /logout, /password-change + NEU-1160's two gates: the IP throttle on the first two, Turnstile on signup
-    me.py              # /me, /me/shows, /me/watch-next, /me/upcoming, watch tracking
+    me.py              # /me, /me/handle (NEU-1163), /me/shows, /me/watch-next, /me/upcoming, watch tracking
     browse.py          # user-gated catalog endpoints + the _set_browse_cache router dep and its _SHOW_EP_CACHE override
     admin.py           # /admin/catalog-ingest, /admin/catalog-update, /admin/ingest/{run_id} (any-kind run status)
     invites_admin.py   # /admin/invites
@@ -342,13 +348,14 @@ src/tvbf/
     orphan_retire.py   # the four-tier orphan matcher + the pass + the report, all three grains (NEU-1146)
     user_history.py    # the `app` write sites a catalog-grain retirement moves, shared by episode_repoint and orphan_retire (NEU-1146)
   app/
-    models.py          # SQLAlchemy tables in the app schema (user — carrying `disabled_at` since NEU-1162 — session, login_attempt, auth_attempt, invite, user_show_watch, user_episode_watch, connection, connection_request_log, user_report)
+    handles.py         # RESERVED_HANDLES — the vendored blocklist plus this product's names and an SPA-route snapshot (NEU-1163)
+    models.py          # SQLAlchemy tables in the app schema (user — carrying `handle` since NEU-1163 and `disabled_at` since NEU-1162 — session, login_attempt, auth_attempt, invite, user_show_watch, user_episode_watch, connection, connection_request_log, user_report, handle_release)
     schemas.py         # request/response models + sort literals (MyShowsSort, WatchNextSort, UpcomingSort)
     errors.py          # NotFound, AuthError, etc. — mapped to HTTP in routers
     passwords.py       # argon2 hash/verify
     tokens.py          # CSRF + session token helpers
     repos/             # one file per table; thin async query helpers (`recommendation_repo.py` spans the two recommendation *set* tables, because "the current set" is one definition, NEU-1108; `recommendation_dismissal_repo.py` is its own file for the converse reason — a dismissal is part of no set, NEU-1178; `auth_attempt_repo.py` owns the `kind` vocabulary its check constraint mirrors, NEU-1160; `user_report_repo.py` is both the report ledger and the throttle's counter, because every report is persisted anyway, NEU-1162; it also owns the admin queue's two-sided join, NEU-1197; `connection_request_log_repo.py` owns the five-outcome vocabulary its check constraint mirrors, and its `resolve` no-ops on a missing row by construction, NEU-1157)
-    services/          # account_service, my_shows_service, episode_service, invite_service, connection_service, watch_archive_service, reconciliation_service, auth_throttle (the IP-keyed signup/login gate, NEU-1160), connection_throttle (the per-requester outreach budget: `current_ceiling` selects between two `Throttle`s, `enforce` counts creations, `enforce_decline_cooldown` closes the targeted case, NEU-1157), report_service (persist, commit, *then* notify — the commit boundary is the contract, NEU-1162)
+    services/          # account_service, my_shows_service, episode_service, invite_service, connection_service, watch_archive_service, reconciliation_service, auth_throttle (the IP-keyed signup/login gate, NEU-1160), connection_throttle (the per-requester outreach budget: `current_ceiling` selects between two `Throttle`s, `enforce` counts creations, `enforce_decline_cooldown` closes the targeted case, NEU-1157), report_service (persist, commit, *then* notify — the commit boundary is the contract, NEU-1162), handle_service (the one claimability rule both write sites need, the change-and-release transaction, and the change budget, NEU-1163)
 
 tests/
   unit/                # pure (no-DB) tests: config, sorting, deps, schema helpers, password/token, sort comparators
@@ -375,7 +382,13 @@ line says when you must read it before editing.
   it is checked at, the three emailed-link paths that close themselves, the four invisibility
   predicates and the one deliberate exception, and `POST /reports`'s commit-then-notify contract. Read
   it before touching `app/services/report_service.py`, `app/repos/user_report_repo.py`,
-  `routers/reports.py`, `routers/admin_users.py`, `routers/admin_reports.py`, or any `disabled_at` predicate. It also owns
+  `routers/reports.py`, `routers/admin_users.py`, `routers/admin_reports.py`, or any `disabled_at` predicate.
+  It also owns NEU-1163's handle rules: the normalise-don't-refuse alias, why `CITEXT` is not
+  load-bearing, the `user_<8 hex>` pattern refusal, where `RESERVED_HANDLES` comes from and why the
+  migration holds a second frozen copy, the 422/409 split, and `app.handle_release`'s never-reusable
+  rule and doubling as the change throttle's ledger. Read it before touching `app/handles.py`,
+  `app/services/handle_service.py`, `app/repos/handle_release_repo.py`, `schemas.Handle`,
+  `PATCH /me/handle` or `app.user.handle`. It also owns
   NEU-1157's connection-request budget: the two ceilings and the reputation rule that selects between
   them, the three exclusions that look like oversights, the non-oracle check order, the decline
   cooldown, and the missing-row no-op every ledger writer must keep. Read it before touching

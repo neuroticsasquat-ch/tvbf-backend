@@ -20,6 +20,7 @@ import pytest
 import respx
 from sqlalchemy import func, select
 
+from tests.fixtures.handles import new_handle
 from tests.fixtures.tmdb.series_factory import (
     make_aggregate_credits,
     make_cast_member,
@@ -482,6 +483,7 @@ async def test_report_counts_the_backlog_and_names_the_shows_users_track(session
         email=f"credits-{uuid.uuid4().hex[:8]}@example.com",
         password_hash="x",
         display_name="Watcher",
+        handle=new_handle(),
     )
     session.add(user)
     await session.flush()
@@ -546,6 +548,7 @@ async def test_report_reaches_a_show_touched_only_through_an_episode_watch(sessi
         email=f"credits-{uuid.uuid4().hex[:8]}@example.com",
         password_hash="x",
         display_name="Watcher",
+        handle=new_handle(),
     )
     session.add(user)
     await session.flush()

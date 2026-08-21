@@ -11,6 +11,7 @@ import pytest
 import respx
 from httpx import ASGITransport, AsyncClient
 
+from tests.fixtures.handles import new_handle
 from tvbf.config import get_settings
 from tvbf.main import app, create_app
 
@@ -44,6 +45,7 @@ def _signup_body(invite: str, *, email: str = "new@example.com", token: str | No
         "email": email,
         "password": "hunter2hunter2",
         "display_name": "New",
+        "handle": new_handle(),
         "invite_code": invite,
     }
     if token is not None:

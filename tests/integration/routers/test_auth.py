@@ -9,6 +9,7 @@ from fastapi import HTTPException, Request, Response
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import User
 from tvbf.app.schemas import (
     LoginRequest,
@@ -44,6 +45,7 @@ async def test_signup_creates_user_and_sets_cookies(client, make_invite):
             "email": "Alice@example.com",
             "password": "hunter2hunter2",
             "display_name": "Alice",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -67,6 +69,7 @@ async def test_signup_rejects_duplicate_email_case_insensitive(client, make_invi
             "email": "bob@example.com",
             "password": "hunter2hunter2",
             "display_name": "Bob",
+            "handle": new_handle(),
             "invite_code": invite1,
         },
     )
@@ -78,6 +81,7 @@ async def test_signup_rejects_duplicate_email_case_insensitive(client, make_invi
                 "email": "BOB@example.com",
                 "password": "hunter2hunter2",
                 "display_name": "Bob2",
+                "handle": new_handle(),
                 "invite_code": invite2,
             },
         )
@@ -93,6 +97,7 @@ async def test_signup_rejects_short_password(client):
             "email": "c@example.com",
             "password": "short",
             "display_name": "C",
+            "handle": new_handle(),
             "invite_code": "anything",
         },
     )
@@ -109,6 +114,7 @@ async def test_signup_rejects_an_email_shaped_display_name(client, make_invite, 
             "email": "jeanne@example.com",
             "password": "hunter2hunter2",
             "display_name": " jeanne_briggs@yahoo.com ",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -127,6 +133,7 @@ async def test_signup_accepts_an_at_sign_that_is_not_an_address(client, make_inv
             "email": "athome@example.com",
             "password": "hunter2hunter2",
             "display_name": "@home with Tom",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -142,6 +149,7 @@ async def test_signup_rejects_invalid_email(client):
             "email": "not-an-email",
             "password": "hunter2hunter2",
             "display_name": "X",
+            "handle": new_handle(),
             "invite_code": "anything",
         },
     )
@@ -156,6 +164,7 @@ async def test_signup_rejects_invalid_invite(client):
             "email": "noinvite@example.com",
             "password": "hunter2hunter2",
             "display_name": "NoInvite",
+            "handle": new_handle(),
             "invite_code": "this-code-does-not-exist",
         },
     )
@@ -172,6 +181,7 @@ async def test_signup_rejects_consumed_invite(client, make_invite):
             "email": "first@example.com",
             "password": "hunter2hunter2",
             "display_name": "First",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -183,6 +193,7 @@ async def test_signup_rejects_consumed_invite(client, make_invite):
                 "email": "second@example.com",
                 "password": "hunter2hunter2",
                 "display_name": "Second",
+                "handle": new_handle(),
                 "invite_code": invite,
             },
         )
@@ -199,6 +210,7 @@ async def test_signup_rejects_email_hint_mismatch(client, make_invite):
             "email": "bob@example.com",
             "password": "hunter2hunter2",
             "display_name": "Bob",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -215,6 +227,7 @@ async def test_login_succeeds_with_correct_credentials(client, make_invite):
             "email": "lo@example.com",
             "password": "hunter2hunter2",
             "display_name": "Lo",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -240,6 +253,7 @@ async def test_login_rejects_wrong_password(client, make_invite):
             "email": "wp@example.com",
             "password": "hunter2hunter2",
             "display_name": "WP",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -271,6 +285,7 @@ async def test_logout_clears_cookies_and_invalidates_session(client, make_invite
             "email": "out@example.com",
             "password": "hunter2hunter2",
             "display_name": "Out",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -290,6 +305,7 @@ async def test_logout_requires_csrf(client, make_invite):
             "email": "cs@example.com",
             "password": "hunter2hunter2",
             "display_name": "CS",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -306,6 +322,7 @@ async def test_change_password_requires_correct_current_password(client, make_in
             "email": "pc@example.com",
             "password": "hunter2hunter2",
             "display_name": "PC",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -327,6 +344,7 @@ async def test_change_password_rotates_session(client, make_invite):
             "email": "rot@example.com",
             "password": "hunter2hunter2",
             "display_name": "Rot",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )
@@ -385,6 +403,7 @@ async def test_signup_route_returns_authed_user_and_sets_cookies(session, make_i
         email="signup@example.com",
         password="hunter2hunter2",
         display_name="Sign",
+        handle=new_handle(),
         invite_code=invite,
     )
     result = await auth_router.signup(payload, request, response, db=session, settings=settings)
@@ -406,6 +425,7 @@ async def test_signup_route_raises_409_on_duplicate_email(session, make_user, ma
         email="dup@example.com",
         password="hunter2hunter2",
         display_name="Dup",
+        handle=new_handle(),
         invite_code=invite,
     )
     with pytest.raises(HTTPException) as ei:

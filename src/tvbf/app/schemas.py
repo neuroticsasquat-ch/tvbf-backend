@@ -6,6 +6,7 @@ from uuid import UUID
 
 from pydantic import AfterValidator, BaseModel, BeforeValidator, EmailStr, Field, field_validator
 
+from tvbf.app.handles import RESERVED_HANDLES
 from tvbf.catalog.schemas import EpisodeOut, ShowSummary
 
 # NEU-1194. An `@` and a later dot inside one whitespace-free run, with a
@@ -37,6 +38,61 @@ def _reject_email_shaped(v: str) -> str:
 DisplayName = Annotated[
     str, BeforeValidator(_strip_display_name), AfterValidator(_reject_email_shaped)
 ]
+
+# NEU-1163 §1. Three to thirty characters, lowercase ASCII letters, digits and
+# underscores, starting with a letter. The floor is 3 because the one- and
+# two-character space is the first thing a stranger takes once registration
+# opens; the ceiling is 30 because that is where a handle still fits beside a
+# display name in a card caption at a 375px viewport.
+_HANDLE = re.compile(r"^[a-z][a-z0-9_]{2,29}$")
+
+# The shape §5 gives an account whose display name derives to nothing, and the
+# shape `scripts/refresh_db.sh` gives every non-admin account during
+# anonymisation. Refused **by pattern, not by adding it to the blocklist**: the
+# blocklist is a fixed set of strings and this is a shape with 4.3 billion
+# members. Left claimable, a stranger could take `@user_3f4a2b1c` and wear an
+# identifier a real account either holds or recently held.
+_ANON_HANDLE = re.compile(r"^user_[0-9a-f]{8}$")
+
+
+def _normalise_handle(v: object) -> object:
+    """Strip surrounding whitespace, strip one leading `@`, lowercase.
+
+    `TomBoone`, `@TomBoone` and `  @tomboone ` all become `tomboone`; none is
+    refused. A user who types their own name the way they capitalise it, or
+    pastes a handle with the sigil they saw it printed with, gets the account
+    they meant instead of a form error about a rule they had no way to know.
+
+    Normalisation rather than refusal is what actually prevents `@TomBoone` and
+    `@tomboone` both existing — the `CITEXT` column is parity with `email` and
+    a guard against a future writer that reaches the table without passing
+    here, and nothing rests on it (NEU-1163 §1.1).
+
+    In the alias rather than at each door, for the reason NEU-1194 §3 gives
+    about `DisplayName`: `POST /signup` and `PATCH /me/handle` must reach one
+    verdict on one input, and a rule applied to the raw string at one door and
+    the stripped string at the other is two rules.
+    """
+    if not isinstance(v, str):
+        return v
+    return v.strip().lstrip("@").strip().lower()
+
+
+def _validate_handle(v: str) -> str:
+    if not _HANDLE.match(v):
+        raise ValueError("handle must be 3-30 characters of a-z, 0-9 or _, and start with a letter")
+    if _ANON_HANDLE.match(v):
+        raise ValueError("handle is not available")
+    if v in RESERVED_HANDLES:
+        raise ValueError("handle is not available")
+    return v
+
+
+# One alias over both write sites, `DisplayName`'s precedent one screen up.
+# **Uniqueness is deliberately not one of these rules**: it needs a session, a
+# Pydantic validator has none, and the answer changes between validation and
+# commit anyway. It lives in the service layer and answers `409` (§6.3).
+Handle = Annotated[str, BeforeValidator(_normalise_handle), AfterValidator(_validate_handle)]
 
 MyShowsSort = Literal[
     "recent_activity",
@@ -76,6 +132,7 @@ class SignupRequest(BaseModel):
     email: EmailStr
     password: str = Field(min_length=8, max_length=128)
     display_name: DisplayName = Field(min_length=1, max_length=100)
+    handle: Handle
     invite_code: str = Field(min_length=1, max_length=128)
     # **Optional in the schema, required by the handler when verification is
     # enabled** (NEU-1160 §7). Optional keeps every existing call site working
@@ -115,10 +172,23 @@ class MeUpdateRequest(BaseModel):
     display_name: DisplayName = Field(min_length=1, max_length=80)
 
 
+class HandleUpdateRequest(BaseModel):
+    """Body for `PATCH /me/handle` (NEU-1163 §6.2).
+
+    Its own request and its own route rather than a second field on
+    `MeUpdateRequest`. Widening that body to a partial update in order to carry
+    a throttled field beside an unthrottled one is how a display-name save ends
+    up refused by a `429` about a handle the user did not touch.
+    """
+
+    handle: Handle
+
+
 class UserOut(BaseModel):
     id: UUID
     email: str
     display_name: str
+    handle: str
     created_at: datetime
     email_verified_at: datetime | None = None
 
@@ -133,6 +203,7 @@ class AdminUserOut(BaseModel):
     id: UUID
     email: str
     display_name: str
+    handle: str
     created_at: datetime
     is_admin: bool
     # The admin list is the one surface that shows moderation state (NEU-1162
@@ -157,6 +228,7 @@ class AdminReportUserRef(BaseModel):
 
     id: UUID
     display_name: str
+    handle: str
     disabled_at: datetime | None
 
 
@@ -407,11 +479,21 @@ ConnectionState = Literal["pending", "accepted", "blocked"]
 class UserBrief(BaseModel):
     id: UUID
     display_name: str
+    handle: str
 
 
 class UserSearchResult(BaseModel):
+    """One row of `GET /users/search`.
+
+    Keeps `display_name` beside the handle. Returning the handle alone would be
+    the strongest anti-impersonation stance available and it throws away the
+    name people actually recognise; both fields side by side is what makes the
+    disambiguation legible (NEU-1163 §7).
+    """
+
     id: UUID
     display_name: str
+    handle: str
 
 
 class ConnectionRequestCreate(BaseModel):
@@ -480,6 +562,7 @@ class EpisodeRatingOut(BaseModel):
 class FriendRatingItem(BaseModel):
     user_id: UUID
     display_name: str
+    handle: str
     stars: float
     rated_at: datetime
 

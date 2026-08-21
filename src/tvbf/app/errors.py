@@ -9,6 +9,18 @@ class EmailInUse(DomainError):
     pass
 
 
+class HandleUnavailable(DomainError):
+    """The requested handle is held by a live account, or was released by a
+    different one (NEU-1163 §6.3).
+
+    **One error for both causes, deliberately.** Distinguishing them is more
+    helpful — the second is permanent and no amount of waiting fixes it — and
+    it turns a signup-adjacent surface into a *has this handle ever existed*
+    oracle, including for accounts since deleted. The refusal is uninformative
+    on purpose.
+    """
+
+
 class InvalidCredentials(DomainError):
     pass
 

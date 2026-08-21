@@ -28,7 +28,11 @@ router = APIRouter(tags=["friends"])
 def _briefs(user_ids: set[UUID], users_by_id: dict[UUID, User]) -> list[UserBrief]:
     """Build sorted UserBrief list, dropping any IDs that didn't hydrate."""
     briefs = [
-        UserBrief(id=users_by_id[uid].id, display_name=users_by_id[uid].display_name)
+        UserBrief(
+            id=users_by_id[uid].id,
+            display_name=users_by_id[uid].display_name,
+            handle=users_by_id[uid].handle,
+        )
         for uid in user_ids
         if uid in users_by_id
     ]

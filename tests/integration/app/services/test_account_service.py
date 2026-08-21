@@ -11,6 +11,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from sqlalchemy import select
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.errors import EmailInUse, InvalidCredentials
 from tvbf.app.models import Session, User
 from tvbf.app.passwords import verify_password
@@ -30,6 +31,7 @@ async def test_signup_creates_user_session_and_csrf(session, make_invite):
         email="alice@example.com",
         password="hunter2hunter2",
         display_name="Alice",
+        handle=new_handle(),
         invite_code=invite,
         ttl_days=30,
         user_agent="ua",
@@ -57,6 +59,7 @@ async def test_signup_raises_email_in_use_for_duplicate(session, make_invite):
         email="bob@example.com",
         password="hunter2hunter2",
         display_name="Bob",
+        handle=new_handle(),
         invite_code=invite1,
         ttl_days=30,
         user_agent=None,
@@ -68,6 +71,7 @@ async def test_signup_raises_email_in_use_for_duplicate(session, make_invite):
             email="bob@example.com",
             password="anotherpassword",
             display_name="Bob2",
+            handle=new_handle(),
             invite_code=invite2,
             ttl_days=30,
             user_agent=None,
@@ -85,6 +89,7 @@ async def test_signup_email_match_is_case_insensitive(session, make_invite):
         email="case@example.com",
         password="hunter2hunter2",
         display_name="Case",
+        handle=new_handle(),
         invite_code=invite1,
         ttl_days=30,
         user_agent=None,
@@ -96,6 +101,7 @@ async def test_signup_email_match_is_case_insensitive(session, make_invite):
             email="CASE@example.com",
             password="hunter2hunter2",
             display_name="Case2",
+            handle=new_handle(),
             invite_code=invite2,
             ttl_days=30,
             user_agent=None,
@@ -118,6 +124,7 @@ async def test_signup_raises_invalid_invite_for_unknown_code(session):
             email="x@example.com",
             password="hunter2hunter2",
             display_name="X",
+            handle=new_handle(),
             invite_code="totally-not-a-real-code",
             ttl_days=30,
             user_agent=None,
@@ -135,6 +142,7 @@ async def test_signup_raises_invalid_invite_for_consumed_code(session, make_invi
         email="first@example.com",
         password="hunter2hunter2",
         display_name="First",
+        handle=new_handle(),
         invite_code=invite,
         ttl_days=30,
         user_agent=None,
@@ -146,6 +154,7 @@ async def test_signup_raises_invalid_invite_for_consumed_code(session, make_invi
             email="second@example.com",
             password="hunter2hunter2",
             display_name="Second",
+            handle=new_handle(),
             invite_code=invite,
             ttl_days=30,
             user_agent=None,
@@ -164,6 +173,7 @@ async def test_signup_raises_invalid_invite_when_email_hint_mismatches(session, 
             email="bob@example.com",
             password="hunter2hunter2",
             display_name="Bob",
+            handle=new_handle(),
             invite_code=invite,
             ttl_days=30,
             user_agent=None,
@@ -179,6 +189,7 @@ async def test_signup_succeeds_when_email_hint_matches(session, make_invite):
         email="ALICE@example.com",  # case-insensitive match via citext
         password="hunter2hunter2",
         display_name="Alice",
+        handle=new_handle(),
         invite_code=invite,
         ttl_days=30,
         user_agent=None,
@@ -197,6 +208,7 @@ async def test_signup_marks_invite_consumed(session, make_invite):
         email="consume@example.com",
         password="hunter2hunter2",
         display_name="Consumer",
+        handle=new_handle(),
         invite_code=invite_code,
         ttl_days=30,
         user_agent=None,

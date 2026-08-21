@@ -4,15 +4,24 @@ import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import Session, User, UserEpisodeWatch, UserShowWatch
 from tvbf.catalog.models import Episode, Show
 
 
 @pytest.mark.asyncio
 async def test_user_email_is_case_insensitive_unique(session):
-    session.add(User(email="Alice@example.com", password_hash="x", display_name="Alice"))
+    session.add(
+        User(
+            email="Alice@example.com", password_hash="x", display_name="Alice", handle=new_handle()
+        )
+    )
     await session.commit()
-    session.add(User(email="alice@example.com", password_hash="y", display_name="Alice2"))
+    session.add(
+        User(
+            email="alice@example.com", password_hash="y", display_name="Alice2", handle=new_handle()
+        )
+    )
     with pytest.raises(IntegrityError):
         await session.commit()
     await session.rollback()
@@ -20,7 +29,7 @@ async def test_user_email_is_case_insensitive_unique(session):
 
 @pytest.mark.asyncio
 async def test_session_row_roundtrip(session):
-    user = User(email="bob@example.com", password_hash="x", display_name="Bob")
+    user = User(email="bob@example.com", password_hash="x", display_name="Bob", handle=new_handle())
     session.add(user)
     await session.flush()
     sess = Session(
@@ -36,7 +45,7 @@ async def test_session_row_roundtrip(session):
 
 @pytest.mark.asyncio
 async def test_user_show_watch_pk_prevents_duplicates(session):
-    user = User(email="c@example.com", password_hash="x", display_name="C")
+    user = User(email="c@example.com", password_hash="x", display_name="C", handle=new_handle())
     session.add(user)
     show = Show(id=900001, name="X")
     session.add(show)
@@ -51,7 +60,7 @@ async def test_user_show_watch_pk_prevents_duplicates(session):
 
 @pytest.mark.asyncio
 async def test_user_episode_watch_pk_prevents_duplicates(session):
-    user = User(email="e@example.com", password_hash="x", display_name="E")
+    user = User(email="e@example.com", password_hash="x", display_name="E", handle=new_handle())
     session.add(user)
     show = Show(id=900003, name="X")
     session.add(show)
@@ -69,7 +78,7 @@ async def test_user_episode_watch_pk_prevents_duplicates(session):
 
 @pytest.mark.asyncio
 async def test_user_delete_cascades_to_watch_tables(session):
-    user = User(email="f@example.com", password_hash="x", display_name="F")
+    user = User(email="f@example.com", password_hash="x", display_name="F", handle=new_handle())
     session.add(user)
     show = Show(id=900004, name="X")
     session.add(show)
@@ -113,7 +122,9 @@ async def test_watch_rows_hang_off_catalog_and_cascade_from_it(session):
     models; the migration's half was checked against a real database with
     `pg_get_constraintdef` either side of an upgrade/downgrade round trip.
     """
-    user = User(email="cat-cascade@example.com", password_hash="x", display_name="C")
+    user = User(
+        email="cat-cascade@example.com", password_hash="x", display_name="C", handle=new_handle()
+    )
     session.add(user)
     show = Show(id=900005, name="Cascades")
     session.add(show)

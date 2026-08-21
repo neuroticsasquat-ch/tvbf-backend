@@ -1,5 +1,6 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
+from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -33,6 +34,11 @@ async def make_user(session: AsyncSession):
     produces — a factory defaulting to verified would manufacture a state real
     signup never creates. Callers that need to pass the NEU-1161 social gate
     (or to be discoverable in `/users/search`) opt in explicitly.
+
+    `handle` defaults to a random-but-valid value (NEU-1163). It is unique
+    because `uq_user_handle` is, and it is *not* derived from `display_name`
+    because two users with the default name would then collide — a test wanting
+    a specific handle passes one.
     """
 
     async def _make(
@@ -40,11 +46,13 @@ async def make_user(session: AsyncSession):
         password: str = "hunter2hunter2",
         display_name: str = "Test User",
         verified: bool = False,
+        handle: str | None = None,
     ) -> User:
         user = User(
             email=email,
             password_hash=passwords.hash_password(password),
             display_name=display_name,
+            handle=handle or f"u{uuid4().hex[:12]}",
             email_verified_at=datetime.now(UTC) if verified else None,
         )
         session.add(user)

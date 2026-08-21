@@ -8,13 +8,19 @@ them share one code path — a decline and a cancel are told apart only by
 import pytest
 from sqlalchemy import delete, select
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import ConnectionRequestLog, User
 from tvbf.app.repos import connection_request_log_repo as ledger
 from tvbf.app.services import connection_service
 
 
 async def _user(session, email):
-    u = User(email=email, password_hash="x", display_name=email.split("@")[0])
+    u = User(
+        email=email,
+        password_hash="x",
+        display_name=email.split("@")[0],
+        handle=new_handle(),
+    )
     session.add(u)
     await session.flush()
     return u

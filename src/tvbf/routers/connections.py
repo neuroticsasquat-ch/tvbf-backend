@@ -33,8 +33,12 @@ router = APIRouter(tags=["connections"])
 def _to_request_out(row: Connection, requester: User, addressee: User) -> ConnectionRequestOut:
     return ConnectionRequestOut(
         id=row.id,
-        requester=UserBrief(id=requester.id, display_name=requester.display_name),
-        addressee=UserBrief(id=addressee.id, display_name=addressee.display_name),
+        requester=UserBrief(
+            id=requester.id, display_name=requester.display_name, handle=requester.handle
+        ),
+        addressee=UserBrief(
+            id=addressee.id, display_name=addressee.display_name, handle=addressee.handle
+        ),
         state=row.state,  # type: ignore[arg-type]
         created_at=row.created_at,
         responded_at=row.responded_at,
@@ -197,7 +201,11 @@ async def list_connections(
     others = await user_repo.get_many_by_ids(db, other_ids)
     out = [
         ConnectionOut(
-            user=UserBrief(id=others[other_id].id, display_name=others[other_id].display_name),
+            user=UserBrief(
+                id=others[other_id].id,
+                display_name=others[other_id].display_name,
+                handle=others[other_id].handle,
+            ),
             since=row.responded_at or row.created_at,
         )
         for row, other_id in pairs
@@ -247,7 +255,7 @@ async def block_user(
         ) from err
 
     return BlockedUserOut(
-        user=UserBrief(id=target.id, display_name=target.display_name),
+        user=UserBrief(id=target.id, display_name=target.display_name, handle=target.handle),
         blocked_at=row.responded_at or row.created_at,
     )
 
@@ -283,6 +291,7 @@ async def list_blocks(
             user=UserBrief(
                 id=others[row.addressee_id].id,
                 display_name=others[row.addressee_id].display_name,
+                handle=others[row.addressee_id].handle,
             ),
             blocked_at=row.responded_at or row.created_at,
         )

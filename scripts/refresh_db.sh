@@ -310,7 +310,23 @@ UPDATE app."user" SET
     WHEN nullif(:'admin_email', '') IS NOT NULL AND email = :'admin_email' THEN display_name
     ELSE 'User ' || substring(id::text, 1, 8)
   END,
+  -- `handle` is rewritten unconditionally, for the same reason and by the same
+  -- rule (NEU-1163 §9). `@jeanne_briggs` is exactly as identifying as the name
+  -- it was derived from, and a conditional rule here would be a second copy of
+  -- NEU-1194's email-shaped test with the same failure mode. It takes the same
+  -- eight id characters the other two rewrites take, so the triple stays
+  -- visibly one account -- and unlike `display_name`, a prefix collision here
+  -- will actually raise, at `uq_user_handle`.
+  handle = CASE
+    WHEN nullif(:'admin_email', '') IS NOT NULL AND email = :'admin_email' THEN handle
+    ELSE 'user_' || substring(id::text, 1, 8)
+  END,
   password_hash = :'anon_hash';
+-- `handle_release` holds handles derived from real names. It is truncated
+-- rather than rewritten: its rows are worthless in a local copy, and mapping
+-- them onto the anonymised values would just be a third derivation to keep
+-- consistent with the two above.
+TRUNCATE app.handle_release;
 -- `watch_archive` denormalises the real email and display name onto every row
 -- (NEU-1029), so anonymising `app."user"` alone would leave them sitting in a
 -- local copy. It cannot be UPDATEd -- the append-only trigger forbids that --
@@ -350,12 +366,12 @@ SQL
     psql -v ON_ERROR_STOP=1 -U "$LOCAL_DB_USER" -d "$LOCAL_DB" -tA \
     -v "admin_email=$ADMIN_EMAIL_VAL" <<'SQL'
 SELECT count(*) FROM app."user"
- WHERE display_name !~ '^User [0-9a-f]{8}$'
+ WHERE (display_name !~ '^User [0-9a-f]{8}$' OR handle !~ '^user_[0-9a-f]{8}$')
    AND (nullif(:'admin_email', '') IS NULL OR email <> :'admin_email');
 SQL
   )
   if [[ "$ANON_LEFT" != "0" ]]; then
-    echo "ERROR: anonymization left $ANON_LEFT display_name value(s) unrewritten." >&2
+    echo "ERROR: anonymization left $ANON_LEFT display_name/handle value(s) unrewritten." >&2
     echo "  The local database still holds production display names. Do not use it." >&2
     exit 1
   fi
@@ -363,10 +379,10 @@ SQL
   ANONYMIZED=1
 
   if [[ -n "$ADMIN_EMAIL_VAL" ]]; then
-    echo "  ✓ Admin user preserved (email and display name): log in as $ADMIN_EMAIL_VAL / 'localdev'."
+    echo "  ✓ Admin user preserved (email, display name and handle): log in as $ADMIN_EMAIL_VAL / 'localdev'."
   else
     echo "  ✓ All users now have email user-<short>@anon.local, display name"
-    echo "    'User <short>', and password 'localdev'."
+    echo "    'User <short>', handle 'user_<short>', and password 'localdev'."
     echo "    Set ADMIN_EMAIL in .env.local to keep your real email next time."
   fi
 fi

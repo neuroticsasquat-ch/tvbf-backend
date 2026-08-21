@@ -240,6 +240,17 @@ class Settings(BaseSettings):
         default=1440, alias="REPORT_THROTTLE_WINDOW_MINUTES"
     )
 
+    # The per-account budget on `PATCH /me/handle` (NEU-1163 §6.2). The ticket's
+    # own sentence — "a handle that changes hourly defeats the purpose" — is
+    # about identity stability, not about load, which is what picks a window of
+    # **thirty days** rather than a day. Three rather than one because a new
+    # user fixing a typo, then fixing their mind, should not be locked out for
+    # a month.
+    handle_change_throttle_max: int = Field(default=3, alias="HANDLE_CHANGE_THROTTLE_MAX")
+    handle_change_throttle_window_minutes: int = Field(
+        default=43200, alias="HANDLE_CHANGE_THROTTLE_WINDOW_MINUTES"
+    )
+
     # The per-requester budget on `POST /connection-requests` (NEU-1157 §3.4),
     # the harassment vector open registration widens. **Asserted, not measured**
     # — there is no traffic to measure — which is why every one of these is an
@@ -348,6 +359,13 @@ class Settings(BaseSettings):
         return Throttle(
             max_attempts=self.report_throttle_max,
             window_minutes=self.report_throttle_window_minutes,
+        )
+
+    @property
+    def handle_change_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.handle_change_throttle_max,
+            window_minutes=self.handle_change_throttle_window_minutes,
         )
 
     @property

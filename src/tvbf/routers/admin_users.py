@@ -30,6 +30,7 @@ def _out(u: User) -> AdminUserOut:
         id=u.id,
         email=u.email,
         display_name=u.display_name,
+        handle=u.handle,
         created_at=u.created_at,
         is_admin=u.is_admin,
         disabled_at=u.disabled_at,
