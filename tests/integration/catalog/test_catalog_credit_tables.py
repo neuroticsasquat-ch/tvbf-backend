@@ -244,7 +244,7 @@ class TestEpisodeCreditUniqueness:
     async def test_two_characterless_guest_credits_still_conflict(self, session):
         """`NULLS NOT DISTINCT`. Under Postgres's default two NULL characters
         never conflict, so a re-ingest would add another copy of the row every
-        time — the same trap `uq_watch_archive_source_row` avoids."""
+        time —         the same trap `uq_watch_archive_source_row` (retired in NEU-1158) avoids."""
         show = await _show(session, tmdb_id=1)
         episode = await _episode(session, show)
         person = await _person(session, "A Person", tmdb_id=1)

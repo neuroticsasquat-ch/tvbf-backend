@@ -49,12 +49,13 @@ TMDB models as single episodes. **TV Maze and TMDB disagree about what an episod
 about what aired.** Preserving that disagreement forever, in a database sole-sourced from
 one of them, preserves an artifact of the other's editorial model.
 
-**The loss is bounded, enumerated and recoverable.** `app.watch_archive` (NEU-1029)
-holds a human-readable snapshot of all 9,359 watches and ratings — show name, premiere
-year, season, episode number and title, air date — carries no foreign keys, and survives
-everything including `DROP SCHEMA tvmaze CASCADE`. It was built for exactly this. Every
-row this pass deletes is printed by `report` **before** the pass runs, split into
-de-duplications a surviving twin already records and genuine losses, and that list is
+**The loss is bounded, enumerated and recoverable.** The pre-drop `pg_dump` of
+`app.watch_archive` (NEU-1158) holds a human-readable snapshot of all 9,359 watches and
+ratings — show name, premiere year, season, episode number and title, air date — carries
+no foreign keys, and survived everything including `DROP SCHEMA tvmaze CASCADE`. It was
+built for exactly this. Every row this pass deletes is printed by `report` **before** the
+pass runs, split into de-duplications a surviving twin already records and genuine losses,
+and that list is
 reviewed and committed as the artifact of record.
 
 ## What is not reversed

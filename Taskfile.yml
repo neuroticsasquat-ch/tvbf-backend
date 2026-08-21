@@ -172,11 +172,6 @@ tasks:
     cmds:
       - docker compose exec tvbf-backend python -m tvbf.jobs.trending_snapshot
 
-  archive:watches:
-    desc: Snapshot every watch and rating into app.watch_archive (idempotent)
-    cmds:
-      - docker compose exec tvbf-backend python -m tvbf.jobs.watch_archive
-
   enrich:tmdb-ids:
     desc: Attach tmdb_id to the copied catalog rows in three tiers (idempotent; NEU-1043)
     cmds:
@@ -318,45 +313,6 @@ tasks:
       - >
         docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile verify --baseline -
         {{.CLI_ARGS}} < docs/migration/reconciliation-baseline.json
-
-  verify:airdates:capture:
-    desc: 'Snapshot the NEU-1145 watch_archive airdate comparison to docs/migration/'
-    # **Run this BEFORE the first airdate reconciliation pass.** AC 3 asks
-    # whether the already-correct rows were left alone, and after the fact a row
-    # that agrees looks identical whether it always did or whether something
-    # broke it and something else repaired it. `app.watch_archive` is
-    # append-only, so the baseline keeps for as long as you need.
-    #
-    # `silent` + `-T` + the temp file, for the three reasons `reconcile:capture`
-    # needs them: go-task's banner would corrupt the artifact, docker would add
-    # a TTY's carriage returns, and a bare `>` truncates before the command runs
-    # so a failed capture would leave the baseline empty.
-    silent: true
-    cmds:
-      - >
-        docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify capture
-        > docs/migration/.neu-1145-airdate-baseline.tmp
-      - mv docs/migration/.neu-1145-airdate-baseline.tmp docs/migration/neu-1145-airdate-baseline.json
-
-  verify:airdates:verify:
-    desc: 'Diff airdates against the NEU-1145 baseline (exit 1 only if a row got WORSE)'
-    # Deliberately unlike `reconcile:verify`, which fails on any difference:
-    # here movement is the point, and only a regression fails. Rows still
-    # reading a day early are printed, not scored — some cannot be corrected on
-    # purpose (a show TV Maze does not carry, a season the trust rule refused).
-    cmds:
-      # The baseline rides stdin — `docs/` is not mounted into the container.
-      - >
-        docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify verify
-        --baseline - {{.CLI_ARGS}} < docs/migration/neu-1145-airdate-baseline.json
-
-  verify:airdates:shows:
-    desc: 'AC 2 table: served date vs raw TMDB date per season (task verify:airdates:shows -- --show Silo)'
-    # Cannot assert — there is no machine-readable Apple schedule — so this
-    # prints what a human compares. Defaults to Silo, Lucky and Ted Lasso.
-    silent: true
-    cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.airdate_verify shows {{.CLI_ARGS}}
 
   recommend:dry-run:
     desc: "Compile one user's taste payload and print it, calling no provider (task recommend:dry-run -- <user-uuid>)"

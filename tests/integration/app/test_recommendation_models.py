@@ -168,7 +168,7 @@ async def test_a_rank_appears_once_in_a_set(session):
 
 @pytest.mark.asyncio
 async def test_deleting_the_user_takes_their_sets_and_rows(session):
-    """The half `watch_archive` deliberately does not have.
+    """The half `watch_archive` (retired in NEU-1158) deliberately did not have.
 
     A set holds `compiled_payload`, which is a second copy of the user's watch
     history. The `user_id` CASCADE is what keeps account deletion complete, and
