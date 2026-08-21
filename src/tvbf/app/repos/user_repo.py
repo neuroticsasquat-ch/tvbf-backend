@@ -6,6 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User
 
+# Backslash is the escape character named in the `ilike(..., escape=...)` calls below.
+_LIKE_SPECIALS = str.maketrans({"\\": "\\\\", "%": "\\%", "_": "\\_"})
+
+
+def _escape_like(value: str) -> str:
+    """Neutralise LIKE metacharacters so a query means itself."""
+    return value.translate(_LIKE_SPECIALS)
+
 
 async def create(
     db: AsyncSession,
@@ -120,6 +128,12 @@ async def search(
     part of one reveals nothing the display-name clause does not already reveal,
     and refusing to would protect a value that is already public.
 
+    **`%` and `_` in the query are escaped before the `ILIKE`.** `_` is both a
+    LIKE single-character wildcard and one of the three characters a handle may
+    contain, so an unescaped `tom_b` would match `tomXb` — a search for the
+    handle you were handed finding somebody else's. It was harmless while only
+    `display_name` was matched this way and stopped being so here.
+
     **A leading `@` is stripped from the query.** Someone handed `@tom_b` will
     paste it exactly as they were given it. The strip is here rather than in the
     router because `MIN_QUERY_LENGTH` is checked against what the user typed,
@@ -144,12 +158,14 @@ async def search(
     `ix_*_folded_trgm` pattern `catalog` already uses, and it is a measurement
     rather than a guess.
     """
-    term = query.lstrip("@")
-    pattern = f"%{term}%"
+    term = query.removeprefix("@")
+    pattern = f"%{_escape_like(term)}%"
     stmt = (
         select(User)
         .where(
-            User.display_name.ilike(pattern) | User.handle.ilike(pattern) | (User.email == query)
+            User.display_name.ilike(pattern, escape="\\")
+            | User.handle.ilike(pattern, escape="\\")
+            | (User.email == query)
         )
         .where(User.email_verified_at.is_not(None))
         .where(User.disabled_at.is_(None))

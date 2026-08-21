@@ -232,6 +232,15 @@ def upgrade() -> None:
     # checked even though `uq_user_handle` is already in place, because a
     # constraint failing the *deploy* is a worse place to find out than a
     # migration raising here.
+    #
+    # The second one must **not** gain an `AND handle <> 'user_' ||
+    # substring(id::text, 1, 8)` guard. That reads as narrowing the check to
+    # "fell back to somebody else's id", and it excludes exactly the rows the
+    # fallback produces — so a `CASE` a later edit breaks into handing *every*
+    # row `user_<own id>` would return zero and pass, which is precisely the
+    # failure NEU-1195 says `ON_ERROR_STOP` cannot catch and this block exists
+    # for. A stem matching the anonymisation shape is already excluded one line
+    # up, which is the only false positive there was to avoid.
     op.execute(
         f"""
         DO $$
@@ -247,8 +256,7 @@ def upgrade() -> None:
            WHERE handle ~ '{_ANON_SHAPE}'
              AND length({_STEM}) >= 3
              AND {_STEM} !~ '{_ANON_SHAPE}'
-             AND {_STEM} <> ALL(ARRAY[{_RESERVED}])
-             AND handle <> 'user_' || substring(id::text, 1, 8);
+             AND {_STEM} <> ALL(ARRAY[{_RESERVED}]);
           IF bad > 0 THEN
             RAISE EXCEPTION
               'handle backfill fell back to user_<hex> for % row(s) with a usable stem', bad;

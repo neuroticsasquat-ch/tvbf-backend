@@ -1,12 +1,12 @@
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from uuid import uuid4
 
 import pytest
 from httpx import ASGITransport, AsyncClient
 from httpx import Request as HRequest
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tests.fixtures.handles import new_handle
 from tvbf.app import passwords, tokens
 from tvbf.app.models import User
 from tvbf.app.repos import invite_repo, session_repo
@@ -52,7 +52,7 @@ async def make_user(session: AsyncSession):
             email=email,
             password_hash=passwords.hash_password(password),
             display_name=display_name,
-            handle=handle or f"u{uuid4().hex[:12]}",
+            handle=handle or new_handle(),
             email_verified_at=datetime.now(UTC) if verified else None,
         )
         session.add(user)

@@ -356,3 +356,70 @@ async def test_the_export_carries_the_handle(authed_client):
     r = await authed_client.get("/me/export")
     assert r.status_code == 200
     assert r.json()["account"]["handle"] == authed_client.user.handle
+
+
+@pytest.mark.asyncio
+async def test_an_underscore_in_the_query_is_not_a_wildcard(authed_client, make_user):
+    """`_` is both a LIKE single-character wildcard and one of the three
+    characters a handle may contain, so an unescaped pattern would have a search
+    for the handle you were handed find somebody else's. Harmless while only
+    `display_name` was matched this way; load-bearing now."""
+    await make_user(email="decoy@example.com", display_name="Decoy", handle="tomxb", verified=True)
+    await make_user(email="real@example.com", display_name="Real", handle="tom_b", verified=True)
+    r = await authed_client.get("/users/search", params={"q": "tom_b"})
+    assert [row["handle"] for row in r.json()] == ["tom_b"]
+
+
+@pytest.mark.asyncio
+async def test_a_percent_in_the_query_matches_nothing_rather_than_everything(
+    authed_client, make_user
+):
+    await make_user(
+        email="any@example.com", display_name="Anyone", handle="anyone_at", verified=True
+    )
+    # Two characters, so `MIN_QUERY_LENGTH` lets it through and the escaping is
+    # what has to hold.
+    r = await authed_client.get("/users/search", params={"q": "%%"})
+    assert r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_search_issues_the_same_number_of_queries_whatever_the_result_count(
+    authed_client, session, make_user
+):
+    """§10. The exposure adds none: every row `user_repo.search` returns is
+    already a full `User`, so carrying the handle costs no lookup — and nothing
+    may start scaling with the number of matches."""
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    for n in range(5):
+        await make_user(
+            email=f"q{n}@example.com",
+            display_name=f"Queryable {n}",
+            handle=f"queryable_{n}",
+            verified=True,
+        )
+
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    # The route runs on the app's own engine (`get_session`), not the test
+    # session's — listening on the wrong one silently counts zero.
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        one = await authed_client.get("/users/search", params={"q": "queryable_0"})
+        for_one = list(statements)
+        statements.clear()
+        many = await authed_client.get("/users/search", params={"q": "queryable"})
+        for_many = list(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    assert len(one.json()) == 1
+    assert len(many.json()) == 5
+    assert len(for_one) == len(for_many), (for_one, for_many)

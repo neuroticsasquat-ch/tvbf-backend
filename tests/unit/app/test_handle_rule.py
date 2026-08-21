@@ -73,6 +73,15 @@ def test_refusals(model, value):
 
 
 @BOTH
+def test_exactly_one_sigil_is_stripped(model):
+    """`@@tom_b` is not a handle anybody was handed; accepting it would make the
+    normalisation a second, looser rule rather than a spelling correction."""
+    assert _validate(model, "@tom_b") == "tom_b"
+    with pytest.raises(ValidationError):
+        _validate(model, "@@tom_b")
+
+
+@BOTH
 def test_the_anonymisation_shape_is_refused_by_pattern_not_by_prefix(model):
     """§1.2. `user_<8 hex>` is what the backfill and `refresh_db.sh` produce, so
     leaving it claimable would let a stranger wear an identifier a real account

@@ -75,7 +75,10 @@ def _normalise_handle(v: object) -> object:
     """
     if not isinstance(v, str):
         return v
-    return v.strip().lstrip("@").strip().lower()
+    # `removeprefix`, not `lstrip("@")` — exactly one sigil, because `@@tom` is
+    # not a handle anybody was handed and silently accepting it would make the
+    # normalisation a second, looser rule rather than a spelling correction.
+    return v.strip().removeprefix("@").strip().lower()
 
 
 def _validate_handle(v: str) -> str:
