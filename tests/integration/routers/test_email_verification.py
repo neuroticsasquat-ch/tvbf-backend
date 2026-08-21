@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import AuthToken, User
 from tvbf.app.services import auth_token_service
 from tvbf.main import app
@@ -33,6 +34,7 @@ async def test_signup_sends_verification_email(client, make_invite, session, _st
             "email": "alice@example.com",
             "password": "hunter2hunter2",
             "display_name": "Alice",
+            "handle": new_handle(),
             "invite_code": invite,
         },
     )

@@ -16,6 +16,7 @@ from sqlalchemy import (  # noqa: I001
     PrimaryKeyConstraint,
     Text,
     UniqueConstraint,
+    desc,
     event,
     func,
     text,
@@ -55,7 +56,14 @@ watch_archive_record_type_enum = PGEnum(
 
 class User(Base):
     __tablename__ = "user"
-    __table_args__ = {"schema": "app"}
+    # `uq_user_handle` is named explicitly because `app` tables are built by
+    # `create_all` in the suite and by Alembic in prod, and the two must agree —
+    # `account_service.signup` dispatches on this exact name to tell a duplicate
+    # handle from a duplicate email (NEU-1163 §6.4).
+    __table_args__ = (
+        UniqueConstraint("handle", name="uq_user_handle"),
+        {"schema": "app"},
+    )
 
     id: Mapped[UUID] = mapped_column(
         PGUUID(as_uuid=True),
@@ -65,6 +73,21 @@ class User(Base):
     email: Mapped[str] = mapped_column(CITEXT(), nullable=False, unique=True)
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     display_name: Mapped[str] = mapped_column(Text, nullable=False)
+    # The stable public identifier beside the free-text label (NEU-1163). The
+    # handle is *the identifier*; `display_name` is *the label*. Neither
+    # replaces the other and neither is a credential — a handle is printed on
+    # every card that names its owner, which is what makes the search rule in
+    # `user_repo.search` safe.
+    #
+    # **`CITEXT` is belt-and-braces and nothing rests on it** (§1.1). Every
+    # value this application stores is already lowercase, because
+    # `schemas.Handle` lowercases before anything else sees the string; the
+    # type is parity with `email` and a guard against a future writer that
+    # reaches this table without passing that alias. Removing the
+    # case-insensitivity would change no behaviour today — so if you are here
+    # to delete one of the two rules as redundant, delete this one and not the
+    # normalisation.
+    handle: Mapped[str] = mapped_column(CITEXT(), nullable=False)
     email_verified_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
@@ -914,6 +937,55 @@ class UserReport(Base):
     )
     reason: Mapped[str] = mapped_column(Text, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class HandleRelease(Base):
+    """Every handle any account has ever given up (NEU-1163 §4.2).
+
+    **A released handle is never claimable by anyone else, and the original
+    owner may always reclaim it.** Releasing it otherwise lets the next person
+    inherit whoever held it. Today that is a label-only risk — profiles are
+    `/users/:uuid` — but the moment NEU-1154's future profile URL exists, the
+    inherited thing is a link people have already shared with each other.
+
+    The **same-owner exemption** is what keeps the rule from being a trap:
+    changing your mind and taking your old handle back is free, and only
+    strangers are refused. That is what `user_id` is for.
+
+    **`user_id` is nullable with `ON DELETE SET NULL`, and `DELETE /me` inserts
+    the current handle before the account goes.** Without this, deleting an
+    account would drop its release rows *and* its live handle, and account
+    deletion — self-service behind a password — would become a supported route
+    to handing your identity to a stranger. A null owner means the handle is
+    blocked and reclaimable by nobody, which is the correct end state for an
+    identity its owner disclaimed.
+
+    The table is also the change throttle's ledger (§6.2), on NEU-1162's shape:
+    the row is written anyway, so there is no side table and no "record the
+    attempt" step to forget. The index serves that count, which is the only
+    query with a `user_id` predicate. `handle` is the primary key because the
+    claim path asks about a handle, not about a user.
+    """
+
+    __tablename__ = "handle_release"
+    __table_args__ = (
+        Index(
+            "ix_handle_release_user_id_released_at",
+            "user_id",
+            desc("released_at"),
+        ),
+        {"schema": "app"},
+    )
+
+    handle: Mapped[str] = mapped_column(CITEXT(), primary_key=True)
+    user_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="SET NULL", name="fk_handle_release_user"),
+        nullable=True,
+    )
+    released_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
     )
 

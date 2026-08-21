@@ -1,5 +1,6 @@
 import pytest
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.errors import (
     ConnectionAlreadyExists,
     ConnectionBlocked,
@@ -14,7 +15,12 @@ from tvbf.app.services import connection_service
 
 
 async def _user(session, email):
-    u = User(email=email, password_hash="x", display_name=email.split("@")[0])
+    u = User(
+        email=email,
+        password_hash="x",
+        display_name=email.split("@")[0],
+        handle=new_handle(),
+    )
     session.add(u)
     await session.flush()
     return u

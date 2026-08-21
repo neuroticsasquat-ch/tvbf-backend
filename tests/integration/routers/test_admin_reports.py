@@ -78,8 +78,12 @@ async def test_admin_session_gets_200(authed_client, session):
 @pytest.mark.asyncio
 async def test_row_carries_both_parties_and_the_full_reason(authed_client, session, make_user):
     await _as_admin(authed_client, session)
-    reporter = await make_user(email="r@example.com", display_name="Reporter")
-    reported = await make_user(email="t@example.com", display_name="Reported")
+    reporter = await make_user(
+        email="r@example.com", display_name="Reporter", handle="reporter_one"
+    )
+    reported = await make_user(
+        email="t@example.com", display_name="Reported", handle="reported_one"
+    )
     reason = "x" * 5000
     row = await _report(session, reporter=reporter, reported=reported, reason=reason)
 
@@ -87,14 +91,20 @@ async def test_row_carries_both_parties_and_the_full_reason(authed_client, sessi
     assert r.status_code == 200
     (item,) = r.json()["items"]
     assert item["id"] == str(row.id)
+    # The handle rides beside the display name (NEU-1163 §7). NEU-1197
+    # deliberately withheld `email` here, leaving `display_name` as a
+    # moderator's only label — and a report queue is exactly where "two users
+    # named Tom" is most expensive to get wrong.
     assert item["reporter"] == {
         "id": str(reporter.id),
         "display_name": "Reporter",
+        "handle": "reporter_one",
         "disabled_at": None,
     }
     assert item["reported_user"] == {
         "id": str(reported.id),
         "display_name": "Reported",
+        "handle": "reported_one",
         "disabled_at": None,
     }
     # Verbatim and untruncated (§3.1) — escaping belongs to the renderer.

@@ -96,7 +96,11 @@ async def _hydrate(db: AsyncSession, rows: list[FeedRow]) -> list[FeedItem]:
         items.append(
             FeedItem(
                 id=r.item_id,
-                actor=UserBrief(id=actor_user.id, display_name=actor_user.display_name),
+                actor=UserBrief(
+                    id=actor_user.id,
+                    display_name=actor_user.display_name,
+                    handle=actor_user.handle,
+                ),
                 kind=r.kind,  # type: ignore[arg-type]
                 show=(ShowMini(id=show_obj.id, name=show_obj.name) if show_obj else None),
                 episode=(

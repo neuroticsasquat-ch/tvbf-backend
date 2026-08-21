@@ -39,7 +39,10 @@ async def search_users(
     blocked_ids = await connection_repo.list_blocked_user_ids(db, user.id)
     excluded = blocked_ids | {user.id}
     rows = await user_repo.search(db, query=q, limit=SEARCH_LIMIT, exclude_ids=excluded)
-    return [UserSearchResult(id=row.id, display_name=row.display_name) for row in rows]
+    return [
+        UserSearchResult(id=row.id, display_name=row.display_name, handle=row.handle)
+        for row in rows
+    ]
 
 
 # ---------------------------------------------------------------------------

@@ -9,12 +9,18 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import ConnectionRequestLog, User
 from tvbf.app.repos import connection_request_log_repo as ledger
 
 
 async def _user(session, email):
-    u = User(email=email, password_hash="x", display_name=email.split("@")[0])
+    u = User(
+        email=email,
+        password_hash="x",
+        display_name=email.split("@")[0],
+        handle=new_handle(),
+    )
     session.add(u)
     await session.flush()
     return u

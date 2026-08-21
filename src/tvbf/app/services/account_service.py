@@ -3,10 +3,11 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import EmailInUse, InvalidCredentials, InvalidInvite
+from tvbf.app.errors import EmailInUse, HandleUnavailable, InvalidCredentials, InvalidInvite
 from tvbf.app.models import User
 from tvbf.app.passwords import hash_password, verify_password
 from tvbf.app.repos import invite_repo, login_attempt_repo, session_repo, user_repo
+from tvbf.app.services import handle_service
 from tvbf.app.tokens import new_csrf_token, new_session_id
 
 
@@ -16,6 +17,7 @@ async def signup(
     email: str,
     password: str,
     display_name: str,
+    handle: str,
     invite_code: str,
     ttl_days: int,
     user_agent: str | None,
@@ -24,7 +26,7 @@ async def signup(
 ) -> tuple[User, str, str]:
     """Create a new user, open a session, and return (user, session_id, csrf_token).
     Requires a valid unconsumed invite code; raises InvalidInvite otherwise.
-    Raises EmailInUse on duplicate email."""
+    Raises EmailInUse on duplicate email, HandleUnavailable on a taken handle."""
     invite = await invite_repo.get(db, invite_code)
     if invite is None or invite.consumed_at is not None:
         # Don't differentiate between "unknown" and "consumed" — keeps the
@@ -33,13 +35,30 @@ async def signup(
     if invite.email_hint is not None and invite.email_hint.lower() != email.lower():
         raise InvalidInvite()
 
+    # The pre-check runs first because it is the only thing that can distinguish
+    # "held by a live account" from "released by a different one", and because
+    # it produces the refusal without a rollback. It is not locked, so the
+    # `IntegrityError` branch below stays as the race fallback.
+    await handle_service.ensure_claimable(db, handle=handle)
+
     password_hash = hash_password(password)
     try:
         user = await user_repo.create(
-            db, email=email, password_hash=password_hash, display_name=display_name
+            db,
+            email=email,
+            password_hash=password_hash,
+            display_name=display_name,
+            handle=handle,
         )
     except IntegrityError as err:
+        # **Dispatched on the constraint name** (NEU-1163 §6.4). This was a
+        # blanket `raise EmailInUse()` while `app.user` carried exactly one
+        # unique constraint; with `uq_user_handle` beside `uq_user_email`, a
+        # duplicate handle would report `email_in_use` — a refusal naming the
+        # wrong field, on the one form where both are submitted together.
         await db.rollback()
+        if handle_service.is_handle_conflict(err):
+            raise HandleUnavailable() from err
         raise EmailInUse() from err
 
     await invite_repo.consume(db, invite=invite, user_id=user.id, consumed_at=datetime.now(UTC))
@@ -173,10 +192,18 @@ async def change_password(
 
 async def delete_account(db: AsyncSession, *, user: User, password: str) -> None:
     """Verify password then delete user (cascade handles sessions and watch data).
-    Raises InvalidCredentials if password is wrong."""
+    Raises InvalidCredentials if password is wrong.
+
+    The handle is released **into the same transaction** as the delete
+    (NEU-1163 §4.2): inserted while the user row still exists so the FK is
+    satisfiable, then orphaned by `ON DELETE SET NULL` as the delete cascades.
+    Without it, deleting an account would drop its release rows *and* free its
+    live handle, making self-service deletion a supported route to handing your
+    identity to a stranger."""
     if not verify_password(password, user.password_hash):
         raise InvalidCredentials()
 
+    await handle_service.release_on_delete(db, user=user)
     await user_repo.delete_user(db, user.id)
     await db.commit()
 

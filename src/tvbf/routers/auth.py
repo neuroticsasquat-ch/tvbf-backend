@@ -5,6 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import (
     EmailInUse,
+    HandleUnavailable,
     InvalidCredentials,
     InvalidInvite,
     TooManyAttempts,
@@ -91,6 +92,7 @@ async def signup(
             email=str(payload.email),
             password=payload.password,
             display_name=payload.display_name,
+            handle=payload.handle,
             invite_code=payload.invite_code,
             ttl_days=settings.session_ttl_days,
             user_agent=request.headers.get("user-agent"),
@@ -101,11 +103,19 @@ async def signup(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid_invite") from err
     except EmailInUse as err:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="email_in_use") from err
+    except HandleUnavailable as err:
+        # `409`, matching `email_in_use` — the same class of thing on the same
+        # form, so the SPA maps both conflicts to their field in one place
+        # rather than learning two shapes (NEU-1163 §6.3).
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="handle_unavailable"
+        ) from err
     set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
     return AuthedUserOut(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
+        handle=user.handle,
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
@@ -150,6 +160,7 @@ async def login(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
+        handle=user.handle,
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
@@ -209,6 +220,7 @@ async def change_password(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
+        handle=user.handle,
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,

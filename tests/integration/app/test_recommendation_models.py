@@ -11,6 +11,7 @@ import pytest
 from sqlalchemy import delete, select, text
 from sqlalchemy.exc import IntegrityError
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import (
     MATCHED_VIA_AKA,
     MATCHED_VIA_NAME,
@@ -25,7 +26,7 @@ from tvbf.catalog.models import Show
 
 
 async def _user(session, email: str = "rec@example.com") -> User:
-    user = User(email=email, password_hash="x", display_name="Rec")
+    user = User(email=email, password_hash="x", display_name="Rec", handle=new_handle())
     session.add(user)
     await session.flush()
     return user

@@ -20,6 +20,7 @@ from tvbf.app.schemas import MeUpdateRequest, SignupRequest
 _SIGNUP_REST = {
     "email": "someone@example.com",
     "password": "correct horse battery",
+    "handle": "someone_here",
     "invite_code": "invite-code",
 }
 

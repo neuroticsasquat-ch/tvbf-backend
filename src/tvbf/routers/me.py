@@ -6,7 +6,13 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Query, Request, Res
 from fastapi.responses import StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import InvalidCredentials, InvalidCursor, NotFound
+from tvbf.app.errors import (
+    HandleUnavailable,
+    InvalidCredentials,
+    InvalidCursor,
+    NotFound,
+    TooManyAttempts,
+)
 from tvbf.app.models import User
 from tvbf.app.schemas import (
     AccountDeleteRequest,
@@ -16,6 +22,7 @@ from tvbf.app.schemas import (
     EpisodeRatingOut,
     EpisodeWatchOut,
     FeedPage,
+    HandleUpdateRequest,
     HideFromActivityUpdate,
     MePreferencesUpdate,
     MeUpdateRequest,
@@ -41,6 +48,7 @@ from tvbf.app.services import (
     episode_service,
     export_service,
     feed_service,
+    handle_service,
     my_shows_service,
     rating_service,
     recommendation_service,
@@ -65,6 +73,7 @@ async def me(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
+        handle=user.handle,
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
@@ -92,6 +101,59 @@ async def update_me(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
+        handle=user.handle,
+        created_at=user.created_at,
+        email_verified_at=user.email_verified_at,
+        csrf_token=csrf,
+        activity_feed_enabled=user.activity_feed_enabled,
+        is_admin=user.is_admin,
+    )
+
+
+@router.patch(
+    "/me/handle",
+    response_model=AuthedUserOut,
+    dependencies=[Depends(require_csrf)],
+)
+async def update_my_handle(
+    payload: HandleUpdateRequest,
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> AuthedUserOut:
+    """Change this account's handle (NEU-1163 §6.2).
+
+    **Its own route rather than a field on `PATCH /me`**, because it has its own
+    error vocabulary and its own throttle, and because `PATCH /me` is the
+    display-name route whose contract NEU-1194 settled. Widening that body to a
+    partial update in order to carry a throttled field beside an unthrottled one
+    is how a display-name save ends up refused by a `429` about a handle the
+    user did not touch.
+
+    Shape, length, leading character, reserved words and the `user_<8 hex>`
+    pattern are all `schemas.Handle`'s rules, so they answer `422` with
+    `loc: ["body", "handle"]`. Only the two answers a validator cannot give
+    reach this far.
+    """
+    try:
+        await handle_service.change_handle(db, user=user, handle=payload.handle, settings=settings)
+    except TooManyAttempts as err:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate_limited",
+            headers={"Retry-After": str(err.retry_after_seconds)},
+        ) from err
+    except HandleUnavailable as err:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT, detail="handle_unavailable"
+        ) from err
+    csrf = request.cookies.get(settings.csrf_cookie_name, "")
+    return AuthedUserOut(
+        id=user.id,
+        email=user.email,
+        display_name=user.display_name,
+        handle=user.handle,
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,
@@ -624,6 +686,7 @@ async def update_me_preferences(
         id=user.id,
         email=user.email,
         display_name=user.display_name,
+        handle=user.handle,
         created_at=user.created_at,
         email_verified_at=user.email_verified_at,
         csrf_token=csrf,

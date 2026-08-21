@@ -13,6 +13,7 @@ from fastapi import APIRouter, Depends, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from httpx import ASGITransport, AsyncClient
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import User
 from tvbf.db import SessionLocal
 from tvbf.deps import get_session, require_admin, require_csrf, require_verified_user
@@ -136,7 +137,9 @@ def test_require_verified_user_returns_a_verified_user():
 
 
 def test_require_verified_user_rejects_an_unverified_user():
-    user = User(email="u@example.com", display_name="U", email_verified_at=None)
+    user = User(
+        email="u@example.com", display_name="U", email_verified_at=None, handle=new_handle()
+    )
     with pytest.raises(HTTPException) as ei:
         require_verified_user(user)
     assert ei.value.status_code == 403

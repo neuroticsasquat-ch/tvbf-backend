@@ -50,7 +50,9 @@ _REPORTS_CACHE = "private, no-store"
 
 
 def _ref(u: User) -> AdminReportUserRef:
-    return AdminReportUserRef(id=u.id, display_name=u.display_name, disabled_at=u.disabled_at)
+    return AdminReportUserRef(
+        id=u.id, display_name=u.display_name, handle=u.handle, disabled_at=u.disabled_at
+    )
 
 
 def _out(report: UserReport, reporter: User, reported: User) -> AdminReportOut:
