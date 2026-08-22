@@ -251,6 +251,14 @@ class Settings(BaseSettings):
         default=43200, alias="HANDLE_CHANGE_THROTTLE_WINDOW_MINUTES"
     )
 
+    # The per-address budget on `POST /contact` (NEU-1164). Same ceiling as
+    # signup: 5 per hour. Also unauthenticated, also a spam vector, and there is
+    # no reason a contact form needs a higher ceiling.
+    contact_ip_throttle_max: int = Field(default=5, alias="CONTACT_IP_THROTTLE_MAX")
+    contact_ip_throttle_window_minutes: int = Field(
+        default=60, alias="CONTACT_IP_THROTTLE_WINDOW_MINUTES"
+    )
+
     # The per-requester budget on `POST /connection-requests` (NEU-1157 §3.4),
     # the harassment vector open registration widens. **Asserted, not measured**
     # — there is no traffic to measure — which is why every one of these is an
@@ -345,6 +353,13 @@ class Settings(BaseSettings):
         return Throttle(
             max_attempts=self.signup_ip_throttle_max,
             window_minutes=self.signup_ip_throttle_window_minutes,
+        )
+
+    @property
+    def contact_ip_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.contact_ip_throttle_max,
+            window_minutes=self.contact_ip_throttle_window_minutes,
         )
 
     @property

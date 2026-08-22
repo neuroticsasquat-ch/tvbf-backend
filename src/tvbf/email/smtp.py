@@ -35,11 +35,14 @@ class SmtpEmailClient(EmailClient):
         subject: str,
         html: str,
         text: str,
+        reply_to: str | None = None,
     ) -> None:
         msg = EmailMessage()
         msg["From"] = self._from
         msg["To"] = to
         msg["Subject"] = subject
+        if reply_to is not None:
+            msg["Reply-To"] = reply_to
         msg.set_content(text)
         msg.add_alternative(html, subtype="html")
 

@@ -140,6 +140,23 @@ def render_feedback_notification(
     return subject_line, html_body, text
 
 
+def render_contact_notification(*, name: str, email: str, message: str) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the contact-form notification.
+    Routed to FEEDBACK_NOTIFY_EMAIL."""
+    subject_line = f"[Contact] message from {name}"
+    safe_name = html.escape(name)
+    safe_email = html.escape(email)
+    safe_message = html.escape(message)
+    text = f"From: {name} <{email}>\n\n{message}\n\n---\nSent from the contact form"
+    html_body = (
+        f"<p><strong>From:</strong> {safe_name} &lt;{safe_email}&gt;</p>"
+        f'<pre style="white-space: pre-wrap; font-family: inherit;">{safe_message}</pre>'
+        f"<hr>"
+        f"<p>Sent from the contact form</p>"
+    )
+    return subject_line, html_body, text
+
+
 def render_report_notification(
     *,
     reporter_email: str,

@@ -13,6 +13,7 @@ from tvbf.app.models import AuthAttempt
 # constraint too, deliberately loud.
 SIGNUP = "signup"
 LOGIN = "login"
+CONTACT = "contact"
 
 
 async def record(db: AsyncSession, *, kind: str, ip: str) -> None:
