@@ -129,6 +129,12 @@ class Settings(BaseSettings):
         default=1, alias="DEEPINFRA_RATE_LIMIT_WINDOW_SECONDS"
     )
 
+    # Re-close registration without a deploy (NEU-1165 §2.4). Default false so
+    # open registration is the steady state. Set true in the Coolify UI for an
+    # abuse spike; the flag must never disable invite-based signup — a valid
+    # code still works regardless.
+    invite_required: bool = Field(default=False, alias="INVITE_REQUIRED")
+
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
     )

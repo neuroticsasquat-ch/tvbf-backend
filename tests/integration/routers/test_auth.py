@@ -157,6 +157,45 @@ async def test_signup_rejects_invalid_email(client):
 
 
 @pytest.mark.asyncio
+async def test_signup_succeeds_without_invite_code(client):
+    """Open registration: no invite code, no verification, works by default."""
+    r = await client.post(
+        "/auth/signup",
+        json={
+            "email": "openreg@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "OpenReg",
+            "handle": new_handle(),
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["email"] == "openreg@example.com"
+    assert body["email_verified_at"] is None
+    assert "tvbf_session" in {c.name for c in r.cookies.jar}
+
+
+@pytest.mark.asyncio
+async def test_signup_with_code_sets_email_verified(client, make_invite):
+    """Signup with a valid code pre-verifies the user."""
+    invite = await make_invite()
+    r = await client.post(
+        "/auth/signup",
+        json={
+            "email": "preverified@example.com",
+            "password": "hunter2hunter2",
+            "display_name": "PreVerified",
+            "handle": new_handle(),
+            "invite_code": invite,
+        },
+    )
+    assert r.status_code == 201
+    body = r.json()
+    assert body["email"] == "preverified@example.com"
+    assert body["email_verified_at"] is not None
+
+
+@pytest.mark.asyncio
 async def test_signup_rejects_invalid_invite(client):
     r = await client.post(
         "/auth/signup",

@@ -24,6 +24,7 @@ async def create_invite_route(
         created_at=invite.created_at,
         consumed_at=invite.consumed_at,
         consumed_by_user_id=invite.consumed_by_user_id,
+        issued_by_user_id=invite.issued_by_user_id,
     )
 
 
@@ -39,6 +40,7 @@ async def list_invites_route(
             created_at=i.created_at,
             consumed_at=i.consumed_at,
             consumed_by_user_id=i.consumed_by_user_id,
+            issued_by_user_id=i.issued_by_user_id,
         )
         for i in invites
     ]

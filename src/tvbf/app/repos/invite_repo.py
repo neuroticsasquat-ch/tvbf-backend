@@ -9,8 +9,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.app.models import Invite
 
 
-async def create(db: AsyncSession, *, code: str, email_hint: str | None) -> Invite:
-    invite = Invite(code=code, email_hint=email_hint)
+async def create(
+    db: AsyncSession,
+    *,
+    code: str,
+    email_hint: str | None,
+    issued_by_user_id: UUID | None = None,
+) -> Invite:
+    invite = Invite(code=code, email_hint=email_hint, issued_by_user_id=issued_by_user_id)
     db.add(invite)
     await db.flush()
     return invite

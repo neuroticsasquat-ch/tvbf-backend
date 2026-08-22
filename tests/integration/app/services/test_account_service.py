@@ -12,6 +12,7 @@ import pytest
 from sqlalchemy import select
 
 from tests.fixtures.handles import new_handle
+from tvbf.app import tokens
 from tvbf.app.errors import EmailInUse, InvalidCredentials
 from tvbf.app.models import Session, User
 from tvbf.app.passwords import verify_password
@@ -179,6 +180,124 @@ async def test_signup_raises_invalid_invite_when_email_hint_mismatches(session, 
             user_agent=None,
             ip=None,
         )
+
+
+@pytest.mark.asyncio
+async def test_signup_succeeds_without_invite_code(session):
+    """Open registration: signup with no invite code creates an unverified user."""
+    from tvbf.config import get_settings
+
+    s = get_settings()
+    assert not s.invite_required  # default
+    user, sess_id, csrf = await account_service.signup(
+        session,
+        email="open@example.com",
+        password="hunter2hunter2",
+        display_name="OpenUser",
+        handle=new_handle(),
+        invite_code=None,
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+    )
+    assert user.email == "open@example.com"
+    assert user.email_verified_at is None
+    assert sess_id
+    assert csrf
+
+
+@pytest.mark.asyncio
+async def test_signup_without_code_raises_when_invite_required(session):
+    """INVITE_REQUIRED=true blocks open registration."""
+    from unittest.mock import patch
+
+    import tvbf.app.services.account_service as svc
+    from tvbf.app.errors import InvalidInvite
+    from tvbf.config import Settings
+
+    with patch.object(
+        svc,
+        "get_settings",
+        return_value=Settings(  # type: ignore[call-arg]
+            DATABASE_URL="sqlite+aiosqlite://",
+            ADMIN_TOKEN="test",
+            INVITE_REQUIRED=True,
+        ),
+    ):
+        with pytest.raises(InvalidInvite):
+            await account_service.signup(
+                session,
+                email="closed@example.com",
+                password="hunter2hunter2",
+                display_name="Closed",
+                handle=new_handle(),
+                invite_code=None,
+                ttl_days=30,
+                user_agent=None,
+                ip=None,
+            )
+
+
+@pytest.mark.asyncio
+async def test_signup_with_code_still_works_when_invite_required(session, make_invite):
+    """INVITE_REQUIRED=true still allows signup with a valid code."""
+    from unittest.mock import patch
+
+    import tvbf.app.services.account_service as svc
+    from tvbf.config import Settings
+
+    invite = await make_invite()
+    with patch.object(
+        svc,
+        "get_settings",
+        return_value=Settings(  # type: ignore[call-arg]
+            DATABASE_URL="sqlite+aiosqlite://",
+            ADMIN_TOKEN="test",
+            INVITE_REQUIRED=True,
+        ),
+    ):
+        user, _, _ = await account_service.signup(
+            session,
+            email="invited@example.com",
+            password="hunter2hunter2",
+            display_name="Invited",
+            handle=new_handle(),
+            invite_code=invite,
+            ttl_days=30,
+            user_agent=None,
+            ip=None,
+        )
+    assert user.email == "invited@example.com"
+    assert user.email_verified_at is not None
+
+
+@pytest.mark.asyncio
+async def test_signup_with_invite_pre_verifies_and_auto_connects(session, make_user, make_invite):
+    """An invited signup with an issuer pre-verifies the user and creates an
+    accepted connection between inviter and invitee."""
+    from tvbf.app.repos import connection_repo, invite_repo
+
+    inviter = await make_user(verified=True)
+    code = tokens.new_session_id()
+    await invite_repo.create(session, code=code, email_hint=None, issued_by_user_id=inviter.id)
+    await session.commit()
+
+    user, _, _ = await account_service.signup(
+        session,
+        email="autoconnect@example.com",
+        password="hunter2hunter2",
+        display_name="AutoConnect",
+        handle=new_handle(),
+        invite_code=code,
+        ttl_days=30,
+        user_agent=None,
+        ip=None,
+    )
+    assert user.email_verified_at is not None
+
+    conn = await connection_repo.find_pair(session, inviter.id, user.id)
+    assert conn is not None
+    assert conn.state == "accepted"
 
 
 @pytest.mark.asyncio
