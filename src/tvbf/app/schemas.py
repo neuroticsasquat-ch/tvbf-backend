@@ -136,7 +136,7 @@ class SignupRequest(BaseModel):
     password: str = Field(min_length=8, max_length=128)
     display_name: DisplayName = Field(min_length=1, max_length=100)
     handle: Handle
-    invite_code: str = Field(min_length=1, max_length=128)
+    invite_code: str | None = Field(default=None, max_length=128)
     # **Optional in the schema, required by the handler when verification is
     # enabled** (NEU-1160 §7). Optional keeps every existing call site working
     # unchanged; the handler is where "enabled means required" is decided,
@@ -474,6 +474,7 @@ class InviteOut(BaseModel):
     created_at: datetime
     consumed_at: datetime | None
     consumed_by_user_id: UUID | None
+    issued_by_user_id: UUID | None
 
 
 ConnectionState = Literal["pending", "accepted", "blocked"]

@@ -4,11 +4,12 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import EmailInUse, HandleUnavailable, InvalidCredentials, InvalidInvite
-from tvbf.app.models import User
+from tvbf.app.models import Invite, User
 from tvbf.app.passwords import hash_password, verify_password
 from tvbf.app.repos import invite_repo, login_attempt_repo, session_repo, user_repo
 from tvbf.app.services import handle_service
 from tvbf.app.tokens import new_csrf_token, new_session_id
+from tvbf.config import get_settings
 
 
 async def signup(
@@ -18,21 +19,34 @@ async def signup(
     password: str,
     display_name: str,
     handle: str,
-    invite_code: str,
+    invite_code: str | None,
     ttl_days: int,
     user_agent: str | None,
     ip: str | None,
     frontend_base_url: str | None = None,
 ) -> tuple[User, str, str]:
     """Create a new user, open a session, and return (user, session_id, csrf_token).
-    Requires a valid unconsumed invite code; raises InvalidInvite otherwise.
-    Raises EmailInUse on duplicate email, HandleUnavailable on a taken handle."""
-    invite = await invite_repo.get(db, invite_code)
-    if invite is None or invite.consumed_at is not None:
-        # Don't differentiate between "unknown" and "consumed" — keeps the
-        # signup endpoint from leaking which codes were ever issued.
-        raise InvalidInvite()
-    if invite.email_hint is not None and invite.email_hint.lower() != email.lower():
+
+    When *invite_code* is supplied, it must be a valid unconsumed invite (raises
+    InvalidInvite otherwise). The user is pre-verified and auto-connected to the
+    inviter (if the invite has an issuer). When no code is given, the user signs
+    up via open registration — unverified, no auto-connect — unless
+    INVITE_REQUIRED is set, in which case a missing code is also InvalidInvite.
+
+    Raises EmailInUse on duplicate email, HandleUnavailable on a taken handle.
+
+    An invalid or consumed code never falls through to open signup: a supplied
+    code that fails validation is always 403, never a silent skip."""
+    settings = get_settings()
+    invite: Invite | None = None
+    if invite_code is not None:
+        candidate = await invite_repo.get(db, invite_code)
+        if candidate is None or candidate.consumed_at is not None:
+            raise InvalidInvite()
+        if candidate.email_hint is not None and candidate.email_hint.lower() != email.lower():
+            raise InvalidInvite()
+        invite = candidate
+    elif settings.invite_required:
         raise InvalidInvite()
 
     # The pre-check runs first because it is the only thing that can distinguish
@@ -61,7 +75,31 @@ async def signup(
             raise HandleUnavailable() from err
         raise EmailInUse() from err
 
-    await invite_repo.consume(db, invite=invite, user_id=user.id, consumed_at=datetime.now(UTC))
+    if invite_code is not None:
+        assert invite is not None
+        await invite_repo.consume(db, invite=invite, user_id=user.id, consumed_at=datetime.now(UTC))
+        user.email_verified_at = datetime.now(UTC)
+        if invite.issued_by_user_id is not None:
+            from tvbf.app.repos import connection_repo, connection_request_log_repo
+
+            await connection_repo.insert(
+                db,
+                requester_id=invite.issued_by_user_id,
+                addressee_id=user.id,
+                state="accepted",
+            )
+            await connection_request_log_repo.record(
+                db,
+                requester_id=invite.issued_by_user_id,
+                addressee_id=user.id,
+            )
+            await connection_request_log_repo.resolve(
+                db,
+                requester_id=invite.issued_by_user_id,
+                addressee_id=user.id,
+                outcome=connection_request_log_repo.ACCEPTED,
+                resolved_at=datetime.now(UTC),
+            )
 
     sess_id = new_session_id()
     csrf = new_csrf_token()

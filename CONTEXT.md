@@ -151,7 +151,7 @@ A link between two users, in one of three states: requested, accepted, or blocke
 _Avoid_: friend, follow, relationship
 
 **Invite code**:
-A single-use code required to sign up. Never expires; consumed on use.
+A single-use code that may optionally be supplied at signup. Never expires; consumed on use. An admin creates one; the invitee supplies it — an invited signup gets three things an open signup does not: pre-verification (skipping the email gate), an auto-connection to the inviter, and a consumed invite row. Since NEU-1165 supplying one is optional — `INVITE_REQUIRED` can re-close registration without a deploy.
 
 **Verified user**:
 A user whose `email_verified_at` is not NULL. The column is **monotone** — nothing ever clears it, and an email change re-stamps it on confirm rather than revoking it — so verification is earned once and cannot be lost mid-flight. Since NEU-1161 it is also the price of social access (below).

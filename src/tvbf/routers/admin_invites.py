@@ -47,7 +47,7 @@ async def create_invite_and_email(
     settings: Settings = Depends(get_settings),
 ) -> InviteOut:
     email = str(payload.email)
-    invite = await invite_service.create_invite(db, email_hint=email)
+    invite = await invite_service.create_invite(db, email_hint=email, issued_by_user_id=_admin.id)
 
     signup_url = _build_signup_url(
         frontend_base_url=settings.frontend_base_url, code=invite.code, email=email
@@ -66,6 +66,7 @@ async def create_invite_and_email(
         created_at=invite.created_at,
         consumed_at=invite.consumed_at,
         consumed_by_user_id=invite.consumed_by_user_id,
+        issued_by_user_id=invite.issued_by_user_id,
     )
 
 
@@ -82,6 +83,7 @@ async def list_invites_cookie(
             created_at=i.created_at,
             consumed_at=i.consumed_at,
             consumed_by_user_id=i.consumed_by_user_id,
+            issued_by_user_id=i.issued_by_user_id,
         )
         for i in invites
     ]

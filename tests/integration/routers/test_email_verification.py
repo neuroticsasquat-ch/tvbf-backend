@@ -26,8 +26,7 @@ async def client(session):
 
 
 @pytest.mark.asyncio
-async def test_signup_sends_verification_email(client, make_invite, session, _stub_outbound_email):
-    invite = await make_invite()
+async def test_signup_sends_verification_email(client, session, _stub_outbound_email):
     r = await client.post(
         "/auth/signup",
         json={
@@ -35,7 +34,6 @@ async def test_signup_sends_verification_email(client, make_invite, session, _st
             "password": "hunter2hunter2",
             "display_name": "Alice",
             "handle": new_handle(),
-            "invite_code": invite,
         },
     )
     assert r.status_code == 201
