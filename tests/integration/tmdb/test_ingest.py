@@ -28,7 +28,7 @@ from tests.fixtures.tmdb.series_factory import (
 from tvbf.catalog import models as m
 from tvbf.catalog.runs import create_run
 from tvbf.tmdb.client import TMDBClient
-from tvbf.tmdb.ingest import run_catalog_ingest
+from tvbf.tmdb.ingest import SPECULATIVE_SEASONS, run_catalog_ingest
 
 BASE = "https://api.themoviedb.org/3"
 _SEASON_URL_RE = re.compile(rf"{re.escape(BASE)}/tv/\d+/season/\d+")
@@ -238,8 +238,15 @@ async def test_a_locally_authored_row_is_never_touched(session):
 
 @respx.mock
 async def test_a_forty_season_show_is_fetched_completely(session):
-    """The ticket's acceptance criterion. Nine season slots ride the series
-    request; the other 32 are follow-ups."""
+    """The ticket's acceptance criterion, and NEU-1052's: a show past the
+    speculative window is still fetched completely, however wide that window is.
+
+    The seasons inside it ride the series request and the rest are follow-ups, so
+    the expected call count is derived from `SPECULATIVE_SEASONS` rather than
+    written out — adding a namespace narrows the window and moves one more season
+    into the overflow, which is a cost this test should report rather than fail
+    over.
+    """
     numbers = list(range(1, 41))
     mock_series(1396, numbers)
 
@@ -259,9 +266,10 @@ async def test_a_forty_season_show_is_fetched_completely(session):
     assert episodes == 40
 
     season_calls = [c for c in respx.calls if _SEASON_URL_RE.fullmatch(str(c.request.url))]
-    # Seasons 1..8 ride the speculative window (0 is asked for and does not
-    # exist, which TMDB drops silently); 9..40 are the overflow.
-    assert len(season_calls) == 32
+    # Season 0 is asked for and does not exist, which TMDB drops silently; the
+    # rest of the window rides along, and everything above it is a follow-up.
+    overflow = [n for n in numbers if n not in SPECULATIVE_SEASONS]
+    assert len(season_calls) == len(overflow) == 33
 
 
 @respx.mock

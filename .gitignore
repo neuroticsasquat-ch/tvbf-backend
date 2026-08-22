@@ -193,3 +193,11 @@ scripts/import_next_episode/*snapshot*/
 # NEU-1051 pre-drop archival dumps of the retired `tvmaze` schema. Gigabytes,
 # and they belong off-host rather than in git.
 tvmaze-archive/
+
+# Migration run records are deliberately committed (NEU-1146: "commit its loss list"),
+# and the generic *.log rule above would otherwise swallow them.
+!docs/migration-working/*.log
+
+# Claude Code machine-local state (permissions, scheduled-task locks)
+.claude/settings.local.json
+.claude/scheduled_tasks.lock

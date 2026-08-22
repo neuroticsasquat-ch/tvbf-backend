@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import select
 
+from tests.fixtures.handles import new_handle
 from tvbf.app.models import AuthToken, User
 from tvbf.app.services import auth_token_service
 from tvbf.main import app
@@ -25,15 +26,14 @@ async def client(session):
 
 
 @pytest.mark.asyncio
-async def test_signup_sends_verification_email(client, make_invite, session, _stub_outbound_email):
-    invite = await make_invite()
+async def test_signup_sends_verification_email(client, session, _stub_outbound_email):
     r = await client.post(
         "/auth/signup",
         json={
             "email": "alice@example.com",
             "password": "hunter2hunter2",
             "display_name": "Alice",
-            "invite_code": invite,
+            "handle": new_handle(),
         },
     )
     assert r.status_code == 201
@@ -170,8 +170,8 @@ async def test_verify_unknown_token_fails(client):
 
 
 @pytest.mark.asyncio
-async def test_me_response_includes_email_verified_at(authed_client):
-    r = await authed_client.get("/me")
+async def test_me_response_includes_email_verified_at(unverified_client):
+    r = await unverified_client.get("/me")
     assert r.status_code == 200
     body = r.json()
     assert "email_verified_at" in body

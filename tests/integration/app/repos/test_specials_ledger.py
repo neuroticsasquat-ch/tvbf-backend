@@ -6,24 +6,41 @@ direction** (unmark-show leaving orphan rows, an episode page 404ing a special).
 Explicit-at-each-site fails loudly instead, but only if something notices the
 site that forgot. This file is that something.
 
-`LEDGER` names every public function in the four modules that read
+`LEDGER` names every public function in the six modules that read
 `catalog.episode` on a user's behalf — `episode_repo`, `episode_watch_repo`,
-`season_repo` and `activity_event_repo` — and the treatment each owes.
+`season_repo`, `activity_event_repo`, `episode_rating_repo` and
+`recommendations/exclusion` — and the treatment each owes.
 `test_every_query_has_a_ledger_row` fails the moment one is added without a row;
 the behavioural tests below then hold each treatment to what it claims, against
 a fixture show carrying all three shapes at once.
 
-The last two modules are in scope because the acceptance criterion says *every*
-episode-reading query, not every query in the two obvious repos — and the
-activity-event pair is where the subtlest failure lived: a collapse wider than
-the mark it substitutes for silently deletes a special's feed item.
+The last three modules are in scope because the acceptance criterion says
+*every* episode-reading query, not every query in the two obvious repos — and
+the activity-event pair is where the subtlest failure lived: a collapse wider
+than the mark it substitutes for silently deletes a special's feed item.
+`episode_rating_repo` joined the list when NEU-1103 gave it its first query
+that reaches `catalog.episode` rather than being handed ids, and
+`recommendations/exclusion` when NEU-1175 put two more there. That last one is
+not a repo, which is the point: the criterion is *reads `catalog.episode` on a
+user's behalf*, not *lives under `app/repos/`*, and a tripwire keyed to a
+directory is one an episode-reading query can step around. Its rule is also the
+one this file exists to make deliberate rather than accidental — a watched or
+rated special is a record like any other, so both branches exclude nothing.
 """
 
 import inspect
 from datetime import date, datetime, timedelta
+from decimal import Decimal
 
-from tvbf.app.repos import activity_event_repo, episode_repo, episode_watch_repo, season_repo
+from tvbf.app.repos import (
+    activity_event_repo,
+    episode_rating_repo,
+    episode_repo,
+    episode_watch_repo,
+    season_repo,
+)
 from tvbf.catalog.models import Episode, Show
+from tvbf.recommendations import exclusion
 
 # --- the ledger -------------------------------------------------------------
 
@@ -80,28 +97,56 @@ LEDGER: dict[str, str] = {
     "activity_event_repo.delete_episode_and_season_events_for_show": EXCLUDE_BOTH,
     "activity_event_repo.upsert": BY_EXPLICIT_IDS,
     "activity_event_repo.delete": BY_EXPLICIT_IDS,
+    # episode_rating_repo — a rating is a sentence somebody typed about an
+    # episode, not progress, so the taste signal's mean counts specials.
+    "episode_rating_repo.mean_stars_per_show_for_user": EXCLUDE_NOTHING,
+    "episode_rating_repo.upsert": BY_EXPLICIT_IDS,
+    "episode_rating_repo.delete": BY_EXPLICIT_IDS,
+    "episode_rating_repo.get": BY_EXPLICIT_IDS,
+    "episode_rating_repo.list_for_episode": BY_EXPLICIT_IDS,
+    "episode_rating_repo.get_many_for_user": BY_EXPLICIT_IDS,
+    # recommendations/exclusion (NEU-1175) — the never-recommend rule's two
+    # episode-grain branches. A special somebody watched or rated is a record
+    # they have met the show, exactly like a regular episode.
+    "exclusion.show_ids_never_to_recommend": EXCLUDE_NOTHING,
+    "exclusion.load_show_ids_never_to_recommend": EXCLUDE_NOTHING,
 }
 
 
-def _public_functions(module) -> set[str]:
+def _public_functions(module, *, include_sync: bool = False) -> set[str]:
+    """Every public query function the module defines itself.
+
+    `include_sync` exists for `exclusion`, whose rule is expressed as a plain
+    function returning a `Select` — the caller awaits the statement, not the
+    builder. Coroutine-only would let the branch that actually reads
+    `catalog.episode` sit outside the tripwire, which is the whole failure this
+    file is here to prevent.
+    """
     name = module.__name__.rsplit(".", 1)[-1]
     return {
         f"{name}.{fn}"
         for fn, obj in vars(module).items()
         if not fn.startswith("_")
-        and inspect.iscoroutinefunction(obj)
+        and (inspect.iscoroutinefunction(obj) or (include_sync and inspect.isfunction(obj)))
         and obj.__module__ == module.__name__
     }
 
 
 def test_every_query_has_a_ledger_row():
-    """The tripwire. A query added to either repo with no row here is the
-    signal that somebody made a specials decision without recording it."""
+    """The tripwire. A query added to any of these modules with no row here is
+    the signal that somebody made a specials decision without recording it."""
     actual = set().union(
         *(
             _public_functions(m)
-            for m in (episode_repo, episode_watch_repo, season_repo, activity_event_repo)
-        )
+            for m in (
+                episode_repo,
+                episode_watch_repo,
+                season_repo,
+                activity_event_repo,
+                episode_rating_repo,
+            )
+        ),
+        _public_functions(exclusion, include_sync=True),
     )
     assert actual == set(LEDGER), {
         "missing from the ledger": sorted(actual - set(LEDGER)),
@@ -349,3 +394,19 @@ class TestExcludeNothing:
         assert sorted(ids) == sorted(
             [REG_S1_E1, REG_S1_E2, COPIED_S1, SPECIAL_S0_E1, SPECIAL_S0_E2]
         )
+
+    async def test_episode_rating_mean_counts_a_rated_special(self, session, make_user):
+        user = await make_user()
+        await _seed(session)
+        # 4 stars on a regular episode, 2 on a season-0 special: the mean the
+        # taste signal reads is 3, not the 4 a specials filter would leave.
+        await episode_rating_repo.upsert(
+            session, user_id=user.id, episode_id=REG_S1_E1, stars=Decimal("4.0")
+        )
+        await episode_rating_repo.upsert(
+            session, user_id=user.id, episode_id=SPECIAL_S0_E1, stars=Decimal("2.0")
+        )
+        await session.flush()
+
+        means = await episode_rating_repo.mean_stars_per_show_for_user(session, user_id=user.id)
+        assert means == {SHOW_ID: 3.0}

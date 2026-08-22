@@ -46,7 +46,7 @@ character as free text, so `catalog.character` has no image column at all.
 """
 
 from dataclasses import dataclass, field
-from datetime import date, time
+from datetime import date, datetime, time
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -184,12 +184,134 @@ class ShowDetail(ShowSummary):
     seasons: list[SeasonOut] = []
 
 
+class MarkedShowOut(ShowSummary):
+    """A `ShowSummary` plus the one fact a grid needs about the viewer: whether
+    the show is already in their My Shows (NEU-1184 §2.1).
+
+    Three decisions are folded into this type, and each is easy to undo.
+
+    **The field is declared here rather than on `ShowSummary`.** That type is
+    nested inside six `/me` payloads (`MyShowEntry.show`, watch-next, upcoming,
+    ...) and is `ShowDetail`'s base. A field on the base would emit
+    `in_my_shows: false` on every My Shows row — where the truth is *always*
+    `true` — and add an uncomputed field to the detail payload, which learns
+    membership a different way: `ShowDetailPage` derives it from the whole
+    `useMyShows()` list and needs nothing from `GET /shows/{id}`.
+
+    **It is one intermediate rather than four copies.** Trending and anticipated
+    each declared the boolean separately, arguing they are siblings rather than a
+    shared type. That reasoning was about everything *around* the field —
+    different bodies, different `my_rating` rules — and it survives: each surface
+    keeps its own subclass and its own docstring. What does not survive four
+    occurrences is the field itself.
+
+    **It is required, with no default.** All four construction sites pass it
+    explicitly. A fifth surface that forgets should fail at type-check rather
+    than serve `false` for a show the viewer tracks — the same silent-false
+    failure that ruled out hoisting to `ShowSummary`, which a `= False` default
+    would re-admit one level down. `RecommendationOut` stays a direct subclass of
+    `ShowSummary` and gains nothing: `GET /me/recommendations` suppresses any
+    show the viewer already has a record for, so the mark would be `false` on
+    every card it ever served.
+    """
+
+    in_my_shows: bool
+
+
+class BrowseShowOut(MarkedShowOut):
+    """One row of `GET /shows` — browse and search (NEU-1185).
+
+    Everything `ShowSummary` carries, marked. Unlike the three other marked
+    surfaces this one hydrates `genres`, `network` and `matched_aka`, because the
+    browse list is the surface those were built for.
+    """
+
+
 class ShowListPage(BaseModel):
-    items: list[ShowSummary]
+    items: list[BrowseShowOut]
     page: int
     per_page: int
     total: int
     total_pages: int
+
+
+class SimilarShowOut(MarkedShowOut):
+    """One row of `GET /shows/{id}/similar` (NEU-1053, marked by NEU-1185).
+
+    `my_rating` is filled here, where NEU-1053 left it null. That route gave two
+    reasons for carrying no per-user field: filling one costs a query, and it
+    costs the shared cacheability of a body byte-identical for every viewer.
+    The second is the stronger and the mark spends it, so only the weaker still
+    stands against the rating — and leaving it out would keep the Similar tab as
+    the one grid where a show you have rated shows no badge.
+
+    `genres` is always `[]` and `network` always null, unchanged from NEU-1053:
+    `ShowCard` renders neither, so hydrating them is two more round trips for
+    fields nothing displays.
+    """
+
+
+class TrendingShowOut(MarkedShowOut):
+    """One entry of the trending snapshot: a `ShowSummary` **flattened**, plus
+    the one field that makes it an entry rather than a search result (NEU-1056).
+
+    Flattened rather than nested under a `show` key, on `RecommendationOut`'s
+    reasoning: `ShowGrid` and `ShowCard` already take a `ShowSummary`, and a
+    wrapper type would cost the frontend something for a single boolean.
+
+    `in_my_shows` is a **mark, never a filter**. Trending is a claim about the
+    world, and seeing a show you already track in it is a feature rather than
+    noise — the surface renders it differently, it does not drop it. The field
+    itself comes from `MarkedShowOut`, which is where the four surfaces carrying
+    it agree; this subclass is what everything around it disagrees about.
+    """
+
+
+class TrendingOut(BaseModel):
+    """The `GET /trending` body.
+
+    An object rather than a bare array, because the list is only half of what
+    the surface needs: `captured_at` says when TMDB was asked, and the SPA is
+    free to show it.
+
+    **`captured_at` is null exactly when `shows` is empty**, and both are what a
+    snapshot past the seven-day cutoff answers. It describes the list served, so
+    there is no reading of the payload under which a client can recover the age
+    of a snapshot the server withheld — which is what keeps the cutoff the
+    server's rule alone (project spec §3).
+    """
+
+    captured_at: datetime | None = None
+    shows: list[TrendingShowOut] = []
+
+
+class AnticipatedShowOut(MarkedShowOut):
+    """One entry of the most-anticipated list: a `ShowSummary` **flattened**,
+    plus the same mark trending carries (NEU-1059).
+
+    A sibling of `TrendingShowOut` rather than a reuse of it — they share only
+    `MarkedShowOut`, which is the mark and nothing else.
+    The flattening and the mark are the same decision for the same reason —
+    `ShowGrid` and `ShowCard` already take a `ShowSummary`, so a wrapper type
+    would cost the frontend something for one boolean, and a show the viewer
+    already tracks is marked rather than dropped. What differs is everything
+    around them: these two surfaces answer different bodies (a bare array here,
+    an object with a `captured_at` there), and this one leaves `my_rating` null
+    where trending fills it. `RecommendationOut` is the third variation on the
+    shape and is not a subtype of either.
+
+    `my_rating` is always null here, and the reason is the surface rather than
+    the cost of the query: every show on this list premieres in the future, so
+    a rating for one is a rating for something nobody has seen. Trending's
+    argument for filling it — the badge would be missing on Discover and
+    present everywhere else for the same show — does not reach a list of
+    unpremiered shows, and NEU-1059's "one query for the list plus at most one
+    for the mark" is what it would have to be paid for with.
+
+    `genres` is always `[]` and `network` always null, on
+    `/shows/{id}/similar`'s reasoning: `ShowCard` renders neither, so
+    hydrating them is two more round trips for fields nothing displays.
+    """
 
 
 class PersonRef(BaseModel):

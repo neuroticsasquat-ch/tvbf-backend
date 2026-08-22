@@ -1,7 +1,7 @@
 import pytest
 from pydantic import ValidationError
 
-from tvbf.config import Settings
+from tvbf.config import Settings, Throttle
 
 
 def test_settings_reads_database_url_from_env(monkeypatch):
@@ -28,6 +28,8 @@ def test_settings_has_sensible_defaults(monkeypatch):
         "TMDB_READ_ACCESS_TOKEN",
         "TMDB_RATE_LIMIT_REQUESTS",
         "TMDB_RATE_LIMIT_WINDOW_SECONDS",
+        "DEEPINFRA_RATE_LIMIT_REQUESTS",
+        "DEEPINFRA_RATE_LIMIT_WINDOW_SECONDS",
     ):
         monkeypatch.delenv(key, raising=False)
     s = Settings()  # type: ignore[call-arg]
@@ -40,6 +42,10 @@ def test_settings_has_sensible_defaults(monkeypatch):
     # Optional on purpose — an app serving reads out of `catalog` needs no
     # credential. TMDBClient raises when it is missing.
     assert s.tmdb_read_access_token is None
+    # Ours rather than the provider's, and deliberately far above a workload of
+    # one call per changed user per week (NEU-1099).
+    assert s.deepinfra_rate_limit_requests == 5
+    assert s.deepinfra_rate_limit_window_seconds == 1
     assert s.ingest_consecutive_failure_threshold == 10
     assert s.ingest_stale_run_minutes == 15
     assert s.log_level == "INFO"
@@ -108,3 +114,64 @@ def test_linear_settings_from_env(monkeypatch):
     assert s.linear_api_key == "sk_x"
     assert s.linear_team_id == "team_x"
     assert s.linear_feedback_label_id == "lbl_x"
+
+
+def test_abuse_protection_defaults(monkeypatch):
+    """Off, and calibrated: NEU-1160 §6."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    for key in (
+        "TURNSTILE_ENABLED",
+        "TURNSTILE_SECRET_KEY",
+        "TRUSTED_PROXY_HOPS",
+        "SIGNUP_IP_THROTTLE_MAX",
+        "SIGNUP_IP_THROTTLE_WINDOW_MINUTES",
+        "LOGIN_IP_THROTTLE_MAX",
+        "LOGIN_IP_THROTTLE_WINDOW_MINUTES",
+        "REPORT_THROTTLE_MAX",
+        "REPORT_THROTTLE_WINDOW_MINUTES",
+    ):
+        monkeypatch.delenv(key, raising=False)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.turnstile_enabled is False
+    assert s.turnstile_secret_key is None
+    assert s.trusted_proxy_hops == 1
+    assert s.signup_ip_throttle == Throttle(max_attempts=5, window_minutes=60)
+    # Twice LOGIN_LOCKOUT_THRESHOLD, so one forgetful person trips their own
+    # email lockout well before they trip the network's.
+    assert s.login_ip_throttle == Throttle(max_attempts=10, window_minutes=15)
+    assert s.login_ip_throttle.max_attempts == 2 * s.login_lockout_threshold
+    # A **daily** window (NEU-1162 §6): griefing is a volume problem measured in
+    # days, and five per day caps a determined griefer at five Linear issues
+    # rather than the 72 an hourly window of the same size would allow.
+    assert s.report_throttle == Throttle(max_attempts=5, window_minutes=1440)
+
+
+def test_ip_throttle_properties_follow_the_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("SIGNUP_IP_THROTTLE_MAX", "2")
+    monkeypatch.setenv("SIGNUP_IP_THROTTLE_WINDOW_MINUTES", "30")
+    monkeypatch.setenv("LOGIN_IP_THROTTLE_MAX", "3")
+    monkeypatch.setenv("LOGIN_IP_THROTTLE_WINDOW_MINUTES", "5")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.signup_ip_throttle == Throttle(max_attempts=2, window_minutes=30)
+    assert s.login_ip_throttle == Throttle(max_attempts=3, window_minutes=5)
+
+
+def test_report_throttle_property_follows_the_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("REPORT_THROTTLE_MAX", "2")
+    monkeypatch.setenv("REPORT_THROTTLE_WINDOW_MINUTES", "60")
+    s = Settings()  # type: ignore[call-arg]
+    assert s.report_throttle == Throttle(max_attempts=2, window_minutes=60)
+
+
+def test_linear_report_label_id_defaults_to_none(monkeypatch):
+    """Unset means no label — reports are still filed, just unlabelled."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.delenv("LINEAR_REPORT_LABEL_ID", raising=False)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.linear_report_label_id is None

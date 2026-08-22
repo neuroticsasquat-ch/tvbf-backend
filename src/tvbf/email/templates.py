@@ -138,3 +138,70 @@ def render_feedback_notification(
         f'<p><a href="{safe_url}">Open in Linear →</a></p>'
     )
     return subject_line, html_body, text
+
+
+def render_contact_notification(*, name: str, email: str, message: str) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the contact-form notification.
+    Routed to FEEDBACK_NOTIFY_EMAIL."""
+    subject_line = f"[Contact] message from {name}"
+    safe_name = html.escape(name)
+    safe_email = html.escape(email)
+    safe_message = html.escape(message)
+    text = f"From: {name} <{email}>\n\n{message}\n\n---\nSent from the contact form"
+    html_body = (
+        f"<p><strong>From:</strong> {safe_name} &lt;{safe_email}&gt;</p>"
+        f'<pre style="white-space: pre-wrap; font-family: inherit;">{safe_message}</pre>'
+        f"<hr>"
+        f"<p>Sent from the contact form</p>"
+    )
+    return subject_line, html_body, text
+
+
+def render_report_notification(
+    *,
+    reporter_email: str,
+    reporter_display_name: str,
+    reported_user_id: str,
+    reported_display_name: str,
+    reason: str,
+    issue_url: str | None,
+) -> tuple[str, str, str]:
+    """Return (subject, html, text) for the maintainer notification sent
+    whenever a user reports another user. Routed to FEEDBACK_NOTIFY_EMAIL,
+    which means "the maintainer's mailbox" (NEU-1162 §8.2).
+
+    The **subject carries the reported user's id**, not their display name:
+    display names are attacker-authored, and a report subject is read under
+    time pressure. The name appears in the body, escaped, as context.
+
+    `issue_url` is None when no Linear client is configured or the issue could
+    not be filed — this email is then the only notification there is, which is
+    why it is sent either way.
+    """
+    subject_line = f"[Report] user {reported_user_id}"
+    safe_reason = html.escape(reason)
+    safe_reporter_email = html.escape(reporter_email)
+    safe_reporter_name = html.escape(reporter_display_name)
+    safe_reported_name = html.escape(reported_display_name)
+    safe_reported_id = html.escape(reported_user_id)
+    issue_line = f"Linear issue: {issue_url}\n" if issue_url else "Linear issue: not filed\n"
+    text = (
+        f"Reporter: {reporter_display_name} <{reporter_email}>\n"
+        f"Reported user: {reported_display_name} (id {reported_user_id})\n\n"
+        f"{reason}\n\n"
+        f"{issue_line}"
+    )
+    if issue_url:
+        safe_url = html.escape(issue_url, quote=True)
+        issue_html = f'<p><a href="{safe_url}">Open in Linear \u2192</a></p>'
+    else:
+        issue_html = "<p><strong>Linear issue:</strong> not filed</p>"
+    html_body = (
+        f"<p><strong>Reporter:</strong> {safe_reporter_name} "
+        f"&lt;{safe_reporter_email}&gt;</p>"
+        f"<p><strong>Reported user:</strong> {safe_reported_name} "
+        f"(id <code>{safe_reported_id}</code>)</p>"
+        f'<pre style="white-space: pre-wrap; font-family: inherit;">{safe_reason}</pre>'
+        f"{issue_html}"
+    )
+    return subject_line, html_body, text

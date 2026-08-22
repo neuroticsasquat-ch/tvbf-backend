@@ -1,11 +1,15 @@
-"""The shape every Coolify-scheduled delta shares (NEU-1008, NEU-1035).
+"""The shape every run-row-backed Coolify-scheduled job shares (NEU-1008, NEU-1035).
 
-Two jobs ran this way — the TV Maze daily and the TMDB catalog delta — and they
-differed only in which run kind they take, which body they await and which
-deadman they feed. NEU-1050 retired the daily, so the catalog delta is the only
-caller today; the shape stays here rather than folding back into it because
-every part of it is a contract, and each is easy to reintroduce wrongly the
-next time a scheduled job is added:
+Four jobs run on a Coolify schedule today and they do not all fit this shape.
+Three do — the TMDB catalog delta, the airdate reconciliation (NEU-1145) and
+the daily trending snapshot (NEU-1055) — differing only in which run kind they
+take, which body they await and which deadman they feed; the TV Maze daily was
+the first and NEU-1050 retired it. The weekly recommendations pass (NEU-1109,
+NEU-1111) is the exception and calls `ping` alone: it deliberately writes no
+run row (`user_recommendation_set` is already its per-user run record), so the
+guard, the row and the terminal-status read here have nothing to act on. What
+it does keep is the *rules* below, which is the reason they are written down
+rather than merely implemented:
 
 - **The exit code is the result.** Coolify notifies on a task that fails, so 0
   must mean the delta actually ran and succeeded.
@@ -14,8 +18,8 @@ next time a scheduled job is added:
 - **A deadman covers what Coolify cannot see**, which is the task never running
   at all: suspended and forgotten, container down, scheduler broken.
 
-So the shape lives here once, and a new scheduled job supplies the three things
-that genuinely vary.
+So the shape lives here once, a new run-row-backed job supplies the three things
+that genuinely vary, and one that has no run row takes `ping` and the rules.
 """
 
 import asyncio

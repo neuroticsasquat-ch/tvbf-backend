@@ -49,6 +49,31 @@ async def user_ids_with_show(
     return set(rows)
 
 
+async def tracked_show_ids(db: AsyncSession, *, user_id: UUID, show_ids: list[int]) -> set[int]:
+    """The subset of `show_ids` this user has in My Shows.
+
+    The membership half of a marked-but-not-filtered list (NEU-1056): a surface
+    asks which of the shows it is about to render the viewer already tracks, in
+    one query rather than one per card. Empty input answers empty without a
+    round trip, on `get_hide_flags`' shape.
+    """
+    if not show_ids:
+        return set()
+    rows = (
+        (
+            await db.execute(
+                select(UserShowWatch.show_id).where(
+                    UserShowWatch.user_id == user_id,
+                    UserShowWatch.show_id.in_(show_ids),
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    return set(rows)
+
+
 async def list_with_added_at(db: AsyncSession, user_id: UUID) -> list[tuple[Show, datetime]]:
     """Return (Show, added_at) pairs for all shows the user is tracking."""
     rows = (

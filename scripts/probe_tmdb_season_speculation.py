@@ -31,7 +31,7 @@ import httpx
 
 from tvbf.config import get_settings
 from tvbf.tmdb.client import DEFAULT_APPEND, TMDBClient, season_key
-from tvbf.tmdb.export import fetch_series_ids
+from tvbf.tmdb.export import fetch_series_export
 
 # Deliberately spread: a one-season show is where an over-wide guess would break
 # things, and a 36-season show is where the overflow path has to engage.
@@ -112,7 +112,7 @@ async def _probe_distribution(client: TMDBClient, ids: list[int]) -> None:
 
 async def main() -> int:
     settings = get_settings()
-    ids = await fetch_series_ids()
+    ids = [entry.tmdb_id for entry in await fetch_series_export()]
     print(f"id export: {len(ids)} series\n")
     async with TMDBClient(
         base_url=settings.tmdb_base_url,

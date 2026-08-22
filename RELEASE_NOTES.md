@@ -1,5 +1,36 @@
 # Release notes
 
+## 0.3.2 — 2026-08-16
+
+### General
+
+- Refresh catalog.show.popularity from the daily TMDB export ([NEU-1172](https://linear.app/neuroticsasquatch/issue/NEU-1172)) ([#293](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/293))
+- Mirror TMDB recommendations and backfill the catalog ([NEU-1052](https://linear.app/neuroticsasquatch/issue/NEU-1052)) ([#294](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/294))
+- Serve TMDB's similar shows at GET /shows/{id}/similar ([NEU-1053](https://linear.app/neuroticsasquatch/issue/NEU-1053)) ([#297](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/297))
+- Capture a daily /trending/tv/week snapshot ([NEU-1055](https://linear.app/neuroticsasquatch/issue/NEU-1055)) ([#298](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/298))
+- Serve the trending snapshot at GET /trending ([NEU-1056](https://linear.app/neuroticsasquatch/issue/NEU-1056)) ([#299](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/299))
+- Most-anticipated query layer over catalog.show ([NEU-1058](https://linear.app/neuroticsasquatch/issue/NEU-1058)) ([#300](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/300))
+- Serve the most-anticipated list at GET /anticipated ([NEU-1059](https://linear.app/neuroticsasquatch/issue/NEU-1059)) ([#301](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/301))
+
+## 0.3.1 — 2026-08-16
+
+### General
+
+- Port a trimmed LLM client into src/tvbf/llm/ ([NEU-1098](https://linear.app/neuroticsasquatch/issue/NEU-1098)) ([#276](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/276))
+- Register DeepInfra as a keyed source in the request budget ([NEU-1099](https://linear.app/neuroticsasquatch/issue/NEU-1099)) ([#277](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/277))
+- Probe the DeepSeek model id and JSON mode against the live API ([NEU-1100](https://linear.app/neuroticsasquatch/issue/NEU-1100)) ([#278](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/278))
+- Compute show completion percentage against aired episodes ([NEU-1102](https://linear.app/neuroticsasquatch/issue/NEU-1102)) ([#280](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/280))
+- Classify each show as LIKED, NOT LIKED or INTERESTED ([NEU-1103](https://linear.app/neuroticsasquatch/issue/NEU-1103)) ([#281](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/281))
+- Serialize the taste payload, hash it and gate on the weighted floor ([NEU-1104](https://linear.app/neuroticsasquatch/issue/NEU-1104)) ([#282](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/282))
+- Print a user's compiled taste payload and token count as a dry run ([NEU-1105](https://linear.app/neuroticsasquatch/issue/NEU-1105)) ([#283](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/283))
+- Add the recommendation set and recommendation tables ([NEU-1106](https://linear.app/neuroticsasquatch/issue/NEU-1106)) ([#284](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/284))
+- Resolve a model-authored title and year to a catalog show ([NEU-1107](https://linear.app/neuroticsasquatch/issue/NEU-1107)) ([#285](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/285))
+- Add the current-set repo function ([NEU-1108](https://linear.app/neuroticsasquatch/issue/NEU-1108)) ([#286](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/286))
+- Build the weekly recommendations pass orchestrator ([NEU-1109](https://linear.app/neuroticsasquatch/issue/NEU-1109)) ([#287](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/287))
+- Add POST /admin/recommendations with an optional user_id ([NEU-1110](https://linear.app/neuroticsasquatch/issue/NEU-1110)) ([#288](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/288))
+- Give the weekly recommendations pass its own deadman ([NEU-1111](https://linear.app/neuroticsasquatch/issue/NEU-1111)) ([#289](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/289))
+- Add GET /me/recommendations ([NEU-1112](https://linear.app/neuroticsasquatch/issue/NEU-1112)) ([#290](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/290))
+
 ## 0.3.0 — 2026-08-14
 
 ### Catalog

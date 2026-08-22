@@ -3,7 +3,7 @@
 The document shape is locked by the ticket:
 
     {
-      "account": { id, email, email_verified_at, display_name, created_at },
+      "account": { id, email, email_verified_at, display_name, handle, created_at },
       "my_shows":      [ { show_id, show_name, added_at }, ... ],
       "watch_history": [ { episode_id, show_id, season, number, watched_at }, ... ]
     }
@@ -49,6 +49,7 @@ def _account_payload(user: User) -> dict[str, Any]:
         "email": user.email,
         "email_verified_at": user.email_verified_at,
         "display_name": user.display_name,
+        "handle": user.handle,
         "created_at": user.created_at,
     }
 

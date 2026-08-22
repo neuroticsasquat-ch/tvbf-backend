@@ -2,6 +2,7 @@
 since it's part of the user-creation transaction."""
 
 import secrets
+from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,10 +15,17 @@ def _new_code() -> str:
     return secrets.token_urlsafe(16)
 
 
-async def create_invite(db: AsyncSession, *, email_hint: str | None = None) -> Invite:
+async def create_invite(
+    db: AsyncSession,
+    *,
+    email_hint: str | None = None,
+    issued_by_user_id: UUID | None = None,
+) -> Invite:
     """Generate a fresh invite, persist it, commit. Returns the row."""
     code = _new_code()
-    invite = await invite_repo.create(db, code=code, email_hint=email_hint)
+    invite = await invite_repo.create(
+        db, code=code, email_hint=email_hint, issued_by_user_id=issued_by_user_id
+    )
     await db.commit()
     return invite
 

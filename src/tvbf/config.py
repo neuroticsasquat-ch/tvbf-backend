@@ -1,7 +1,51 @@
+from dataclasses import dataclass
 from functools import lru_cache
 
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+@dataclass(frozen=True)
+class Throttle:
+    """One inbound request budget — a count and the window it is counted over.
+
+    One frozen dataclass rather than two loose integers, for **half** of
+    `rate_budget.Budget`'s reason: a call site states the budget it means, and
+    the pair cannot drift apart across the settings below. Budget's other half
+    does not transfer — it is one object because `get_rate_limiter` is
+    `functools.cache`d and keys on the literal call, and nothing here is cached.
+    It lives in this module rather than beside `auth_throttle.enforce` because
+    `Settings` returns it and `db` imports `config`, so config cannot import
+    anything under `app` without a cycle.
+
+    **Named for the shape, not for the key** (NEU-1162 §6.1). It arrived as
+    `IpThrottle` with NEU-1160 and every budget it held was keyed on an address;
+    the report throttle is keyed on a *user*, and NEU-1157 adds a second
+    user-keyed budget of exactly this shape. A second identical dataclass whose
+    only difference is its name is the alternative, and it is worse. The
+    `Settings` properties keep their own names, which is where the key is said.
+    """
+
+    max_attempts: int
+    window_minutes: int
+
+
+@dataclass(frozen=True)
+class ReputationRule:
+    """The four knobs of NEU-1157 §3.2's ceiling selection, as one object.
+
+    Same reason as `Throttle` above: four loose integers passed positionally is
+    exactly what a frozen dataclass exists to prevent, and `window_days` and
+    `ignored_after_days` are two day-counts that must not be swapped at a call
+    site. It is a separate type rather than more fields on `Throttle` because it
+    answers a different question — `Throttle` is *how many, over how long*, this
+    is *which of two throttles applies*.
+    """
+
+    window_days: int
+    ignored_after_days: int
+    min_sample: int
+    adverse_percent: int
 
 
 class Settings(BaseSettings):
@@ -48,6 +92,49 @@ class Settings(BaseSettings):
     )
     tvmaze_retry_max_attempts: int = Field(default=5, alias="TVMAZE_RETRY_MAX_ATTEMPTS")
 
+    # DeepInfra, which serves the model the weekly recommendations pass asks
+    # for JSON (project spec §6). Optional rather than required for the
+    # reason the TMDB token is: an app serving reads needs no credential, and
+    # only the recommendations job does. `OpenAICompatClient` raises when either
+    # of these is missing, so the failure surfaces at the call site rather than
+    # at import, where it would take the whole process down.
+    #
+    # There is no `DEEPINFRA_BASE_URL`: a base URL is a property of the provider
+    # rather than of a deployment, so it is a constant in `llm/registry.py`. The
+    # model id is the knob that actually gets turned, which is why it is here.
+    #
+    # `RECOMMENDATION_MODEL` is deliberately **not defaulted**, and NEU-1180 is
+    # why that stays true rather than why it should be revisited: the id has now
+    # changed once, on the capacity measurement in
+    # `scripts/probe_deepinfra_capacity.py`. A default here would be a claim the
+    # client keeps making after the id is retired upstream or outgrown, and
+    # asserting one from memory buys a non-retryable 404 that looks like an
+    # outage. **The running id is not recorded anywhere in this repo** — not
+    # here and not in `.env.example` — because the repo is public and the id is
+    # the output of an expensive two-stage screen; it is set in the Coolify UI,
+    # and the measurements behind it are in the umbrella `docs/`. Server-side
+    # only — nothing about the provider reaches the SPA.
+    deepinfra_api_key: str | None = Field(default=None, alias="DEEPINFRA_API_KEY")
+    recommendation_model: str | None = Field(default=None, alias="RECOMMENDATION_MODEL")
+    # This ceiling is **ours, not the provider's** (NEU-1099). DeepInfra's own
+    # published limit was not measured, and one asserted from memory would be a
+    # number that reads as a provider fact while being a guess. 5 per second is
+    # deliberately conservative: the pass is sequential and makes one call per
+    # changed user per week, so nothing today comes within three orders of
+    # magnitude of it, and it exists to bound the bounded-semaphore change the
+    # spec schedules for ~100–200 users (§10) rather than to pace anything now.
+    # Raising it is a measurement, not an edit.
+    deepinfra_rate_limit_requests: int = Field(default=5, alias="DEEPINFRA_RATE_LIMIT_REQUESTS")
+    deepinfra_rate_limit_window_seconds: int = Field(
+        default=1, alias="DEEPINFRA_RATE_LIMIT_WINDOW_SECONDS"
+    )
+
+    # Re-close registration without a deploy (NEU-1165 §2.4). Default false so
+    # open registration is the steady state. Set true in the Coolify UI for an
+    # abuse spike; the flag must never disable invite-based signup — a valid
+    # code still works regardless.
+    invite_required: bool = Field(default=False, alias="INVITE_REQUIRED")
+
     ingest_consecutive_failure_threshold: int = Field(
         default=10, alias="INGEST_CONSECUTIVE_FAILURE_THRESHOLD"
     )
@@ -68,6 +155,18 @@ class Settings(BaseSettings):
     # stated above and for no other reason: one check fed by both scheduled
     # tasks would let either keep it alive while the other quietly stopped.
     healthcheck_airdate_url: str | None = Field(default=None, alias="HEALTHCHECK_AIRDATE_URL")
+    # The weekly recommendations pass's own deadman (NEU-1111). Third scheduled
+    # task, third check, for the rule above — and the gap is widest here: this
+    # one fires *weekly*, so a schedule that silently stops running is invisible
+    # for seven days before anybody would even think to look.
+    healthcheck_recommendations_url: str | None = Field(
+        default=None, alias="HEALTHCHECK_RECOMMENDATIONS_URL"
+    )
+    # The daily trending snapshot's own deadman (NEU-1055). Fourth scheduled
+    # task, fourth check, for the rule above — and this one hides the failure
+    # best: a stopped snapshot does not error, it ages, and NEU-1056's seven-day
+    # cutoff turns the section off a week later with nothing anywhere saying why.
+    healthcheck_trending_url: str | None = Field(default=None, alias="HEALTHCHECK_TRENDING_URL")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 
@@ -90,6 +189,132 @@ class Settings(BaseSettings):
     login_lockout_threshold: int = Field(default=5, alias="LOGIN_LOCKOUT_THRESHOLD")
     login_lockout_window_minutes: int = Field(default=15, alias="LOGIN_LOCKOUT_WINDOW_MINUTES")
 
+    # Cloudflare Turnstile on `POST /auth/signup` (NEU-1160). **The switch is an
+    # explicit boolean, not an inference from the secret's presence**, and
+    # `create_app()` raises when it is true with no secret. Two knobs that can
+    # disagree are worth the startup check because the failure they prevent is
+    # the one the ticket exists to close: protection silently absent in
+    # production. Deriving the switch from the credential — the shape
+    # `TMDB_READ_ACCESS_TOKEN` and `DEEPINFRA_API_KEY` use — is right for those,
+    # where an absent credential disables a job that fails loudly at its call
+    # site; here it would mean a secret dropped from the Coolify UI turns signup
+    # protection off with nothing anywhere saying so.
+    #
+    # Off is the default, so tests and localdev need no network. **Nothing in
+    # the repo turns it on** — prod sets it in the Coolify UI. There is no
+    # `TURNSTILE_SITE_KEY` here: the site key is public, is consumed by exactly
+    # one thing (the widget in the SPA, which reads it from its own `env.ts`),
+    # and a copy in backend config would be read by nothing while sitting ready
+    # to disagree with the one the browser actually uses.
+    turnstile_enabled: bool = Field(default=False, alias="TURNSTILE_ENABLED")
+    turnstile_secret_key: str | None = Field(default=None, alias="TURNSTILE_SECRET_KEY")
+
+    # How many `X-Forwarded-For` entries from the right the trusted proxy
+    # boundary sits at — see `client_ip.py`. One in both environments (Traefik).
+    # It exists so that putting Cloudflare, or any second proxy, in front of the
+    # API later is a config change rather than a code change. **Raising it is a
+    # trust decision**: setting it higher than the number of proxies actually in
+    # front of the app hands the throttle key straight to the client.
+    trusted_proxy_hops: int = Field(default=1, alias="TRUSTED_PROXY_HOPS")
+
+    # The inbound per-IP throttle (NEU-1160), which has no switch and is always
+    # on: it is local, needs no network, and the test suite truncates
+    # `app.auth_attempt` between tests, so it is inert unless a test
+    # deliberately exceeds a limit.
+    #
+    # Five signups per hour per address is far above any household and far below
+    # a useful bot run. Ten login failures per fifteen minutes is twice the
+    # per-email threshold above, so one forgetful person trips their own email
+    # lockout well before they trip the network's.
+    signup_ip_throttle_max: int = Field(default=5, alias="SIGNUP_IP_THROTTLE_MAX")
+    signup_ip_throttle_window_minutes: int = Field(
+        default=60, alias="SIGNUP_IP_THROTTLE_WINDOW_MINUTES"
+    )
+    login_ip_throttle_max: int = Field(default=10, alias="LOGIN_IP_THROTTLE_MAX")
+    login_ip_throttle_window_minutes: int = Field(
+        default=15, alias="LOGIN_IP_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The per-reporter budget on `POST /reports` (NEU-1162 §6), so the report
+    # channel does not itself become a harassment vector. A **daily** window
+    # because griefing is a volume problem measured in days; five is far above
+    # any honest use — most users will file zero for life — while capping a
+    # determined griefer at five Linear issues rather than the 72 an hourly
+    # window of the same size would allow.
+    report_throttle_max: int = Field(default=5, alias="REPORT_THROTTLE_MAX")
+    report_throttle_window_minutes: int = Field(
+        default=1440, alias="REPORT_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The per-account budget on `PATCH /me/handle` (NEU-1163 §6.2). The ticket's
+    # own sentence — "a handle that changes hourly defeats the purpose" — is
+    # about identity stability, not about load, which is what picks a window of
+    # **thirty days** rather than a day. Three rather than one because a new
+    # user fixing a typo, then fixing their mind, should not be locked out for
+    # a month.
+    handle_change_throttle_max: int = Field(default=3, alias="HANDLE_CHANGE_THROTTLE_MAX")
+    handle_change_throttle_window_minutes: int = Field(
+        default=43200, alias="HANDLE_CHANGE_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The per-address budget on `POST /contact` (NEU-1164). Same ceiling as
+    # signup: 5 per hour. Also unauthenticated, also a spam vector, and there is
+    # no reason a contact form needs a higher ceiling.
+    contact_ip_throttle_max: int = Field(default=5, alias="CONTACT_IP_THROTTLE_MAX")
+    contact_ip_throttle_window_minutes: int = Field(
+        default=60, alias="CONTACT_IP_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The per-requester budget on `POST /connection-requests` (NEU-1157 §3.4),
+    # the harassment vector open registration widens. **Asserted, not measured**
+    # — there is no traffic to measure — which is why every one of these is an
+    # env override: they are meant to be tuned once there is.
+    #
+    # Ten a day is well above an honest first day (each request costs a name
+    # search in `/users/search`, which returns at most 20 users for a >=2
+    # character query) and well below the volume at which a stranger reads the
+    # app as a spam vector. The floor is 2 rather than 1 because *being ignored*
+    # is one of the adverse signals and honest users' friends do ignore them: a
+    # floor of 1 reads as a punishment where 2 reads as a speed limit.
+    connection_request_throttle_max: int = Field(
+        default=10, alias="CONNECTION_REQUEST_THROTTLE_MAX"
+    )
+    connection_request_throttle_floor: int = Field(
+        default=2, alias="CONNECTION_REQUEST_THROTTLE_FLOOR"
+    )
+    # Rolling, not a calendar day: a calendar day hands everyone a fresh
+    # allowance at midnight and makes the burst predictable.
+    connection_request_throttle_window_minutes: int = Field(
+        default=1440, alias="CONNECTION_REQUEST_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The reputation rule that selects between those two ceilings (§3.2).
+    # A minimum sample of 10 would exceed the entire userbase, making the rule
+    # dead code — and a rule that cannot fire is worse than no rule, because it
+    # reads as protection. Three is not a sample. 14 days for "ignored" because
+    # an annoyed recipient declines within minutes; a week of not opening a
+    # TV-tracking app is an ordinary week, and 30 days makes the signal
+    # vestigial.
+    connection_request_reputation_window_days: int = Field(
+        default=30, alias="CONNECTION_REQUEST_REPUTATION_WINDOW_DAYS"
+    )
+    connection_request_ignored_after_days: int = Field(
+        default=14, alias="CONNECTION_REQUEST_IGNORED_AFTER_DAYS"
+    )
+    connection_request_reputation_min_sample: int = Field(
+        default=5, alias="CONNECTION_REQUEST_REPUTATION_MIN_SAMPLE"
+    )
+    connection_request_adverse_percent: int = Field(
+        default=50, alias="CONNECTION_REQUEST_ADVERSE_PERCENT"
+    )
+
+    # How long a decline locks that pair (§4). **Its own knob**, not a reuse of
+    # the reputation window despite both defaulting to 30 days: they answer
+    # different questions and will be tuned apart.
+    connection_request_decline_cooldown_days: int = Field(
+        default=30, alias="CONNECTION_REQUEST_DECLINE_COOLDOWN_DAYS"
+    )
+
     # Email transport. `smtp` is the default for local dev (Mailpit on the
     # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
     # in production.
@@ -110,17 +335,87 @@ class Settings(BaseSettings):
     linear_api_key: str | None = Field(default=None, alias="LINEAR_API_KEY")
     linear_team_id: str | None = Field(default=None, alias="LINEAR_TEAM_ID")
     linear_feedback_label_id: str | None = Field(default=None, alias="LINEAR_FEEDBACK_LABEL_ID")
+    # Optional label on the issues `report_service` files, so reports are
+    # filterable apart from feedback. Unset means no label.
+    linear_report_label_id: str | None = Field(default=None, alias="LINEAR_REPORT_LABEL_ID")
 
     # Optional recipient for a server-sent notification email each time a
     # feedback issue is created. Linear itself suppresses notifications when
     # the API actor is the recipient (i.e., when the personal API key is
     # owned by the same human you'd want to notify), so this is a workaround
     # without spinning up an OAuth app. Leave unset to disable.
+    # It also carries the user-report notification (NEU-1162 §8.2): it means
+    # "the maintainer's mailbox", and a second variable for the same human is a
+    # second place to get it wrong. The name is now slightly narrow; noting that
+    # beats renaming a live production variable.
     feedback_notify_email: str | None = Field(default=None, alias="FEEDBACK_NOTIFY_EMAIL")
 
     @property
     def cors_allowed_origins(self) -> list[str]:
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
+
+    @property
+    def signup_ip_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.signup_ip_throttle_max,
+            window_minutes=self.signup_ip_throttle_window_minutes,
+        )
+
+    @property
+    def contact_ip_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.contact_ip_throttle_max,
+            window_minutes=self.contact_ip_throttle_window_minutes,
+        )
+
+    @property
+    def login_ip_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.login_ip_throttle_max,
+            window_minutes=self.login_ip_throttle_window_minutes,
+        )
+
+    @property
+    def report_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.report_throttle_max,
+            window_minutes=self.report_throttle_window_minutes,
+        )
+
+    @property
+    def handle_change_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.handle_change_throttle_max,
+            window_minutes=self.handle_change_throttle_window_minutes,
+        )
+
+    @property
+    def connection_request_throttle(self) -> Throttle:
+        """The full ceiling — what an account with no adverse history gets."""
+        return Throttle(
+            max_attempts=self.connection_request_throttle_max,
+            window_minutes=self.connection_request_throttle_window_minutes,
+        )
+
+    @property
+    def connection_request_floor_throttle(self) -> Throttle:
+        """The tightened ceiling. Two properties of one type rather than a
+        `Throttle` plus a loose floor integer, so `current_ceiling` reads as
+        *selecting between two budgets* and the count/window pair still cannot
+        drift apart at a call site."""
+        return Throttle(
+            max_attempts=self.connection_request_throttle_floor,
+            window_minutes=self.connection_request_throttle_window_minutes,
+        )
+
+    @property
+    def connection_request_reputation(self) -> ReputationRule:
+        return ReputationRule(
+            window_days=self.connection_request_reputation_window_days,
+            ignored_after_days=self.connection_request_ignored_after_days,
+            min_sample=self.connection_request_reputation_min_sample,
+            adverse_percent=self.connection_request_adverse_percent,
+        )
 
 
 @lru_cache

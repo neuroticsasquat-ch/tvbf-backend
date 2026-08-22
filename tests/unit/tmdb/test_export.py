@@ -15,11 +15,12 @@ import pytest
 import respx
 
 from tvbf.tmdb.export import (
+    ExportEntry,
     TruncatedExportError,
     _assert_download_complete,
     export_url,
-    fetch_series_ids,
-    parse_series_ids,
+    fetch_series_export,
+    parse_series_export,
 )
 
 BASE = "https://files.tmdb.org/p/exports"
@@ -27,6 +28,10 @@ BASE = "https://files.tmdb.org/p/exports"
 
 def _gz(*records: dict) -> bytes:
     return gzip.compress("\n".join(json.dumps(r) for r in records).encode())
+
+
+def _ids(entries: list[ExportEntry]) -> list[int]:
+    return [e.tmdb_id for e in entries]
 
 
 # --- the URL ----------------------------------------------------------------
@@ -39,19 +44,22 @@ def test_url_uses_tmdbs_zero_padded_month_day_year():
 # --- parsing ----------------------------------------------------------------
 
 
-def test_parses_one_id_per_line_in_file_order():
+def test_parses_one_series_per_line_in_file_order():
     raw = _gz(
         {"id": 1396, "original_name": "Breaking Bad", "popularity": 91.0},
         {"id": 456, "original_name": "The Simpsons", "popularity": 55.5},
     )
 
-    assert parse_series_ids(raw) == [1396, 456]
+    assert parse_series_export(raw) == [
+        ExportEntry(tmdb_id=1396, popularity=91.0),
+        ExportEntry(tmdb_id=456, popularity=55.5),
+    ]
 
 
 def test_blank_lines_are_ignored():
     raw = gzip.compress(b'{"id": 1}\n\n\n{"id": 2}\n')
 
-    assert parse_series_ids(raw) == [1, 2]
+    assert _ids(parse_series_export(raw)) == [1, 2]
 
 
 def test_an_unparseable_line_is_skipped_rather_than_fatal():
@@ -59,7 +67,34 @@ def test_an_unparseable_line_is_skipped_rather_than_fatal():
     losing a three-hour pass."""
     raw = gzip.compress(b'{"id": 1}\nnot json at all\n{"no_id": true}\n{"id": 2}\n')
 
-    assert parse_series_ids(raw) == [1, 2]
+    assert _ids(parse_series_export(raw)) == [1, 2]
+
+
+# --- popularity, the second field (NEU-1172) --------------------------------
+
+
+@pytest.mark.parametrize(
+    "record",
+    [
+        {"id": 5},
+        {"id": 5, "popularity": None},
+        {"id": 5, "popularity": "3.8"},
+        {"id": 5, "popularity": True},
+    ],
+    ids=["absent", "null", "a string", "a bool"],
+)
+def test_a_line_whose_popularity_will_not_parse_keeps_its_id(record):
+    """The id is what the tombstone reconciler reads absence from, so dropping
+    the whole line over its second field would tombstone a series for a
+    malformed float. `true` is called out because `bool` is an `int` in Python
+    and would otherwise arrive as a popularity of 1.0."""
+    assert parse_series_export(_gz(record)) == [ExportEntry(tmdb_id=5, popularity=None)]
+
+
+def test_an_integer_popularity_is_read_as_a_float():
+    assert parse_series_export(_gz({"id": 5, "popularity": 3})) == [
+        ExportEntry(tmdb_id=5, popularity=3.0)
+    ]
 
 
 def test_a_truncated_gzip_stream_raises_rather_than_yielding_a_short_list():
@@ -73,13 +108,13 @@ def test_a_truncated_gzip_stream_raises_rather_than_yielding_a_short_list():
     whole = _gz(*({"id": i} for i in range(1, 500)))
 
     with pytest.raises(TruncatedExportError, match="did not decompress cleanly"):
-        parse_series_ids(whole[: len(whole) // 2])
+        parse_series_export(whole[: len(whole) // 2])
 
 
 def test_a_body_that_is_not_gzip_at_all_raises():
     """An error page served with a 200 is not a catalog list."""
     with pytest.raises(TruncatedExportError):
-        parse_series_ids(b"<html>nope</html>")
+        parse_series_export(b"<html>nope</html>")
 
 
 def test_an_export_with_no_ids_raises():
@@ -87,7 +122,7 @@ def test_an_export_with_no_ids_raises():
     list from a fully-ingested catalog, so a truncated file would otherwise
     finalise the run as a success having done nothing."""
     with pytest.raises(ValueError, match="zero series ids"):
-        parse_series_ids(gzip.compress(b"\n\n"))
+        parse_series_export(gzip.compress(b"\n\n"))
 
 
 # --- fetching ---------------------------------------------------------------
@@ -99,7 +134,9 @@ async def test_fetches_todays_export_when_it_exists():
         return_value=httpx.Response(200, content=_gz({"id": 7}))
     )
 
-    assert await fetch_series_ids(today=date(2026, 8, 10)) == [7]
+    assert await fetch_series_export(today=date(2026, 8, 10)) == [
+        ExportEntry(tmdb_id=7, popularity=None)
+    ]
 
 
 @respx.mock
@@ -115,7 +152,7 @@ async def test_falls_back_to_the_previous_day(not_published):
         return_value=httpx.Response(200, content=_gz({"id": 7}, {"id": 8}))
     )
 
-    assert await fetch_series_ids(today=date(2026, 8, 10)) == [7, 8]
+    assert _ids(await fetch_series_export(today=date(2026, 8, 10))) == [7, 8]
 
 
 @respx.mock
@@ -123,7 +160,7 @@ async def test_raises_when_nothing_is_published_within_the_lookback():
     respx.get(url__regex=r".*tv_series_ids.*").mock(return_value=httpx.Response(403))
 
     with pytest.raises(RuntimeError, match="no TMDB id export published"):
-        await fetch_series_ids(today=date(2026, 8, 10))
+        await fetch_series_export(today=date(2026, 8, 10))
 
 
 @respx.mock
@@ -133,7 +170,7 @@ async def test_a_server_error_is_not_mistaken_for_an_unpublished_file():
     respx.get(f"{BASE}/tv_series_ids_08_10_2026.json.gz").mock(return_value=httpx.Response(503))
 
     with pytest.raises(httpx.HTTPStatusError):
-        await fetch_series_ids(today=date(2026, 8, 10))
+        await fetch_series_export(today=date(2026, 8, 10))
 
 
 @respx.mock
@@ -145,7 +182,7 @@ async def test_a_body_shorter_than_content_length_is_refused():
     )
 
     with pytest.raises(TruncatedExportError, match="declared bytes"):
-        await fetch_series_ids(today=date(2026, 8, 10))
+        await fetch_series_export(today=date(2026, 8, 10))
 
 
 def test_a_content_encoded_body_is_not_mistaken_for_a_short_one():
@@ -170,6 +207,6 @@ async def test_the_request_carries_no_credential():
         return_value=httpx.Response(200, content=_gz({"id": 7}))
     )
 
-    await fetch_series_ids(today=date(2026, 8, 10))
+    await fetch_series_export(today=date(2026, 8, 10))
 
     assert "Authorization" not in respx.calls.last.request.headers

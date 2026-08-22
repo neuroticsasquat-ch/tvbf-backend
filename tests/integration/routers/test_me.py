@@ -113,6 +113,24 @@ async def test_patch_me_rejects_too_long(authed_client):
 
 
 @pytest.mark.asyncio
+async def test_patch_me_rejects_an_email_shaped_display_name(authed_client, session):
+    """NEU-1194. The refusal is a 422 and the stored name is left alone."""
+    before = authed_client.user.display_name
+    r = await authed_client.patch("/me", json={"display_name": " jeanne_briggs@yahoo.com "})
+    assert r.status_code == 422
+
+    stored = await session.scalar(select(User.display_name).where(User.id == authed_client.user.id))
+    assert stored == before
+
+
+@pytest.mark.asyncio
+async def test_patch_me_accepts_an_at_sign_that_is_not_an_address(authed_client):
+    r = await authed_client.patch("/me", json={"display_name": "@home with Tom"})
+    assert r.status_code == 200
+    assert r.json()["display_name"] == "@home with Tom"
+
+
+@pytest.mark.asyncio
 async def test_patch_me_requires_csrf(authed_client):
     r = await authed_client.patch(
         "/me",
@@ -609,3 +627,21 @@ async def test_my_shows_sort_my_rating_asc(authed_client, session):
     ids = [e["show"]["id"] for e in r.json()]
     # A (2.0), B (4.5), then unrated C last.
     assert ids == [a.id, b.id, c.id]
+
+
+@pytest.mark.asyncio
+async def test_personal_tracking_works_unverified(unverified_client, session):
+    """Personal tracking is never social (NEU-1161 §2) — an unverified account
+    can add a show and mark an episode watched."""
+    show = await _seed_show(session, show_id=920901)
+    await session.commit()
+
+    r = await unverified_client.put(f"/me/shows/{show.id}")
+    assert r.status_code == 204
+
+    r = await unverified_client.post(f"/me/episodes/{show.id * 100 + 1}/watched")
+    assert r.status_code == 201
+
+    r = await unverified_client.get("/me/shows")
+    assert r.status_code == 200
+    assert [row["show"]["id"] for row in r.json()] == [show.id]

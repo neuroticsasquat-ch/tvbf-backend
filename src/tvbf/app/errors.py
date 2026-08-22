@@ -9,6 +9,18 @@ class EmailInUse(DomainError):
     pass
 
 
+class HandleUnavailable(DomainError):
+    """The requested handle is held by a live account, or was released by a
+    different one (NEU-1163 §6.3).
+
+    **One error for both causes, deliberately.** Distinguishing them is more
+    helpful — the second is permanent and no amount of waiting fixes it — and
+    it turns a signup-adjacent surface into a *has this handle ever existed*
+    oracle, including for accounts since deleted. The refusal is uninformative
+    on purpose.
+    """
+
+
 class InvalidCredentials(DomainError):
     pass
 
@@ -59,5 +71,41 @@ class EmailChangePayloadMissing(DomainError):
     """Token has no payload — should be unreachable, but we surface it as 400."""
 
 
+class SelfReportForbidden(DomainError):
+    """A user attempted to report themselves (NEU-1162 §7.2).
+
+    Its own error rather than `SelfConnectionForbidden`, which is named for the
+    act it refuses and maps to a different status code.
+    """
+
+
+class DeclineCooldownActive(DomainError):
+    """The addressee declined this requester within the cooldown (NEU-1157 §4).
+
+    Its own error, mapped by the router to **the same vague `409
+    connection_exists`** the pair check returns — deliberately indistinguishable
+    from "we already have a relationship" and from "they blocked you". It is not
+    `ConnectionAlreadyExists` because no `app.connection` row exists to carry,
+    and conflating them would make the router's two reasons one.
+    """
+
+
 class InvalidCursor(DomainError):
     """Pagination cursor is malformed."""
+
+
+class TooManyAttempts(DomainError):
+    """A request budget rejected the request.
+
+    Raised by the IP-keyed signup/login throttle (NEU-1160), by the
+    per-reporter report budget (NEU-1162) and by the per-requester connection
+    budget (NEU-1157) — named for the refusal rather than for the key, the same
+    reason `config.Throttle` is.
+
+    Carries the window in seconds so the router can set `Retry-After` without
+    re-deriving the budget it just passed in.
+    """
+
+    def __init__(self, *, retry_after_seconds: int) -> None:
+        super().__init__()
+        self.retry_after_seconds = retry_after_seconds

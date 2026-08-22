@@ -24,6 +24,7 @@ from tvbf.app.errors import (
     AuthTokenRateLimited,
     EmailChangePayloadMissing,
     EmailInUse,
+    InvalidAuthToken,
     InvalidCredentials,
 )
 from tvbf.app.models import User
@@ -100,6 +101,13 @@ async def confirm_email_change(db: AsyncSession, *, raw_token: str) -> User:
     user, token = await auth_token_service.verify_and_consume_with_token(
         db, raw_token=raw_token, purpose=auth_token_service.PURPOSE_EMAIL_CHANGE
     )
+    # Token instead of session, so §2.1's predicate never runs here (NEU-1162
+    # §3). This is the sharpest of the three: left open, a disabled user could
+    # detach the mailbox that identifies them right before NEU-1158 strips the
+    # archive PII. Refused with the route's existing generic failure.
+    if user.disabled_at is not None:
+        await db.commit()
+        raise InvalidAuthToken()
     if not token.payload or "new_email" not in token.payload:
         raise EmailChangePayloadMissing()
 

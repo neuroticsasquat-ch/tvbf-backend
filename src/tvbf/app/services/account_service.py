@@ -3,11 +3,13 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from tvbf.app.errors import EmailInUse, InvalidCredentials, InvalidInvite
-from tvbf.app.models import User
+from tvbf.app.errors import EmailInUse, HandleUnavailable, InvalidCredentials, InvalidInvite
+from tvbf.app.models import Invite, User
 from tvbf.app.passwords import hash_password, verify_password
 from tvbf.app.repos import invite_repo, login_attempt_repo, session_repo, user_repo
+from tvbf.app.services import handle_service
 from tvbf.app.tokens import new_csrf_token, new_session_id
+from tvbf.config import get_settings
 
 
 async def signup(
@@ -16,33 +18,88 @@ async def signup(
     email: str,
     password: str,
     display_name: str,
-    invite_code: str,
+    handle: str,
+    invite_code: str | None,
     ttl_days: int,
     user_agent: str | None,
     ip: str | None,
     frontend_base_url: str | None = None,
 ) -> tuple[User, str, str]:
     """Create a new user, open a session, and return (user, session_id, csrf_token).
-    Requires a valid unconsumed invite code; raises InvalidInvite otherwise.
-    Raises EmailInUse on duplicate email."""
-    invite = await invite_repo.get(db, invite_code)
-    if invite is None or invite.consumed_at is not None:
-        # Don't differentiate between "unknown" and "consumed" — keeps the
-        # signup endpoint from leaking which codes were ever issued.
+
+    When *invite_code* is supplied, it must be a valid unconsumed invite (raises
+    InvalidInvite otherwise). The user is pre-verified and auto-connected to the
+    inviter (if the invite has an issuer). When no code is given, the user signs
+    up via open registration — unverified, no auto-connect — unless
+    INVITE_REQUIRED is set, in which case a missing code is also InvalidInvite.
+
+    Raises EmailInUse on duplicate email, HandleUnavailable on a taken handle.
+
+    An invalid or consumed code never falls through to open signup: a supplied
+    code that fails validation is always 403, never a silent skip."""
+    settings = get_settings()
+    invite: Invite | None = None
+    if invite_code is not None:
+        candidate = await invite_repo.get(db, invite_code)
+        if candidate is None or candidate.consumed_at is not None:
+            raise InvalidInvite()
+        if candidate.email_hint is not None and candidate.email_hint.lower() != email.lower():
+            raise InvalidInvite()
+        invite = candidate
+    elif settings.invite_required:
         raise InvalidInvite()
-    if invite.email_hint is not None and invite.email_hint.lower() != email.lower():
-        raise InvalidInvite()
+
+    # The pre-check runs first because it is the only thing that can distinguish
+    # "held by a live account" from "released by a different one", and because
+    # it produces the refusal without a rollback. It is not locked, so the
+    # `IntegrityError` branch below stays as the race fallback.
+    await handle_service.ensure_claimable(db, handle=handle)
 
     password_hash = hash_password(password)
     try:
         user = await user_repo.create(
-            db, email=email, password_hash=password_hash, display_name=display_name
+            db,
+            email=email,
+            password_hash=password_hash,
+            display_name=display_name,
+            handle=handle,
         )
     except IntegrityError as err:
+        # **Dispatched on the constraint name** (NEU-1163 §6.4). This was a
+        # blanket `raise EmailInUse()` while `app.user` carried exactly one
+        # unique constraint; with `uq_user_handle` beside `uq_user_email`, a
+        # duplicate handle would report `email_in_use` — a refusal naming the
+        # wrong field, on the one form where both are submitted together.
         await db.rollback()
+        if handle_service.is_handle_conflict(err):
+            raise HandleUnavailable() from err
         raise EmailInUse() from err
 
-    await invite_repo.consume(db, invite=invite, user_id=user.id, consumed_at=datetime.now(UTC))
+    if invite_code is not None:
+        assert invite is not None
+        await invite_repo.consume(db, invite=invite, user_id=user.id, consumed_at=datetime.now(UTC))
+        user.email_verified_at = datetime.now(UTC)
+        if invite.issued_by_user_id is not None:
+            from tvbf.app.repos import connection_repo, connection_request_log_repo
+
+            await connection_repo.insert(
+                db,
+                requester_id=invite.issued_by_user_id,
+                addressee_id=user.id,
+                state="accepted",
+            )
+            await connection_request_log_repo.record(
+                db,
+                requester_id=invite.issued_by_user_id,
+                addressee_id=user.id,
+            )
+            await connection_request_log_repo.resolve(
+                db,
+                requester_id=invite.issued_by_user_id,
+                addressee_id=user.id,
+                outcome=connection_request_log_repo.ACCEPTED,
+                resolved_at=datetime.now(UTC),
+            )
 
     sess_id = new_session_id()
     csrf = new_csrf_token()
@@ -92,6 +149,27 @@ async def authenticate(
     if user is None or not verify_password(password, user.password_hash):
         await login_attempt_repo.record(db, email=email, ip=ip)
         await db.commit()
+        raise InvalidCredentials()
+
+    # A disabled account is refused with the *same* generic error a wrong
+    # password gets (NEU-1162 §2.3) — an abuser who has just been disabled is
+    # not told they were caught. Three properties hold this up, and all three
+    # come from where the check sits:
+    #
+    # * **After `verify_password`, deliberately.** Argon2 is slow on purpose;
+    #   answering a disabled account before it would take milliseconds where
+    #   every other 401 takes ~100ms, which is a timing oracle saying exactly
+    #   what the generic error refuses to say.
+    # * **No `app.login_attempt` row.** That ledger answers "is this *account*
+    #   being guessed at?" and the guess was correct — recording it would poison
+    #   the brute-force signal and eventually lock the account out for an
+    #   unrelated reason.
+    # * **Before `clear_for_email`,** so a disabled account cannot be used as a
+    #   reset button on the email-keyed lockout.
+    #
+    # The IP throttle still records an attempt, with no code here: the router's
+    # existing `except InvalidCredentials` branch does it.
+    if user.disabled_at is not None:
         raise InvalidCredentials()
 
     # Successful login — wipe the slate clean.
@@ -152,10 +230,18 @@ async def change_password(
 
 async def delete_account(db: AsyncSession, *, user: User, password: str) -> None:
     """Verify password then delete user (cascade handles sessions and watch data).
-    Raises InvalidCredentials if password is wrong."""
+    Raises InvalidCredentials if password is wrong.
+
+    The handle is released **into the same transaction** as the delete
+    (NEU-1163 §4.2): inserted while the user row still exists so the FK is
+    satisfiable, then orphaned by `ON DELETE SET NULL` as the delete cascades.
+    Without it, deleting an account would drop its release rows *and* free its
+    live handle, making self-service deletion a supported route to handing your
+    identity to a stranger."""
     if not verify_password(password, user.password_hash):
         raise InvalidCredentials()
 
+    await handle_service.release_on_delete(db, user=user)
     await user_repo.delete_user(db, user.id)
     await db.commit()
 
@@ -172,6 +258,17 @@ async def resolve_session_user(db: AsyncSession, *, session_id: str | None) -> U
 
     user = await user_repo.get_by_id(db, sess.user_id)
     if user is None:  # pragma: no cover  -- defensive: FK cascade prevents this
+        return None
+
+    # A disabled account's session is not a valid session (NEU-1162 §2.1). This
+    # function has exactly one caller — `deps.get_current_user` — so one
+    # predicate here covers browse, `/me`, connections, friend engagement, admin
+    # and everything added later, at once, rather than route by route. The
+    # caller's existing `401 auth_required` is what the request sees: no new
+    # status code and no `account_disabled` detail, because a machine-readable
+    # confirmation on every request tells the abuser precisely what happened,
+    # and they get one per retry (§2.2).
+    if user.disabled_at is not None:
         return None
 
     await session_repo.touch(db, session_id)

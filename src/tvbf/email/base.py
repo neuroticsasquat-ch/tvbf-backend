@@ -18,5 +18,6 @@ class EmailClient(ABC):
         subject: str,
         html: str,
         text: str,
+        reply_to: str | None = None,
     ) -> None:
         """Send a single email. Raises EmailSendError on transport failure."""

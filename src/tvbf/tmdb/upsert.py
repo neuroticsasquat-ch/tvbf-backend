@@ -47,6 +47,7 @@ guest credit resolves to the character the show cast already named. See
 
 import logging
 from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
 from decimal import Decimal
 from typing import Any
 
@@ -73,6 +74,8 @@ from tvbf.tmdb.api_payloads import (
     TMDBEpisodeCrewMember,
     TMDBEpisodeGuestStar,
     TMDBJob,
+    TMDBRecommendation,
+    TMDBResults,
     TMDBSeasonDetail,
     TMDBSeries,
     TMDBWatchProviders,
@@ -159,11 +162,21 @@ async def mark_series_synced(session: AsyncSession, *, show_id: int) -> None:
     because they disagree on history: the 228,841 shows the full ingest mirrored
     were stamped before the credit writers existed, and no one bit could have
     said so.
+
+    **`recommendations_synced_at` is stamped for the same reason** (NEU-1052):
+    `DEFAULT_APPEND` now carries `recommendations`, so a complete pass wrote them
+    too. It is a third column rather than a third meaning for the first because
+    the three disagree on history again — the 229,418 shows the full ingest
+    mirrored predate the namespace entirely.
     """
     await session.execute(
         update(m.Show)
         .where(m.Show.id == show_id)
-        .values(tmdb_synced_at=func.now(), credits_synced_at=func.now())
+        .values(
+            tmdb_synced_at=func.now(),
+            credits_synced_at=func.now(),
+            recommendations_synced_at=func.now(),
+        )
     )
 
 
@@ -178,6 +191,20 @@ async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
     """
     await session.execute(
         update(m.Show).where(m.Show.id == show_id).values(credits_synced_at=func.now())
+    )
+
+
+async def mark_recommendations_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Stamp the show's recommendations as written — the recommendations backfill's watermark.
+
+    Split from the other two on the same reasoning `mark_credits_synced` is:
+    the backfill writes `catalog.show_recommendation` and nothing else, so it is
+    in no position to claim either the spine or the credits are current, and
+    stamping them would retire a show from work lists a pass that wrote neither
+    has no business emptying.
+    """
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(recommendations_synced_at=func.now())
     )
 
 
@@ -1524,6 +1551,151 @@ async def write_series_credits(
     return any_credits or any(ep.guest_stars or ep.crew for ep in episodes)
 
 
+# How many recommendations one source show stores. TMDB's `recommendations`
+# response is paginated 20 to a page and the appended namespace carries the
+# first page only, so this is what the payload can offer rather than a policy
+# choice. It is stated here anyway: the read path shows 12, and the headroom is
+# what absorbs read-time filtering.
+#
+# **A short list is rare but real, and the cap is not what produces one.**
+# Project spec §2 originally recorded the endpoint as binary — 20 results or 0,
+# never "a few" — over a 36-show sample; NEU-1052's 100-show production smoke run
+# corrected that to 95 of 100 at twenty, with Coronation Street at 19 and
+# Tagesschau at 1. The five are rolling news, a talk show, a daily sports panel
+# and two continuing soaps: formats with no plot to be similar to. Nothing here
+# treats a short list as an error, and nothing should.
+_MAX_RECOMMENDATIONS = 20
+
+
+async def _resolve_recommendation_targets(
+    session: AsyncSession, tmdb_ids: Sequence[int]
+) -> dict[int, int]:
+    """`{tmdb_id: surrogate id}` for the recommended shows we actually mirror.
+
+    A target absent from `catalog.show`, or tombstoned in it, is simply not in
+    the map and is dropped by the caller — the project-wide rule that a card a
+    user cannot click does not get rendered. Measured this is a no-op (502 of
+    502 sampled targets resolved, none tombstoned), and it stays as a guard
+    because a series TMDB created this morning is not mirrored until tonight's
+    delta.
+
+    Tombstoned targets are dropped here *as well as* at read time rather than
+    instead of it: the read filter is what covers a show tombstoned after this
+    list was written, and this one is what keeps the stored list honest in the
+    meantime. Neither is load-bearing alone, and a resurrected show returns on
+    the source show's next refresh, which every ingest and delta performs.
+    """
+    if not tmdb_ids:
+        return {}
+    rows = await session.execute(
+        select(m.Show.tmdb_id, m.Show.id).where(
+            m.Show.tmdb_id.in_(list(tmdb_ids)), m.Show.deleted_upstream_at.is_(None)
+        )
+    )
+    return {row.tmdb_id: row.id for row in rows if row.tmdb_id is not None}
+
+
+@dataclass(frozen=True)
+class RecommendationsWritten:
+    """What one `recommendations` write did, with the two ways of ending at zero kept apart.
+
+    `offered` is how many entries the payload carried, `written` how many became
+    rows. They are one object rather than two returns because a caller that has
+    only the second cannot tell *upstream recommended nothing* — the normal
+    outcome for ~8% of the long tail — from *upstream recommended twenty shows we
+    do not mirror*, and the backfill's counters are read as an operational signal
+    about the first.
+    """
+
+    offered: int
+    written: int
+
+    @property
+    def dropped(self) -> int:
+        """Entries that did not resolve to a `catalog.show` we could point at."""
+        return self.offered - self.written
+
+
+async def _write_recommendations(
+    session: AsyncSession,
+    *,
+    show_id: int,
+    recommendations: TMDBResults[TMDBRecommendation] | None,
+) -> RecommendationsWritten:
+    """Make the payload's `recommendations` the whole of this show's list (NEU-1052).
+
+    `None` means the caller did not append the namespace and the stored list is
+    left alone — the rule every namespace writer here follows, and the one that
+    stops a narrow delta fetch emptying a surface it never asked about.
+    An empty `results` is upstream saying it has none, and does clear the list.
+
+    Delete-then-insert rather than a merge, because TMDB's ranking is a **total
+    order**: upserting rank by rank would leave a shorter new list wearing the
+    tail of an older one, i.e. two vintages of the same ordering interleaved.
+
+    Returns what it wrote *and* what it was offered — see `RecommendationsWritten`
+    for why those are not the same number and why the difference is worth
+    carrying back out.
+    """
+    if recommendations is None:
+        return RecommendationsWritten(offered=0, written=0)
+
+    entries = recommendations.results[:_MAX_RECOMMENDATIONS]
+    targets = await _resolve_recommendation_targets(session, [e.tmdb_id for e in entries])
+
+    rows: list[dict[str, Any]] = []
+    seen: set[int] = set()
+    for rank, entry in enumerate(entries, start=1):
+        target_id = targets.get(entry.tmdb_id)
+        # A show is not similar to itself, and a target listed twice is one
+        # edge — `uq_show_recommendation_target` would refuse the second row and
+        # cost the whole show its write.
+        if target_id is None or target_id == show_id or target_id in seen:
+            continue
+        seen.add(target_id)
+        # `rank` is TMDB's position, so a dropped target leaves a gap rather
+        # than renumbering the ones after it.
+        rows.append({"source_show_id": show_id, "rank": rank, "target_show_id": target_id})
+
+    await session.execute(
+        delete(m.ShowRecommendation).where(m.ShowRecommendation.source_show_id == show_id)
+    )
+    if rows:
+        await session.execute(insert(m.ShowRecommendation).values(rows))
+    return RecommendationsWritten(offered=len(entries), written=len(rows))
+
+
+async def write_series_recommendations(
+    session: AsyncSession, series: TMDBSeries, *, show_id: int
+) -> RecommendationsWritten:
+    """Write **only** a payload's recommendations onto an already-mirrored show (NEU-1052).
+
+    The `write_series_credits` seam at a different grain, and it exists for the
+    same reason: the backfill needs one table filled from a full payload over
+    shows whose spine is already correct and is being read from, so the
+    guarantee it needs is not "this writes the same rows" but "this writes *no
+    others*" — and that belongs next to the writers rather than in a caller
+    reaching past the underscores to assemble it.
+
+    It therefore never upserts a show, season or episode, never prunes a season,
+    never writes a credit, and never recomputes `runtime` or the air pointers.
+
+    The caller owns the transaction, and the caller stamps
+    `recommendations_synced_at` — this function makes no claim about
+    completeness, the same split `mark_series_synced` draws from
+    `upsert_series_payload`.
+
+    Returns what was written and what was offered. A caller wanting to tell
+    "the namespace was not appended" from "upstream has none" still has to ask
+    the payload — both arrive here as `offered=0`, and this function is not the
+    place to decide that a missing namespace is an error, because for
+    `upsert_series_payload` it is not one.
+    """
+    return await _write_recommendations(
+        session, show_id=show_id, recommendations=series.recommendations
+    )
+
+
 async def _write_season_networks(
     session: AsyncSession,
     *,
@@ -1637,6 +1809,7 @@ async def upsert_series_payload(
         session, show_id=show_id, series=series, details=details
     )
     await _write_namespaces(session, show_id=show_id, series=series, network_ids=network_ids)
+    await _write_recommendations(session, show_id=show_id, recommendations=series.recommendations)
 
     season_ids = await upsert_seasons(session, show_id=show_id, series=series, offsets=offsets)
     if prune_seasons:

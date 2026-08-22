@@ -26,12 +26,31 @@ services:
       TMDB_RATE_LIMIT_REQUESTS: "20"
       TMDB_RATE_LIMIT_WINDOW_SECONDS: "1"
       TMDB_RETRY_MAX_ATTEMPTS: "5"
+      # DeepInfra, which serves the DeepSeek model the weekly recommendations
+      # pass calls. Both blank by default: the key goes in .env (gitignored), and
+      # the model id is measured against the live catalog by NEU-1100 rather than
+      # asserted here. The line has to exist even while empty — Coolify seeds a
+      # prod env var from this fallback exactly once, so a variable absent here
+      # is one that has to be added by hand in prod later.
+      DEEPINFRA_API_KEY: "${DEEPINFRA_API_KEY:-}"
+      RECOMMENDATION_MODEL: "${RECOMMENDATION_MODEL:-}"
       INGEST_CONSECUTIVE_FAILURE_THRESHOLD: "10"
       INGEST_STALE_RUN_MINUTES: "15"
       LOG_LEVEL: "INFO"
       CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://app.tvbf.localhost}"
       COOKIE_DOMAIN: "${COOKIE_DOMAIN:-.tvbf.localhost}"
       COOKIE_SAMESITE: "${COOKIE_SAMESITE:-lax}"
+      # Turnstile and the inbound per-IP auth throttle (NEU-1160). Every line
+      # has to exist even while blank or defaulted: Coolify seeds a prod env var
+      # from a compose `${VAR:-default}` exactly once and then shadows the file,
+      # so a variable absent here is one that has to be added by hand in prod.
+      TURNSTILE_ENABLED: "${TURNSTILE_ENABLED:-false}"
+      TURNSTILE_SECRET_KEY: "${TURNSTILE_SECRET_KEY:-}"
+      TRUSTED_PROXY_HOPS: "${TRUSTED_PROXY_HOPS:-1}"
+      SIGNUP_IP_THROTTLE_MAX: "${SIGNUP_IP_THROTTLE_MAX:-5}"
+      SIGNUP_IP_THROTTLE_WINDOW_MINUTES: "${SIGNUP_IP_THROTTLE_WINDOW_MINUTES:-60}"
+      LOGIN_IP_THROTTLE_MAX: "${LOGIN_IP_THROTTLE_MAX:-10}"
+      LOGIN_IP_THROTTLE_WINDOW_MINUTES: "${LOGIN_IP_THROTTLE_WINDOW_MINUTES:-15}"
     labels:
       - "traefik.enable=true"
       - "traefik.http.routers.tvbf-backend.rule=Host(`api.tvbf.localhost`)"

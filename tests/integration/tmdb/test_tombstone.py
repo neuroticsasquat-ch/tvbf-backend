@@ -16,12 +16,8 @@ from sqlalchemy import func, select
 from tests.integration.tmdb.test_ingest import BASE, _run_row, mock_series
 from tests.integration.tmdb.test_update import TODAY, _run, _seed_cursor, mock_changes
 from tvbf.catalog import models as m
-from tvbf.tmdb.tombstone import (
-    _MEASURED_EXPORT,
-    _MIN_FEED_ABSOLUTE,
-    TombstoneResult,
-    reconcile_tombstones,
-)
+from tvbf.tmdb.export import _MEASURED_EXPORT, _MIN_FEED_ABSOLUTE
+from tvbf.tmdb.tombstone import TombstoneResult, reconcile_tombstones
 
 # The floors only permit a realistic export, so tests need a realistic one —
 # full size, since the relative floor measures against the catalog TMDB is known
@@ -278,7 +274,10 @@ async def test_an_aborted_delta_does_not_tombstone(session):
 @respx.mock
 async def test_an_export_download_failure_does_not_fail_the_delta(session, caplog):
     """Best-effort by design: holding the cursor back over a failed second
-    download would re-cover the whole window every night, widening forever."""
+    download would re-cover the whole window every night, widening forever.
+
+    The download is now shared with the popularity refresh (NEU-1172), so it
+    fails once, ahead of both passes, rather than inside this one."""
     caplog.set_level("ERROR", logger="tvbf.tmdb.update")
     await _seed_cursor(session, TODAY - timedelta(days=1))
     mock_changes({})
@@ -290,4 +289,4 @@ async def test_an_export_download_failure_does_not_fail_the_delta(session, caplo
     row = await _run_row(session, run_id)
     assert row.status == "succeeded", "the delta's own work stands"
     assert row.last_update_cursor is not None, "and the cursor still advances"
-    assert any("tombstone pass failed" in r.message for r in caplog.records)
+    assert any("id export download failed" in r.message for r in caplog.records)

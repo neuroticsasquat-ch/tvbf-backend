@@ -28,14 +28,17 @@ class ResendEmailClient(EmailClient):
         subject: str,
         html: str,
         text: str,
+        reply_to: str | None = None,
     ) -> None:
-        payload = {
+        payload: dict[str, object] = {
             "from": self._from,
             "to": [to],
             "subject": subject,
             "html": html,
             "text": text,
         }
+        if reply_to is not None:
+            payload["reply_to"] = reply_to
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(

@@ -86,6 +86,7 @@ async def friend_show_ratings(
         FriendRatingItem(
             user_id=r.user_id,
             display_name=users[r.user_id].display_name,
+            handle=users[r.user_id].handle,
             stars=float(r.stars),
             rated_at=r.rated_at,
         )
@@ -110,6 +111,7 @@ async def friend_episode_ratings(
         FriendRatingItem(
             user_id=r.user_id,
             display_name=users[r.user_id].display_name,
+            handle=users[r.user_id].handle,
             stars=float(r.stars),
             rated_at=r.rated_at,
         )

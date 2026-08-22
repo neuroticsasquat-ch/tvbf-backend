@@ -18,10 +18,12 @@ from tvbf.logging_config import configure_logging
 from tvbf.routers import (
     admin,
     admin_invites,
+    admin_reports,
     admin_users,
     auth,
     browse,
     connections,
+    contact,
     email_change,
     email_verification,
     feedback,
@@ -30,6 +32,7 @@ from tvbf.routers import (
     invites_admin,
     me,
     password_reset,
+    reports,
     users,
 )
 
@@ -75,6 +78,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+    if settings.turnstile_enabled and not settings.turnstile_secret_key:
+        # Two knobs that can disagree, checked at boot rather than at the first
+        # signup: the failure this prevents is signup protection silently absent
+        # in production (NEU-1160 §6.1).
+        raise RuntimeError("TURNSTILE_ENABLED is set but TURNSTILE_SECRET_KEY is missing")
     app = FastAPI(title="tvbf-backend", lifespan=lifespan)
     app.add_middleware(
         CORSMiddleware,
@@ -86,6 +94,7 @@ def create_app() -> FastAPI:
     app.include_router(health.router)
     app.include_router(admin.router)
     app.include_router(admin_users.router)
+    app.include_router(admin_reports.router)
     app.include_router(admin_invites.router)
     app.include_router(invites_admin.router)
     app.include_router(browse.router)
@@ -95,8 +104,10 @@ def create_app() -> FastAPI:
     app.include_router(email_change.router)
     app.include_router(feedback.router)
     app.include_router(password_reset.router)
+    app.include_router(reports.router)
     app.include_router(users.router)
     app.include_router(connections.router)
+    app.include_router(contact.router)
     app.include_router(friend_engagement.router)
     return app
 

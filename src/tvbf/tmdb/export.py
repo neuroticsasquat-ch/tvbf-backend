@@ -23,9 +23,17 @@ module builds its own client rather than borrowing the authenticated one.
 
 **Today's file may not exist yet.** "By 08:00 UTC" is a deadline, not a
 guarantee, and a run triggered at 07:00 would otherwise fail on a 403 from a key
-that simply has not been written. `fetch_series_ids` walks backwards a day at a
+that simply has not been written. `fetch_series_export` walks backwards a day at a
 time; a day-old catalog list costs at most a day's new series, which the delta
 picks up anyway.
+
+**It carries popularity, and that is the only other field we store.** Each
+line is `{"id", "original_name", "popularity"}`; `original_name` is not
+`catalog.show.name` and is no substitute for one, so the parse keeps the id and
+the popularity and drops the rest (NEU-1172). Nightly `/tv/changes` reports
+*content edits*, and TMDB recomputing a score is not one, so this file is the
+only thing that keeps `catalog.show.popularity` from freezing for the 97% of the
+catalog a delta never touches.
 
 **A download can end early.** An endpoint either answers or it doesn't; a 4.7 MB
 file can arrive as the first 3 MB of itself. That failure mode is what
@@ -39,6 +47,7 @@ import gzip
 import json
 import logging
 import zlib
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 
 import httpx
@@ -96,13 +105,42 @@ def _assert_download_complete(resp: httpx.Response) -> None:
         )
 
 
-def parse_series_ids(raw: bytes) -> list[int]:
-    """Every `id` in one gzipped JSONL export, in file order.
+@dataclass(frozen=True, slots=True)
+class ExportEntry:
+    """One line of the export: a series id, and its popularity when it parsed.
 
-    A line that will not parse is skipped rather than fatal: this is 228k lines
+    `popularity` is `None` for a line that carried none or carried something
+    that is not a number. The id survives that regardless, which is not a
+    detail: the tombstone reconciler reads absence from this list as proof a
+    series is gone, so dropping a whole line over its second field would
+    tombstone a series for a malformed float.
+    """
+
+    tmdb_id: int
+    popularity: float | None
+
+
+def _popularity_of(record: dict) -> float | None:
+    """The line's popularity, or None when it has none we can use.
+
+    `bool` is rejected explicitly — it is an `int` in Python, so `true` would
+    otherwise become a popularity of 1.0 rather than no popularity at all.
+    """
+    value = record.get("popularity")
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        return None
+    return float(value)
+
+
+def parse_series_export(raw: bytes) -> list[ExportEntry]:
+    """Every series in one gzipped JSONL export, in file order.
+
+    A line that will not parse is skipped rather than fatal: this is 229k lines
     of somebody else's file, and losing one series to the delta is a better
-    outcome than losing a three-hour pass. The count is logged so a file that is
-    broadly malformed does not pass for a healthy one.
+    outcome than losing a three-hour pass. A line whose *popularity* will not
+    parse keeps its id and loses only the score — see `ExportEntry`. Both counts
+    are logged so a file that is broadly malformed does not pass for a healthy
+    one.
 
     A **truncated** file is a different thing entirely and raises. Every gzip
     member ends in a CRC32 and a length, so a body that stops early cannot be
@@ -121,34 +159,100 @@ def parse_series_ids(raw: bytes) -> list[int]:
     except (EOFError, gzip.BadGzipFile, zlib.error) as exc:
         raise TruncatedExportError(f"the TMDB id export did not decompress cleanly: {exc}") from exc
 
-    ids: list[int] = []
+    entries: list[ExportEntry] = []
     skipped = 0
+    unscored = 0
     for line in body.splitlines():
         if not line.strip():
             continue
         try:
-            ids.append(int(json.loads(line)["id"]))
+            record = json.loads(line)
+            tmdb_id = int(record["id"])
         except (ValueError, KeyError, TypeError):
             skipped += 1
+            continue
+        popularity = _popularity_of(record)
+        if popularity is None:
+            unscored += 1
+        entries.append(ExportEntry(tmdb_id=tmdb_id, popularity=popularity))
     if skipped:
         log.warning("id export: skipped %d unparseable line(s)", skipped)
-    if not ids:
+    if unscored:
+        log.warning("id export: %d line(s) carried no usable popularity", unscored)
+    if not entries:
         raise ValueError("the TMDB id export parsed to zero series ids")
-    return ids
+    return entries
 
 
-async def fetch_series_ids(
+# --- is this file the whole catalog? ----------------------------------------
+#
+# Moved here from `tombstone.py` by NEU-1172, which gave the guard a second
+# caller. It is a question about the *export* — the same question
+# `TruncatedExportError` answers for the bytes, one level up — and both passes
+# that read the file have to ask it before writing anything from it.
+
+# The export's size the last time it was measured: 2026-08-07. Not a limit, a
+# *denominator* — see `feed_is_implausible` for why the relative floor cannot
+# use the mirror's own size the way TV Maze's did.
+_MEASURED_EXPORT = 228_611
+
+# The tombstone pass diffs `mirrored - feed`, so a truncated export that still
+# parses would tombstone the entire catalog. These floors are the only thing
+# standing between a bad download and 228k tombstoned series.
+#
+# Absolute: catches an empty or badly truncated file with no estimate involved.
+# Sized as TV Maze's was — comfortably below the measured catalog (two thirds of
+# it), far above any collapse TMDB could legitimately have. Strictly weaker than
+# the relative floor under today's constants, and kept anyway: it is what still
+# fires if `_MEASURED_EXPORT` is ever revised downward or the mirror count is
+# wrong, neither of which it depends on.
+_MIN_FEED_ABSOLUTE = 150_000
+# Relative: catches a partial file large enough to clear the absolute floor.
+# Upstream does not shed 5% of its catalog in a day.
+_MIN_FEED_RELATIVE = 0.95
+
+
+def feed_is_implausible(feed_size: int, mirrored: int) -> str | None:
+    """Return why the export can't be trusted, or None if it can.
+
+    The relative floor measures the export against **the larger of the mirror
+    and the export's own measured size**, which is the one place this cannot be
+    a straight port of the TV Maze guard. TV Maze's mirror was the same size as
+    its feed, so `95% of mirrored` was `95% of the feed` in all but name. Here
+    the mirror is far smaller than the export for the whole pre-cutover period —
+    ~63k mapped rows against ~229k series — and a fraction of it is no floor at
+    all: a complete-looking export carrying a third of the catalog would clear
+    both guards and tombstone every mapped series in the missing two thirds.
+
+    Taking the maximum keeps both eras honest. Before cutover the constant binds;
+    after it, the mirror overtakes the constant and the guard tracks reality
+    rather than a number measured in 2026. Either way an export that has genuinely
+    shrunk 5% writes nothing and says so, which is the correct thing to do about
+    a catalog that lost eleven thousand series overnight.
+    """
+    if feed_size < _MIN_FEED_ABSOLUTE:
+        return f"export carried {feed_size} ids, under the absolute floor of {_MIN_FEED_ABSOLUTE}"
+    expected = max(mirrored, _MEASURED_EXPORT)
+    if feed_size < _MIN_FEED_RELATIVE * expected:
+        return (
+            f"export carried {feed_size} ids against the {expected} series TMDB is known "
+            f"to hold, under {_MIN_FEED_RELATIVE:.0%} of it"
+        )
+    return None
+
+
+async def fetch_series_export(
     *,
     base_url: str = EXPORT_BASE_URL,
     today: date | None = None,
     lookback_days: int = _MAX_LOOKBACK_DAYS,
     timeout: float = 120.0,
-) -> list[int]:
-    """Download the most recent published export and return its series ids.
+) -> list[ExportEntry]:
+    """Download the most recent published export and return what it lists.
 
     Walks back from `today` (UTC) until a day's file exists. Raises if none of
     the candidates is published, which is a loud failure on purpose — see
-    `parse_series_ids` for why a silent empty list is the dangerous outcome.
+    `parse_series_export` for why a silent empty list is the dangerous outcome.
     """
     start = today or datetime.now(UTC).date()
     attempted: list[str] = []
@@ -163,9 +267,9 @@ async def fetch_series_ids(
                 continue
             resp.raise_for_status()
             _assert_download_complete(resp)
-            ids = parse_series_ids(resp.content)
-            log.info("id export for %s: %d series ids", day, len(ids))
-            return ids
+            entries = parse_series_export(resp.content)
+            log.info("id export for %s: %d series", day, len(entries))
+            return entries
     raise RuntimeError(
         f"no TMDB id export published in the last {lookback_days + 1} days: {attempted}"
     )

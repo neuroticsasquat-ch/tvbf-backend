@@ -1,0 +1,165 @@
+=========== NEU-1146 REPORT (offset rule) ===========
+--- 1. tier dispositions ---
+                k                 |   v    
+----------------------------------+--------
+ total_orphans_under_matched_show | 782155
+ tier0_exact_key                  | 880
+ tier1_same_show_unique_title     | 116923
+ tier2_offset_key                 | 4161
+ tier2b_title_fallback            | 53
+ tier3_DELETE                     | 660138
+(6 rows)
+
+--- 2. links: candidates, accepted, offsets ---
+                  k                   |  v  
+--------------------------------------+-----
+ orphan_shows_with_link_candidates    | 134
+ links_accepted_exactly_one_candidate | 130
+ links_dropped_multiple_candidates    | 4
+ links_with_offset                    | 130
+(4 rows)
+
+--- 3. user-touched dispositions ---
+         k          |  v  
+--------------------+-----
+ user_touched_total | 189
+ moved_tier0        | 0
+ moved_tier1        | 64
+ moved_tier2_offset | 17
+ moved_tier2b_title | 0
+ DELETED            | 108
+(6 rows)
+
+--- 4. row-grain totals ---
+          k          |  v  
+---------------------+-----
+ watch_rows_moved    | 82
+ watch_rows_deleted  | 109
+ rating_rows_deleted | 1
+(3 rows)
+
+--- 5. links carrying user data (the ones needing review) ---
+ orphan_show |  from_name   | to_show |   to_name    | season_offset | episodes_moved | user_touched 
+-------------+--------------+---------+--------------+---------------+----------------+--------------
+         549 | Will & Grace | 1064267 | Will & Grace |             8 |             52 |           17
+(1 row)
+
+--- 6. user_show_watch rows created ---
+ show_id |  show_name   | users 
+---------+--------------+-------
+ 1064267 | Will & Grace |     1
+(1 row)
+
+--- 7. LOSS LIST ---
+           show            |   ep   |                               name                               |  air_date  | watch_rows 
+---------------------------+--------+------------------------------------------------------------------+------------+------------
+ 30 Rock                   | s7e-1  | 30 Rock: A One-Time Special                                      | 2020-07-16 |          1
+ And Just Like That…       | s1e-1  | And Just Like That... The Documentary                            | 2022-02-03 |          1
+ Breaking Bad              | s5e-1  | El Camino: A Breaking Bad Movie                                  | 2019-10-11 |          1
+ Brooklyn Nine-Nine        | s3e-3  | Hitchcock and Scully Webisode - Detective Skills 3               | 2015-09-14 |          1
+ Brooklyn Nine-Nine        | s3e-2  | Hitchcock and Scully Webisode - Detective Skills 2               | 2015-09-06 |          1
+ Brooklyn Nine-Nine        | s3e-1  | Hitchcock and Scully Webisode - Detective Skills 1               | 2015-08-30 |          1
+ Brooklyn Nine-Nine        | s8e10  | The Last Day (2)                                                 | 2021-09-16 |          1
+ Friends                   | s4e24  | The One With Ross's Wedding: Part II                             | 1998-05-07 |          1
+ Friends                   | s5e24  | The One in Vegas, Part 2                                         | 1999-05-20 |          1
+ Friends                   | s6e24  | The One With the Proposal, Part 1                                | 2000-05-18 |          1
+ Friends                   | s6e25  | The One With the Proposal, Part 2                                | 2000-05-18 |          1
+ Friends                   | s7e-1  | Friends: The Stuff You've Never Seen                             | 2001-02-15 |          1
+ Friends                   | s7e24  | The One with Monica and Chandler's Wedding, Part 2               | 2001-05-17 |          1
+ Friends                   | s8e24  | The One Where Rachel Has a Baby, Part 2                          | 2002-05-16 |          1
+ Friends                   | s9e24  | The One in Barbados, Part 2                                      | 2003-05-15 |          1
+ Friends                   | s10e-3 | Friends: The Reunion                                             | 2021-05-27 |          1
+ Friends                   | s10e-2 | The One With All the Other Ones: A Friends Retrospective, Part 2 | 2004-05-06 |          1
+ Friends                   | s10e-1 | The One With All the Other Ones: A Friends Retrospective, Part 1 | 2004-05-06 |          1
+ Friends                   | s10e18 | The Last One, Part 2                                             | 2004-05-06 |          1
+ Lost                      | s1e25  | Exodus (3)                                                       | 2005-05-25 |          1
+ Lost                      | s2e-2  | Revelation                                                       | 2006-01-11 |          1
+ Lost                      | s3e-10 | Missing Pieces 7: Arzt and Crafts                                | 2007-12-17 |          1
+ Lost                      | s3e-2  | Lost Survivor Guide                                              | 2007-02-07 |          1
+ Lost                      | s4e-2  | Lost: The Answers Are Here                                       | 2008-06-04 |          1
+ Lost                      | s4e14  | There's No Place Like Home (3)                                   | 2008-05-29 |          1
+ Lost                      | s6e-1  | Epilogue: The New Man in Charge                                  | 2010-08-24 |          1
+ Lost                      | s6e18  | The End (2)                                                      | 2010-05-23 |          1
+ Mr. Robot                 | s2e-2  | Mr. Robot: Virtual Reality Experience - 360°                     | 2016-07-29 |          1
+ Ozark                     | s4e-1  | A Farewell to Ozark                                              | 2022-04-29 |          1
+ Parks and Recreation      | s4e-5  | April & Andy's Road Trip: 5. Behind the Scenes                   | 2011-11-03 |          1
+ Parks and Recreation      | s4e-4  | April & Andy's Road Trip: 4. Building a Home                     | 2011-11-03 |          1
+ Parks and Recreation      | s4e-3  | April & Andy's Road Trip: 3. Calling Leslie                      | 2011-11-03 |          1
+ Parks and Recreation      | s4e-2  | April & Andy's Road Trip: 2. The Four Corners                    | 2011-11-03 |          1
+ Parks and Recreation      | s4e-1  | April & Andy's Road Trip: 1. The Spider                          | 2011-11-03 |          1
+ Parks and Recreation      | s6e-5  | Parks and Recreation in Europe: 5. Andy at Stonehenge            | 2013-09-24 |          1
+ Parks and Recreation      | s6e-4  | Parks and Recreation in Europe: 4. Ron Wants to Buy a House      | 2013-09-24 |          1
+ Parks and Recreation      | s6e-3  | Parks and Recreation in Europe: 3. Ron at the Distillery         | 2013-09-24 |          1
+ Parks and Recreation      | s6e-2  | Parks and Recreation in Europe: 2. Ron's Journey                 | 2013-09-24 |          1
+ Parks and Recreation      | s6e-1  | Parks and Recreation in Europe: 1. Tourists                      | 2013-09-24 |          1
+ Parks and Recreation      | s6e21  | Moving Up (1)                                                    | 2014-04-24 |          1
+ Parks and Recreation      | s6e22  | Moving Up (2)                                                    | 2014-04-24 |          1
+ Parks and Recreation      | s7e-2  | The Paley Center Salutes Parks and Recreation                    | 2020-04-30 |          1
+ Parks and Recreation      | s7e-1  | A Parks and Recreation Special                                   | 2020-04-30 |          1
+ Parks and Recreation      | s7e13  | One Last Ride (2)                                                | 2015-02-24 |          1
+ Saturday Night Live       | s2e-1  | Live from the Mardi Gras                                         | 1977-02-20 |          1
+ Saturday Night Live       | s15e-1 | 15th Anniversary Special                                         | 1989-09-24 |          1
+ Saturday Night Live       | s17e-2 | Halloween Special                                                | 1991-10-28 |          1
+ Saturday Night Live       | s17e-1 | All the Best for Mother's Day                                    | 1992-05-10 |          1
+ Saturday Night Live       | s18e-1 | SNL Presidential Bash 1992                                       | 1992-11-01 |          1
+ Saturday Night Live       | s23e-3 | SNL Remembers Phil Hartman                                       | 1998-06-13 |          1
+ Saturday Night Live       | s24e-1 | Bad Boys of SNL                                                  | 1998-09-26 |          1
+ Saturday Night Live       | s25e-1 | 25th Anniversary Special                                         | 1999-09-25 |          1
+ Saturday Night Live       | s26e-4 | Mother's Day Special                                             | 2001-05-13 |          1
+ Saturday Night Live       | s26e-3 | Thursday Night Live (2)                                          | 2001-02-08 |          1
+ Saturday Night Live       | s26e-2 | Saturday Night Live: Presidential Bash                           | 2000-11-03 |          1
+ Saturday Night Live       | s26e-1 | Thursday Night Live (1)                                          | 2001-02-01 |          1
+ Saturday Night Live       | s28e-3 | SNL Weekend Update Halftime Show                                 | 2003-01-26 |          1
+ Saturday Night Live       | s28e-2 | Christmas Special                                                | 2002-12-17 |          1
+ Saturday Night Live       | s28e-1 | The Best of Will Ferrell, Volume 1                               | 2002-09-28 |          1
+ Saturday Night Live       | s29e-3 | The Best of Will Ferrell, Volume 2                               | 2003-12-20 |          1
+ Saturday Night Live       | s30e-7 | Live from New York: The First 5 Years of Saturday Night Live     | 2005-02-20 |          1
+ Saturday Night Live       | s30e-6 | The Best of Jon Lovitz                                           | 2004-09-04 |          1
+ Saturday Night Live       | s30e-3 | Saturday Night Live Presidential Bash 2004                       | 2004-11-01 |          1
+ Saturday Night Live       | s31e-4 | Saturday Night Live: The Best of Commercial Parodies             | 2005-11-05 |          1
+ Saturday Night Live       | s31e-3 | The Best of TV Funhouse                                          | 2006-04-29 |          1
+ Saturday Night Live       | s31e-2 | Saturday Night Live in the '80s: Lost and Found                  | 2005-11-13 |          1
+ Saturday Night Live       | s32e-1 | The Best of Darrell Hammond                                      | 2006-11-04 |          1
+ Saturday Night Live       | s33e-1 | Family Thanksgiving Leftovers                                    | 2007-11-24 |          1
+ Saturday Night Live       | s34e-3 | Just Shorts                                                      | 2009-05-17 |          1
+ Saturday Night Live       | s34e-2 | Sports Extra                                                     | 2009-01-04 |          1
+ Saturday Night Live       | s34e-1 | Presidential Bash 2008                                           | 2008-11-03 |          1
+ Saturday Night Live       | s35e-2 | Sports All-Stars                                                 | 2010-01-31 |          1
+ Saturday Night Live       | s35e-1 | A Very Gilly Christmas                                           | 2009-12-17 |          1
+ Saturday Night Live       | s36e-2 | The Women of SNL                                                 | 2010-11-01 |          1
+ Saturday Night Live       | s38e-3 | SNL Christmas                                                    | 2012-11-28 |          1
+ Saturday Night Live       | s38e-2 | Weekend Update: Thursday #2                                      | 2012-09-27 |          1
+ Saturday Night Live       | s38e-1 | Weekend Update: Thursday #1                                      | 2012-09-20 |          1
+ Saturday Night Live       | s39e-6 | Saturday Night Live Presents SNL Shorts                          | 2014-04-24 |          1
+ Saturday Night Live       | s39e-4 | Best of This Season                                              | 2014-01-04 |          1
+ Saturday Night Live       | s39e-3 | SNL Christmas                                                    | 2013-12-04 |          1
+ Saturday Night Live       | s39e-2 | SNL Thanksgiving                                                 | 2013-11-27 |          1
+ Saturday Night Live       | s39e-1 | SNL Halloween                                                    | 2013-10-31 |          1
+ Saturday Night Live       | s40e-6 | Saturday Night Live 40th Anniversary                             | 2015-02-15 |          1
+ Saturday Night Live       | s40e-4 | SNL 40th Red Carpet Special                                      | 2015-02-15 |          1
+ Saturday Night Live       | s40e-2 | SNL Christmas                                                    | 2014-12-03 |          1
+ Saturday Night Live       | s40e-1 | SNL Thanksgiving                                                 | 2014-11-26 |          1
+ Saturday Night Live       | s41e-1 | Goodnight, Sweet Prince                                          | 2016-04-23 |          1
+ Saturday Night Live       | s42e-2 | SNL Thanksgiving 2016                                            | 2016-11-23 |          1
+ Saturday Night Live       | s42e-1 | SNL Election Special                                             | 2016-11-07 |          1
+ Saturday Night Live       | s43e-1 | The David S. Pumpkins Animated Halloween Special                 | 2017-10-28 |          1
+ Saturday Night Live       | s44e-2 | A Saturday Night Live Christmas Special                          | 2018-12-04 |          1
+ Saturday Night Live       | s44e-1 | A Saturday Night Live Thanksgiving                               | 2018-11-21 |          1
+ Saturday Night Live       | s46e-2 | A Saturday Night Live Christmas Special                          | 2020-12-16 |          1
+ Saturday Night Live       | s46e-1 | The 2020 SNL Election Special                                    | 2020-11-02 |          1
+ Saturday Night Live       | s48e-1 | A Saturday Night Live Christmas Special                          | 2022-12-14 |          1
+ Saturday Night Live       | s49e-2 | A Saturday Night Live Christmas Special                          | 2023-12-14 |          1
+ Saturday Night Live       | s49e-1 | A Saturday Night Live Thanksgiving Special                       | 2023-11-22 |          1
+ Saturday Night Live       | s50e-9 | SNL 50 Rewind: The Early Years of Saturday Night Live            | 2025-02-13 |          1
+ Saturday Night Live       | s50e-8 | SNL50: The Red Carpet Livestream                                 | 2025-02-16 |          1
+ Saturday Night Live       | s50e-7 | SNL50: The Red Carpet                                            | 2025-02-16 |          1
+ Saturday Night Live       | s50e-6 | SNL50: The Homecoming Concert                                    | 2025-02-14 |          1
+ Saturday Night Live       | s50e-5 | Ladies and Gentlemen... 50 Years of SNL Music                    | 2025-01-27 |          1
+ Saturday Night Live       | s50e-2 | A Saturday Night Live Thanksgiving                               | 2024-11-27 |          1
+ Sex and the City          | s6e-2  | Sex and the City 2: The Movie                                    | 2010-05-27 |          1
+ Sex and the City          | s6e-1  | Sex and the City: The Movie                                      | 2008-05-30 |          1
+ The Bear                  | s5e-1  | Gary                                                             | 2026-05-05 |          2
+ The Hook Up Plan          | s2e7   | Plan Confiné.e.s                                                 | 2020-08-26 |          1
+ Unbreakable Kimmy Schmidt | s4e-1  | Unbreakable Kimmy Schmidt: Kimmy Vs. The Reverend                | 2020-05-12 |          1
+(108 rows)
+

@@ -231,6 +231,22 @@ class Show(Base):
         # in bulk.
         Index("ix_show_last_episode_to_air_id", "last_episode_to_air_id"),
         Index("ix_show_next_episode_to_air_id", "next_episode_to_air_id"),
+        # The most-anticipated query (NEU-1058): a date range over live shows,
+        # ordered by popularity. 45 ms unindexed on the production mirror — a
+        # parallel sequential scan and a top-N heapsort for the 408 rows that
+        # survive the filter — which is already fine behind the browse routes'
+        # `Cache-Control: public, max-age=300`, so this is polish rather than a
+        # fix. It turns the scan into a range scan.
+        #
+        # **The predicate is `deleted_upstream_at IS NULL` and nothing else.**
+        # `current_date` is *stable* rather than *immutable*, so it may not
+        # appear in a partial-index predicate at all — Postgres rejects the
+        # statement. Index the column, not the comparison.
+        Index(
+            "ix_show_first_air_date_live",
+            "first_air_date",
+            postgresql_where=text("deleted_upstream_at IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -433,6 +449,21 @@ class Show(Base):
     # and upstream had none" from "we never asked", so it would re-fetch every
     # credit-less show on every run and never converge.
     credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this show's **recommendations** were last written from a complete TMDB
+    # payload — the recommendations backfill's resumability watermark (NEU-1052),
+    # stamped alongside the other two by `mark_series_synced` because every
+    # caller of that fetches `DEFAULT_APPEND`, which now carries the
+    # `recommendations` namespace.
+    #
+    # A third column for the second reason the second one exists: a "carries no
+    # `show_recommendation` row" predicate cannot tell *upstream returned none*
+    # from *nobody has asked*, and upstream returning none is ~8% of the
+    # zero-vote long tail (project spec §2) — so that predicate would re-fetch
+    # every one of them on every run and never converge.
+    #
+    # NULL therefore means *no pass has written recommendations onto this row*.
+    # It does **not** mean the show has none.
+    recommendations_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the show stops appearing in the daily id export, i.e. TMDB has
     # deleted it. The row is never removed: `app.user_show_watch` and
     # `app.user_show_rating` cascade from here, so a delete would destroy user
@@ -898,6 +929,116 @@ class ShowWatchProvider(Base):
     )
     display_priority: Mapped[int | None] = mapped_column(Integer)
     link: Mapped[str | None] = mapped_column(Text)
+
+
+class ShowRecommendation(Base):
+    """TMDB's "More like this" list for one show, in TMDB's own order (NEU-1052).
+
+    A show-to-show edge with a position, not a lookup: `source_show_id` is the
+    show being viewed and `target_show_id` one of the twenty TMDB recommends
+    alongside it. `rank` is the position the entry held in the response, so the
+    read path is `ORDER BY rank` and nothing has to re-derive an order upstream
+    already decided.
+
+    **One endpoint means one provenance, so there is no `source` column**
+    (project spec §2). `/similar` was measured and rejected — it returns zero
+    for every show `/recommendations` also returns zero for, and noise where it
+    answers at all — and a column holding a single constant is a lie waiting for
+    a second writer this design says will not come. A later
+    "people who watched this also watched" signal is a different table with a
+    user dimension, not a second value here.
+
+    **Ranks may have gaps.** A target that does not resolve to a `catalog.show`
+    is dropped rather than renumbered, so `rank` keeps meaning *TMDB's position*
+    rather than *ours after filtering*. Measured, dropping is a no-op (502 of
+    502 sampled targets resolved), and it stays as a guard because a series TMDB
+    created this morning is not mirrored until tonight's delta.
+
+    The whole list for a source show is **replaced** on refresh, never merged:
+    TMDB's ranking is a total order and a partial update would interleave two
+    vintages of it.
+    """
+
+    __tablename__ = "show_recommendation"
+    __table_args__ = (
+        PrimaryKeyConstraint("source_show_id", "rank", name="pk_show_recommendation"),
+        # One row per pair, which is what makes "the writer deduplicates" an
+        # invariant rather than a habit — TMDB listing a target twice would
+        # otherwise store it twice and the read path would show a duplicate card.
+        UniqueConstraint("source_show_id", "target_show_id", name="uq_show_recommendation_target"),
+        # The PK covers source->target. This is the other direction, and it is
+        # not for reading: `target_show_id` is a CASCADE FK into `catalog.show`,
+        # and Postgres has to find the referencing rows every time a show is
+        # deleted. Unindexed that is a sequential scan of the whole table per
+        # deleted show — the cost `ix_show_last_episode_to_air_id` was added for,
+        # once `orphan_retire` made bulk show deletion a thing that happens.
+        Index("ix_show_recommendation_target_show_id", "target_show_id"),
+        {"schema": SCHEMA},
+    )
+
+    source_show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    # TMDB's position in the response, 1-based.
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    target_show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+
+
+class TrendingShow(Base):
+    """The current `/trending/tv/week` snapshot — one whole list, replaced daily
+    (NEU-1055).
+
+    Trending is the one discovery surface that still calls an endpoint on a
+    schedule (project spec §3): it is a velocity signal over view and search
+    counts we do not hold, so it cannot be derived locally the way "most
+    anticipated" can. One request a day for twenty entries buys it.
+
+    **The table holds exactly one snapshot, not a history.** Every row carries
+    the same `captured_at` and a run replaces the lot inside one transaction, so
+    a reader sees the previous list or the new one and never a half-written mix.
+    A separate header table would normalise the twenty copies of one timestamp
+    away and buy nothing: the read path wants "the current list and how old it
+    is", which is one query here and a join there.
+
+    **`captured_at` is when the list was fetched, not when it was written.** It
+    is what NEU-1056's seven-day staleness cutoff is measured against, and the
+    two differ by however long resolution took — small today, and exactly the
+    kind of drift that stops being small when a pass grows a retry.
+
+    **Ranks may have gaps**, on `ShowRecommendation`'s precedent: an entry that
+    does not resolve to a `catalog.show` is dropped rather than renumbered, so
+    `rank` keeps meaning *TMDB's position*. Measured, 20 of 20 trending ids
+    resolved — a TMDB spine makes trending the least likely list in the product
+    to miss, since these are the most globally popular titles there are — and
+    the drop stays as a guard because a series TMDB created this morning is not
+    mirrored until tonight's delta.
+
+    `adult` and `deleted_upstream_at` are deliberately **not** filtered on the
+    way in. They are read-time filters everywhere else a stored list of shows
+    exists (NEU-1053, NEU-1108) for one reason: a list computed in March can
+    name a show tombstoned in June, and a write-time copy of the rule would make
+    a resurrected show permanently invisible.
+    """
+
+    __tablename__ = "trending_show"
+    __table_args__ = (
+        PrimaryKeyConstraint("rank", name="pk_trending_show"),
+        # One row per show, which is what makes "the writer deduplicates" an
+        # invariant rather than a habit. It also indexes `show_id`, which the
+        # CASCADE below needs: unindexed, every show deletion sequentially scans
+        # this table looking for referencing rows.
+        UniqueConstraint("show_id", name="uq_trending_show_show"),
+        {"schema": SCHEMA},
+    )
+
+    # TMDB's position in the response, 1-based.
+    rank: Mapped[int] = mapped_column(Integer, nullable=False)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
 class ContentRating(Base):
@@ -1424,12 +1565,14 @@ class IngestRun(Base):
             # from here — and must not seed a `person_initial` row.
             #
             # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034),
-            # `catalog_update` its daily delta (NEU-1035) and
-            # `airdate_reconcile` the nightly airdate pass (NEU-1145) — the only
-            # three kinds any live code still writes.
+            # `catalog_update` its daily delta (NEU-1035), `airdate_reconcile`
+            # the nightly airdate pass (NEU-1145) and `trending_snapshot` the
+            # daily `/trending/tv/week` capture (NEU-1055) — the only four kinds
+            # any live code still writes.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
             "'show_refresh', 'person_update', 'episode_credits_backfill', "
-            "'catalog_initial', 'catalog_update', 'airdate_reconcile')",
+            "'catalog_initial', 'catalog_update', 'airdate_reconcile', "
+            "'trending_snapshot')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

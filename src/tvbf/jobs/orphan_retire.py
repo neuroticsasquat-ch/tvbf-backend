@@ -28,9 +28,9 @@ three expected discrepancy classes are enumerated in the spec's §7 and in
 `docs/migration/README.md`.
 
 **This is not reversible.** The pre-drop `tvmaze` dump is the only source for the
-deleted catalog rows and it cannot restore `app` rows at all. `app.watch_archive`
-is what can: a human-readable snapshot of every watch and rating, no foreign
-keys, survives everything.
+deleted catalog rows and it cannot restore `app` rows at all. The pre-drop
+`pg_dump` of `app.watch_archive` (NEU-1158) is what can: a human-readable
+snapshot of every watch and rating, no foreign keys, survives everything.
 
 **Exit codes: 0 = no orphan row survives, 1 = it aborted, raised, refused to run
 before the full TMDB ingest, or left orphans behind.** Unlike its siblings, rows
@@ -100,7 +100,8 @@ async def _retire(limit: int | None) -> int:
         # and the reason this pass needed an ADR.
         log.warning(
             "deleted %d watch row(s), %d rating(s) and %d activity event(s) that had no "
-            "TMDB counterpart to move to — recoverable by hand from app.watch_archive",
+            "TMDB counterpart to move to — recoverable by hand from the "
+            "pre-drop pg_dump (NEU-1158)",
             result.watches_deleted,
             result.ratings_deleted,
             result.activity_deleted,

@@ -20,6 +20,7 @@ import pytest
 import respx
 from sqlalchemy import func, select
 
+from tests.fixtures.handles import new_handle
 from tests.fixtures.tmdb.series_factory import (
     make_aggregate_credits,
     make_cast_member,
@@ -249,7 +250,8 @@ async def test_writes_all_four_credit_tables_for_a_mirrored_show(session):
 
 @respx.mock
 async def test_a_season_outside_the_speculative_window_still_contributes_its_credits(session):
-    """A season past `0..8` overflows `append_to_response` and needs its own request.
+    """A season past the speculative window overflows `append_to_response` and
+    needs its own request.
 
     The overflow is where a credits pass is most likely to go quietly wrong — the
     episodes are mirrored either way, so a show whose season 25 guest cast never
@@ -481,6 +483,7 @@ async def test_report_counts_the_backlog_and_names_the_shows_users_track(session
         email=f"credits-{uuid.uuid4().hex[:8]}@example.com",
         password_hash="x",
         display_name="Watcher",
+        handle=new_handle(),
     )
     session.add(user)
     await session.flush()
@@ -545,6 +548,7 @@ async def test_report_reaches_a_show_touched_only_through_an_episode_watch(sessi
         email=f"credits-{uuid.uuid4().hex[:8]}@example.com",
         password_hash="x",
         display_name="Watcher",
+        handle=new_handle(),
     )
     session.add(user)
     await session.flush()
