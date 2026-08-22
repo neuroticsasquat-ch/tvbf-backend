@@ -205,7 +205,7 @@ class AuthAttempt(Base):
     __tablename__ = "auth_attempt"
     __table_args__ = (
         Index("ix_auth_attempt_kind_ip_at", "kind", "ip", "attempted_at"),
-        CheckConstraint("kind IN ('signup', 'login')", name="ck_auth_attempt_kind"),
+        CheckConstraint("kind IN ('signup', 'login', 'contact')", name="ck_auth_attempt_kind"),
         {"schema": "app"},
     )
 

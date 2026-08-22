@@ -33,7 +33,9 @@ def get_email_client() -> EmailClient:
     return build_email_client(get_settings())
 
 
-async def send_email(*, to: str, subject: str, html: str, text: str) -> None:
+async def send_email(
+    *, to: str, subject: str, html: str, text: str, reply_to: str | None = None
+) -> None:
     """Module-level convenience. Raises EmailSendError on transport failure."""
     client = get_email_client()
-    await client.send(to=to, subject=subject, html=html, text=text)
+    await client.send(to=to, subject=subject, html=html, text=text, reply_to=reply_to)

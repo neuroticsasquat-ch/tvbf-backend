@@ -27,6 +27,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.errors import TooManyAttempts
 from tvbf.app.repos import auth_attempt_repo
+from tvbf.app.repos.auth_attempt_repo import CONTACT as CONTACT
 from tvbf.app.repos.auth_attempt_repo import LOGIN as LOGIN
 from tvbf.app.repos.auth_attempt_repo import SIGNUP as SIGNUP
 from tvbf.config import Throttle
