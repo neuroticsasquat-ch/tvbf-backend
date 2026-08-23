@@ -1,5 +1,12 @@
 # Release notes
 
+## 0.3.4 — 2026-08-23
+
+### General
+
+- Add GET /users/{user_id}/feed endpoint for per-user activity feed
+- Reorder InvalidCursor import to satisfy ruff
+
 ## 0.3.3 — 2026-08-23
 
 ### General
