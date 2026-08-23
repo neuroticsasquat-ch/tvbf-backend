@@ -571,7 +571,9 @@ async def test_a_dismissal_does_not_reach_any_other_surface(authed_client, sessi
     )
     session.add_all(
         [
-            TrendingShow(rank=1, show_id=dismissed.id, captured_at=_BASE),
+            TrendingShow(
+                rank=1, show_id=dismissed.id, captured_at=datetime.now(tz=UTC) - timedelta(hours=1)
+            ),
             ShowRecommendation(source_show_id=source.id, target_show_id=dismissed.id, rank=1),
         ]
     )
