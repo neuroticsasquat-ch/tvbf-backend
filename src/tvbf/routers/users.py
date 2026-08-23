@@ -7,7 +7,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User
 from tvbf.app.repos import connection_repo, user_repo
+from tvbf.app.errors import InvalidCursor
 from tvbf.app.schemas import (
+    FeedPage,
     MyShowEntry,
     MyShowsSort,
     UserSearchResult,
@@ -15,7 +17,7 @@ from tvbf.app.schemas import (
     WatchedSort,
     WatchedStatusFilter,
 )
-from tvbf.app.services import connection_service, my_shows_service
+from tvbf.app.services import connection_service, feed_service, my_shows_service
 from tvbf.deps import get_current_user, get_session
 
 router = APIRouter(tags=["users"])
@@ -100,3 +102,24 @@ async def friend_watched(
     return await my_shows_service.list_watched(
         db, user_id=friend.id, status=status_filter, sort=sort, today=today
     )
+
+
+@router.get("/users/{user_id}/feed", response_model=FeedPage)
+async def friend_feed(
+    response: Response,
+    user_id: UUID = Path(...),
+    cursor: Annotated[str | None, Query()] = None,
+    limit: Annotated[int, Query(ge=1, le=50)] = 20,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> FeedPage:
+    friend = await _require_connected_friend(db, caller=user, target_id=user_id)
+    response.headers["Cache-Control"] = "no-store"
+    try:
+        return await feed_service.list_user_feed(
+            db, actor_id=friend.id, cursor=cursor, limit=limit
+        )
+    except InvalidCursor as err:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor"
+        ) from err
