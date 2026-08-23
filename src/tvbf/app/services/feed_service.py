@@ -58,7 +58,31 @@ async def list_feed(
         cursor_ts=cursor_ts,
         cursor_id=cursor_id,
     )
+    return await _assemble_page(db, rows, limit)
 
+
+async def list_user_feed(
+    db: AsyncSession, *, actor_id: UUID, cursor: str | None, limit: int
+) -> FeedPage:
+    """Feed for a single user's own activity (the friend-profile Activity tab)."""
+    settings = get_settings()
+    cursor_ts: datetime | None = None
+    cursor_id: UUID | None = None
+    if cursor is not None:
+        cursor_ts, cursor_id = decode_cursor(cursor)
+
+    rows = await activity_repo.fetch_feed_page(
+        db,
+        friend_ids=[actor_id],
+        window_min=settings.activity_rollup_window_min,
+        limit=limit,
+        cursor_ts=cursor_ts,
+        cursor_id=cursor_id,
+    )
+    return await _assemble_page(db, rows, limit)
+
+
+async def _assemble_page(db: AsyncSession, rows: list[FeedRow], limit: int) -> FeedPage:
     items = await _hydrate(db, rows)
     next_cursor = None
     if len(rows) == limit and rows:
