@@ -82,9 +82,7 @@ async def list_user_feed(
     return await _assemble_page(db, rows, limit)
 
 
-async def _assemble_page(
-    db: AsyncSession, rows: list[FeedRow], limit: int
-) -> FeedPage:
+async def _assemble_page(db: AsyncSession, rows: list[FeedRow], limit: int) -> FeedPage:
     items = await _hydrate(db, rows)
     next_cursor = None
     if len(rows) == limit and rows:

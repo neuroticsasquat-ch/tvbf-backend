@@ -5,9 +5,9 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.app.errors import InvalidCursor
 from tvbf.app.models import User
 from tvbf.app.repos import connection_repo, user_repo
-from tvbf.app.errors import InvalidCursor
 from tvbf.app.schemas import (
     FeedPage,
     MyShowEntry,
@@ -116,9 +116,7 @@ async def friend_feed(
     friend = await _require_connected_friend(db, caller=user, target_id=user_id)
     response.headers["Cache-Control"] = "no-store"
     try:
-        return await feed_service.list_user_feed(
-            db, actor_id=friend.id, cursor=cursor, limit=limit
-        )
+        return await feed_service.list_user_feed(db, actor_id=friend.id, cursor=cursor, limit=limit)
     except InvalidCursor as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="invalid_cursor"
