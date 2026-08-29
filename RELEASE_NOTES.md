@@ -1,5 +1,50 @@
 # Release notes
 
+## 0.3.4 — 2026-08-23
+
+### General
+
+- Add GET /users/{user_id}/feed endpoint for per-user activity feed
+- Reorder InvalidCursor import to satisfy ruff
+
+## 0.3.3 — 2026-08-23
+
+### General
+
+- Run recommendations on a model with capacity at payload size ([NEU-1180](https://linear.app/neuroticsasquatch/issue/NEU-1180))
+- Fit the LLM timeout to the model the pass actually calls ([NEU-1180](https://linear.app/neuroticsasquatch/issue/NEU-1180))
+- Serve in_my_shows from GET /shows and /shows/{id}/similar ([NEU-1185](https://linear.app/neuroticsasquatch/issue/NEU-1185))
+- Serve my_rating on the watched-shows payload ([NEU-1191](https://linear.app/neuroticsasquatch/issue/NEU-1191))
+- Anonymise display_name and auth_token in refresh_db.sh ([NEU-1195](https://linear.app/neuroticsasquatch/issue/NEU-1195))
+- Anonymise even when pg_restore reports errors ([NEU-1195](https://linear.app/neuroticsasquatch/issue/NEU-1195))
+- Make the restore-failure guidance mode-specific ([NEU-1195](https://linear.app/neuroticsasquatch/issue/NEU-1195))
+- Reject an email-shaped display name at both write sites ([NEU-1194](https://linear.app/neuroticsasquatch/issue/NEU-1194))
+- Verify Turnstile tokens and throttle auth by IP ([NEU-1160](https://linear.app/neuroticsasquatch/issue/NEU-1160))
+- Require a verified email for connection requests and search visibility ([NEU-1161](https://linear.app/neuroticsasquatch/issue/NEU-1161))
+- Disable an account and report a user ([NEU-1162](https://linear.app/neuroticsasquatch/issue/NEU-1162))
+- Rate-limit outgoing connection requests ([NEU-1157](https://linear.app/neuroticsasquatch/issue/NEU-1157))
+- Add admin read route for user reports ([NEU-1197](https://linear.app/neuroticsasquatch/issue/NEU-1197))
+- Check local prerequisites and multiplex SSH in db:refresh
+- Add app.user.handle with uniqueness, backfill and payload exposure ([NEU-1163](https://linear.app/neuroticsasquatch/issue/NEU-1163))
+- Close the neutered backfill assertion and escape LIKE in handle search ([NEU-1163](https://linear.app/neuroticsasquatch/issue/NEU-1163))
+- Drop app.watch_archive PII before open registration ([NEU-1158](https://linear.app/neuroticsasquatch/issue/NEU-1158))
+- Add POST /contact endpoint with Turnstile, IP throttle, and email delivery ([NEU-1164](https://linear.app/neuroticsasquatch/issue/NEU-1164))
+- Make invite_code optional in SignupRequest ([NEU-1165](https://linear.app/neuroticsasquatch/issue/NEU-1165))
+- Raise CI flake threshold in burst acquisition test ([#332](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/332))
+
+### Recommendations
+
+- Demand a bare title and bump the prompt version
+- Retry when most named titles resolve to nothing
+- Stop serving the reason, keep writing it
+- Name every excluded show in the payload
+- Tell the model what to do instead of an excluded show
+- Retry an answer that is all the user's own shows
+- Recover the show title from a dressed answer ([NEU-1173](https://linear.app/neuroticsasquatch/issue/NEU-1173))
+- Report recovered titles against what was named ([NEU-1173](https://linear.app/neuroticsasquatch/issue/NEU-1173))
+- Suppress shows the viewer already has a record for ([NEU-1175](https://linear.app/neuroticsasquatch/issue/NEU-1175))
+- Dismiss a show and never recommend it again ([NEU-1178](https://linear.app/neuroticsasquatch/issue/NEU-1178))
+
 ## 0.3.2 — 2026-08-16
 
 ### General
