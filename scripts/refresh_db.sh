@@ -277,7 +277,7 @@ fi
 
 if [[ ( "$MODE" == "app" || "$MODE" == "both" ) && "$ANONYMIZE" == "1" ]]; then
   echo "→ Anonymizing app data..."
-  ANON_HASH=$(docker compose exec -T tvbf-backend python -c \
+  ANON_HASH=$(docker compose exec -T api python -c \
     "from tvbf.app.passwords import hash_password; print(hash_password('localdev'))")
   ADMIN_EMAIL_VAL="${ADMIN_EMAIL:-}"
   docker exec -i "$LOCAL_PG_CONTAINER" \
