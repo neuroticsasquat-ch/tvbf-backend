@@ -1,55 +1,32 @@
 version: '3'
 
-includes:
-  infra:
-    taskfile: ../../tbc-localdev-infra/Taskfile.yml
-    dir: ../../tbc-localdev-infra
-
+# The workspace owns the compose file one level up; the repo owns nothing about
+# where it runs. Override any of these on the command line if the layout moves:
+#   task COMPOSE="docker compose" test
 vars:
-  COMPOSE: docker compose
-  SVC: tvbf-backend
+  COMPOSE: "docker compose -f ../docker-compose.yml"
+  SVC: api
+  API_URL: "http://localhost:8000"
   EXEC: "{{.COMPOSE}} exec {{.SVC}}"
+  EXEC_T: "{{.COMPOSE}} exec -T {{.SVC}}"
 
 tasks:
-  up:
-    desc: Start the backend container (requires infra to be up)
-    cmds:
-      - "{{.COMPOSE}} up -d"
-
-  down:
-    desc: Stop the backend container
-    cmds:
-      - "{{.COMPOSE}} down"
-
-  build:
-    desc: Rebuild the backend image
-    cmds:
-      - "{{.COMPOSE}} build"
-
-  logs:
-    desc: Follow backend logs
-    cmds:
-      - "{{.COMPOSE}} logs -f {{.SVC}}"
-
-  shell:
-    desc: Open a bash shell inside the backend container
-    cmds:
-      - "{{.EXEC}} bash"
-
-  ps:
-    desc: Show compose service status
-    cmds:
-      - "{{.COMPOSE}} ps"
-
   db:init:
-    desc: Create the tvbf and tvbf_test databases and required schemas in the shared Postgres (idempotent)
+    desc: Create the required schemas in the workspace database (idempotent)
+    # The workspace's compose creates the database itself via POSTGRES_DB, so
+    # this only has to make the schemas the first migration assumes exist.
     cmds:
-      - |
-        for db in tvbf tvbf_test; do
-          docker exec tbc_postgresql_db psql -U root -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
-            || docker exec tbc_postgresql_db psql -U root -d postgres -c "CREATE DATABASE $db"
-          docker exec tbc_postgresql_db psql -U root -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS catalog;"
-        done
+      - >
+        {{.COMPOSE}} exec -T db psql -U dev -d app
+        -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS catalog;"
+
+  db:create-test:
+    desc: Create the test database (idempotent)
+    cmds:
+      - >
+        {{.COMPOSE}} exec -T db psql -U dev -d postgres -tAc
+        "SELECT 1 FROM pg_database WHERE datname='app_test'" | grep -q 1
+        || {{.COMPOSE}} exec -T db psql -U dev -d postgres -c "CREATE DATABASE app_test"
 
   migrate:
     desc: Run alembic migrations against the tvbf database
@@ -128,28 +105,28 @@ tasks:
     desc: 'GET /admin/ingest/<id> — status of any run — task ingest:status -- <uuid>'
     cmds:
       - >
-        curl -sk https://api.tvbf.localhost/admin/ingest/{{.CLI_ARGS}}
+        curl -s {{.API_URL}}/admin/ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   ingest:catalog:
     desc: 'POST /admin/catalog-ingest — the full TMDB catalog pass, ~8.7h for 229k series (NEU-1034)'
     cmds:
       - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/catalog-ingest
+        curl -s -X POST {{.API_URL}}/admin/catalog-ingest
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   ingest:catalog:status:
     desc: 'GET /admin/catalog-ingest/<id> — task ingest:catalog:status -- <uuid>'
     cmds:
       - >
-        curl -sk https://api.tvbf.localhost/admin/catalog-ingest/{{.CLI_ARGS}}
+        curl -s {{.API_URL}}/admin/catalog-ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   update:catalog:
     desc: 'POST /admin/catalog-update — one TMDB catalog delta from /tv/changes (NEU-1035)'
     cmds:
       - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/catalog-update
+        curl -s -X POST {{.API_URL}}/admin/catalog-update
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   reconcile:airdates:
@@ -160,7 +137,7 @@ tasks:
     # through `task ingest:status -- <uuid>`.
     desc: Establish per-season airdate offsets against the TV Maze oracle (idempotent; NEU-1145)
     cmds:
-      - docker compose exec tvbf-backend python -m tvbf.jobs.airdate_reconcile
+      - "{{.EXEC}} python -m tvbf.jobs.airdate_reconcile"
 
   snapshot:trending:
     # The *manual* trigger. In prod this runs as a fourth Coolify scheduled task
@@ -170,13 +147,13 @@ tasks:
     # the run through `task ingest:status -- <uuid>`.
     desc: 'Capture one /trending/tv/week snapshot into catalog.trending_show (NEU-1055)'
     cmds:
-      - docker compose exec tvbf-backend python -m tvbf.jobs.trending_snapshot
+      - "{{.EXEC}} python -m tvbf.jobs.trending_snapshot"
 
   enrich:tmdb-ids:
     desc: Attach tmdb_id to the copied catalog rows in three tiers (idempotent; NEU-1043)
     cmds:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full ~90m pass.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.tmdb_enrichment {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.tmdb_enrichment {{.CLI_ARGS}}"
 
   queue:list:
     desc: 'Report every user-touched show awaiting a human verdict, as JSON (NEU-1044)'
@@ -186,23 +163,23 @@ tasks:
     # the TMDB lookups (and the credential) when only the count is wanted.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.human_queue list {{.CLI_ARGS}}
+      - "{{.EXEC_T}} python -m tvbf.jobs.human_queue list {{.CLI_ARGS}}"
 
   queue:confirm:
     desc: 'Record a human verdict: this show IS a TMDB series (task queue:confirm -- <show_id> <tmdb_id>)'
     cmds:
-      - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue confirm {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.human_queue confirm {{.CLI_ARGS}}"
 
   queue:reject:
     desc: 'Record a human verdict: TMDB has no counterpart (task queue:reject -- <show_id>)'
     cmds:
-      - docker compose exec tvbf-backend python -m tvbf.jobs.human_queue reject {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.human_queue reject {{.CLI_ARGS}}"
 
   map:episodes:
     desc: Attach tmdb_id to the copied episode rows of every matched show (idempotent; NEU-1045)
     cmds:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.episode_map map {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.episode_map map {{.CLI_ARGS}}"
 
   map:episodes:report:
     desc: 'Report every unmapped episode carrying watch or rating history, as JSON (NEU-1045)'
@@ -211,13 +188,13 @@ tasks:
     # would both corrupt it.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_map report
+      - "{{.EXEC_T}} python -m tvbf.jobs.episode_map report"
 
   dedupe:seasons:
     desc: Delete the copied season rows the TMDB ingest superseded (idempotent; NEU-1119)
     cmds:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.season_dedupe dedupe {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.season_dedupe dedupe {{.CLI_ARGS}}"
 
   dedupe:seasons:report:
     desc: 'Count the duplicate seasons and what the pass deliberately keeps, as JSON (NEU-1119)'
@@ -226,13 +203,13 @@ tasks:
     # returns would both corrupt it.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.season_dedupe report
+      - "{{.EXEC_T}} python -m tvbf.jobs.season_dedupe report"
 
   repoint:episodes:
     desc: Move user history onto the ingested episode rows, then delete the copies (NEU-1126)
     cmds:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.episode_repoint repoint {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.episode_repoint repoint {{.CLI_ARGS}}"
 
   repoint:episodes:report:
     desc: 'Count what the episode re-point would move and what it keeps, as JSON (NEU-1126)'
@@ -241,7 +218,7 @@ tasks:
     # returns would both corrupt it.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.episode_repoint report
+      - "{{.EXEC_T}} python -m tvbf.jobs.episode_repoint report"
 
   retire:orphans:
     desc: 'Re-point every TV Maze orphan onto its TMDB counterpart, delete the rest (NEU-1146)'
@@ -249,7 +226,7 @@ tasks:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
       # Run `retire:orphans:report` first — this pass deletes user watch records
       # and is not reversible.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.orphan_retire retire {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.orphan_retire retire {{.CLI_ARGS}}"
 
   retire:orphans:report:
     desc: 'What the orphan retirement would move and delete, incl. the loss list, as JSON (NEU-1146)'
@@ -258,13 +235,13 @@ tasks:
     # carriage returns would both corrupt it.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.orphan_retire report
+      - "{{.EXEC_T}} python -m tvbf.jobs.orphan_retire report"
 
   backfill:credits:
     desc: 'TMDB credits for every mirrored catalog show that has none — ~8.7h, resumable (NEU-1127)'
     cmds:
       # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.credits_backfill backfill {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.credits_backfill backfill {{.CLI_ARGS}}"
 
   backfill:credits:report:
     desc: 'What the credit tables hold and how many shows are left to fetch, as JSON (NEU-1127)'
@@ -273,7 +250,7 @@ tasks:
     # carriage returns would both corrupt it.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.credits_backfill report
+      - "{{.EXEC_T}} python -m tvbf.jobs.credits_backfill report"
 
   backfill:recommendations:
     desc: 'TMDB recommendations for every mirrored catalog show that has none, most popular first — ~8.8h, resumable, stoppable (NEU-1052)'
@@ -281,7 +258,7 @@ tasks:
       # `{{.CLI_ARGS}}` carries --limit N, which is both the smoke run and the
       # supported way to ask for a deliberately partial pass — the top 20,000
       # shows take ~45 minutes and cover essentially every page a user loads.
-      - docker compose exec tvbf-backend python -m tvbf.jobs.recommendations_backfill backfill {{.CLI_ARGS}}
+      - "{{.EXEC}} python -m tvbf.jobs.recommendations_backfill backfill {{.CLI_ARGS}}"
 
   backfill:recommendations:report:
     desc: 'What catalog.show_recommendation holds and how many shows are left to fetch, as JSON (NEU-1052)'
@@ -290,7 +267,7 @@ tasks:
     # carriage returns would both corrupt it.
     silent: true
     cmds:
-      - docker compose exec -T tvbf-backend python -m tvbf.jobs.recommendations_backfill report
+      - "{{.EXEC_T}} python -m tvbf.jobs.recommendations_backfill report"
 
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
@@ -302,7 +279,7 @@ tasks:
     silent: true
     cmds:
       - >
-        docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile capture
+        {{.EXEC_T}} python -m tvbf.jobs.reconcile capture
         {{.CLI_ARGS}} > docs/migration/.reconciliation-baseline.tmp
       - mv docs/migration/.reconciliation-baseline.tmp docs/migration/reconciliation-baseline.json
 
@@ -311,7 +288,7 @@ tasks:
     cmds:
       # The baseline rides stdin — `docs/` is not mounted into the container.
       - >
-        docker compose exec -T tvbf-backend python -m tvbf.jobs.reconcile verify --baseline -
+        {{.EXEC_T}} python -m tvbf.jobs.reconcile verify --baseline -
         {{.CLI_ARGS}} < docs/migration/reconciliation-baseline.json
 
   recommend:dry-run:
@@ -324,7 +301,7 @@ tasks:
     silent: true
     cmds:
       - >
-        docker compose exec -T tvbf-backend python -m tvbf.jobs.weekly_recommendations
+        {{.EXEC_T}} python -m tvbf.jobs.weekly_recommendations
         --dry-run --user {{.CLI_ARGS}}
 
   recommend:weekly:
@@ -335,7 +312,7 @@ tasks:
     # copy running finds `pg_try_advisory_lock` held, logs, and exits 0.
     cmds:
       - >
-        docker compose exec -T tvbf-backend python -m tvbf.jobs.weekly_recommendations
+        {{.EXEC_T}} python -m tvbf.jobs.weekly_recommendations
         {{.CLI_ARGS}}
 
   recommend:trigger:
@@ -345,7 +322,7 @@ tasks:
     # the job leaves no run row — so `task logs` is where the run is watched.
     cmds:
       - >
-        curl -sk -X POST https://api.tvbf.localhost/admin/recommendations
+        curl -s -X POST {{.API_URL}}/admin/recommendations
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
         -H 'Content-Type: application/json'
         -d '{{if .CLI_ARGS}}{"user_id": "{{.CLI_ARGS}}"}{{else}}{}{{end}}'
