@@ -1,6 +1,15 @@
 import os
 
-os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+from sqlalchemy.engine import make_url
+
+# Under pytest-xdist each worker gets its own database, `<test db>_<worker>`,
+# created on first use by `test_engine`. Isolation has to be a database apart
+# rather than a schema apart: `app` and `catalog` are names the code binds to.
+_url = make_url(os.environ["TEST_DATABASE_URL"])
+if _worker := os.environ.get("PYTEST_XDIST_WORKER"):
+    _url = _url.set(database=f"{_url.database}_{_worker}")
+TEST_DATABASE_URL = _url.render_as_string(hide_password=False)
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 # Tests use ASGITransport with a synthetic base_url ("https://test"), which
 # means a parent-domain cookie like ".tvbf.localhost" is silently dropped by
 # httpx's cookie jar as not applicable. Force host-only cookies during the
@@ -32,10 +41,22 @@ from tvbf.rate_budget import reset_rate_limiters  # noqa: E402
 Settings.model_config["env_file"] = None
 
 
+async def _ensure_database() -> None:
+    # CREATE DATABASE cannot run inside a transaction, hence autocommit.
+    base = create_async_engine(os.environ["TEST_DATABASE_URL"], isolation_level="AUTOCOMMIT")
+    async with base.connect() as conn:
+        exists = await conn.scalar(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": _url.database}
+        )
+        if not exists:
+            await conn.execute(text(f'CREATE DATABASE "{_url.database}"'))
+    await base.dispose()
+
+
 @pytest.fixture(scope="session")
 async def test_engine():
-    url = os.environ["TEST_DATABASE_URL"]
-    engine = create_async_engine(url, pool_pre_ping=True)
+    await _ensure_database()
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
     async with engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
