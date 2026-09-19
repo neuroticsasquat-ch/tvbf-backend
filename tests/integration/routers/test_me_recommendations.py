@@ -567,7 +567,10 @@ async def test_a_dismissal_does_not_reach_any_other_surface(authed_client, sessi
     dismissed = await _show(session, 812007, "Still Findable", first_air_date=_BASE.date())
     source = await _show(session, 812008, "Source", first_air_date=_BASE.date())
     upcoming = await _show(
-        session, 812009, "Still Anticipated", first_air_date=_BASE.date() + timedelta(days=30)
+        session,
+        812009,
+        "Still Anticipated",
+        first_air_date=datetime.now(tz=UTC).date() + timedelta(days=30),
     )
     session.add_all(
         [
