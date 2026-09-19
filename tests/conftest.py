@@ -61,6 +61,26 @@ async def test_engine():
     await engine.dispose()
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _cheap_password_hashing():
+    """Hash at argon2's minimum cost for the whole run.
+
+    Production parameters cost ~65ms per hash and ~70ms per verify, and every
+    user the fixtures create pays one — spread across the suite that was
+    more than a minute of deriving hashes whose strength no test asserts.
+    `tests/unit/app/test_passwords.py` opts back into the production hasher
+    so the real parameters stay exercised.
+    """
+    from argon2 import PasswordHasher
+
+    from tvbf.app import passwords
+
+    original = passwords._hasher
+    passwords._hasher = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+    yield
+    passwords._hasher = original
+
+
 @pytest.fixture(autouse=True)
 def _stub_outbound_email():
     """Replace the email sender with an in-memory capture so test runs never
@@ -155,6 +175,11 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
     async with maker() as s:
         yield s
         await s.rollback()
+    # Truncate only the tables the test wrote to. A blanket TRUNCATE of all 58
+    # costs ~60ms per test even when every table is empty; the EXISTS probes
+    # cost ~2ms, and the typical test dirties a handful. Sequences are reset
+    # separately because they are non-transactional: a rolled-back insert
+    # leaves its table empty and its sequence advanced.
     async with test_engine.begin() as conn:
         result = await conn.execute(
             text(
@@ -164,4 +189,16 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
         )
         tables = [r[0] for r in result]
         if tables:
-            await conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
+            probes = " UNION ALL ".join(
+                f"SELECT '{t}' WHERE EXISTS (SELECT 1 FROM {t})" for t in tables
+            )
+            dirty = [r[0] for r in await conn.execute(text(probes))]
+            if dirty:
+                await conn.execute(text(f"TRUNCATE {', '.join(dirty)} CASCADE"))
+        await conn.execute(
+            text(
+                "SELECT setval(format('%I.%I', schemaname, sequencename), start_value, false) "
+                "FROM pg_sequences "
+                "WHERE schemaname IN ('app', 'catalog') AND last_value IS NOT NULL"
+            )
+        )
