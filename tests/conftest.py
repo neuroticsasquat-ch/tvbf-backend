@@ -21,8 +21,15 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 
 from tvbf.app import models as _app_models  # noqa: F401, E402 -- register tables
 from tvbf.catalog import models as _catalog_models  # noqa: F401, E402 -- register tables
+from tvbf.config import Settings  # noqa: E402
 from tvbf.db import Base  # noqa: E402
 from tvbf.rate_budget import reset_rate_limiters  # noqa: E402
+
+# The suite reads the process environment only, as CI does. `backend/.env` is
+# bind-mounted into the container, and with `env_file` left on a test that
+# `delenv`s a credential still gets it from the file — which is how the
+# "missing token" ingest test ran a real multi-hour TMDB pass on every local run.
+Settings.model_config["env_file"] = None
 
 
 @pytest.fixture(scope="session")
