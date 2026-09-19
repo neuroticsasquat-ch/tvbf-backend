@@ -1,4 +1,30 @@
+import importlib
+
+import pytest
+from argon2 import PasswordHasher
+
+from tvbf.app import passwords
 from tvbf.app.passwords import hash_password, verify_password
+
+
+@pytest.fixture(autouse=True)
+def _production_hasher():
+    """The suite-wide fixture in `tests/conftest.py` swaps in a minimum-cost
+    hasher; these tests are the ones that must exercise the real parameters."""
+    cheap = passwords._hasher
+    passwords._hasher = PasswordHasher()
+    yield
+    passwords._hasher = cheap
+
+
+def test_module_constructs_the_hasher_at_argon2_defaults():
+    fresh = importlib.reload(passwords)
+    default = PasswordHasher()
+    assert (fresh._hasher.time_cost, fresh._hasher.memory_cost, fresh._hasher.parallelism) == (
+        default.time_cost,
+        default.memory_cost,
+        default.parallelism,
+    )
 
 
 def test_hash_password_returns_argon2_string():
