@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import AfterValidator, BaseModel, BeforeValidator, EmailStr, Field, field_validator
 
 from tvbf.app.handles import RESERVED_HANDLES
+from tvbf.app.models import User
 from tvbf.catalog.schemas import EpisodeOut, ShowSummary
 
 # NEU-1194. An `@` and a later dot inside one whitespace-free run, with a
@@ -200,6 +201,33 @@ class AuthedUserOut(UserOut):
     csrf_token: str
     activity_feed_enabled: bool
     is_admin: bool
+    notify_airs_today: bool
+    notify_premiere_set: bool
+    notify_premiere_moved: bool
+    notify_ended: bool
+    notify_revived: bool
+
+    @classmethod
+    def from_user(cls, user: User, *, csrf_token: str) -> "AuthedUserOut":
+        """The one construction every route returning the signed-in user shares
+        (`/me`, the `/me` PATCHes, signup, login, password change), so a field
+        added here cannot be forgotten at one of them."""
+        return cls(
+            id=user.id,
+            email=user.email,
+            display_name=user.display_name,
+            handle=user.handle,
+            created_at=user.created_at,
+            email_verified_at=user.email_verified_at,
+            csrf_token=csrf_token,
+            activity_feed_enabled=user.activity_feed_enabled,
+            is_admin=user.is_admin,
+            notify_airs_today=user.notify_airs_today,
+            notify_premiere_set=user.notify_premiere_set,
+            notify_premiere_moved=user.notify_premiere_moved,
+            notify_ended=user.notify_ended,
+            notify_revived=user.notify_revived,
+        )
 
 
 class AdminUserOut(BaseModel):
@@ -287,12 +315,23 @@ class MePreferencesUpdate(BaseModel):
     """Body for PATCH /me/preferences. Fields are optional (partial update)."""
 
     activity_feed_enabled: bool | None = None
+    notify_airs_today: bool | None = None
+    notify_premiere_set: bool | None = None
+    notify_premiere_moved: bool | None = None
+    notify_ended: bool | None = None
+    notify_revived: bool | None = None
 
 
 class HideFromActivityUpdate(BaseModel):
     """Body for PATCH /me/shows/{show_id}/hide-from-activity."""
 
     hide_from_activity: bool
+
+
+class ShowMuteUpdate(BaseModel):
+    """Body for PATCH /me/shows/{show_id}/mute (NEU-1490)."""
+
+    muted: bool
 
 
 class VerifyEmailRequest(BaseModel):
@@ -330,6 +369,7 @@ class MyShowEntry(BaseModel):
     added_at: datetime
     my_rating: float | None = None
     hide_from_activity: bool = False
+    muted: bool = False
 
 
 class WatchNextEntry(BaseModel):

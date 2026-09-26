@@ -111,17 +111,7 @@ async def signup(
             status_code=status.HTTP_409_CONFLICT, detail="handle_unavailable"
         ) from err
     set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)
 
 
 @router.post("/login", response_model=AuthedUserOut)
@@ -156,17 +146,7 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials"
         ) from err
     set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)
 
 
 @router.post(
@@ -216,14 +196,4 @@ async def change_password(
             status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid_credentials"
         ) from err
     set_auth_cookies(response, session_id=sess_id, csrf=csrf, settings=settings)
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)

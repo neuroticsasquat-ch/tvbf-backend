@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import NamedTuple
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
@@ -55,7 +56,7 @@ async def tracked_show_ids(db: AsyncSession, *, user_id: UUID, show_ids: list[in
     The membership half of a marked-but-not-filtered list (NEU-1056): a surface
     asks which of the shows it is about to render the viewer already tracks, in
     one query rather than one per card. Empty input answers empty without a
-    round trip, on `get_hide_flags`' shape.
+    round trip, on `get_row_flags`' shape.
     """
     if not show_ids:
         return set()
@@ -86,21 +87,28 @@ async def list_with_added_at(db: AsyncSession, user_id: UUID) -> list[tuple[Show
     return [(show, added_at) for show, added_at in rows]
 
 
-async def get_hide_flags(
+class RowFlags(NamedTuple):
+    hide_from_activity: bool
+    muted: bool
+
+
+async def get_row_flags(
     db: AsyncSession, *, user_id: UUID, show_ids: list[int]
-) -> dict[int, bool]:
-    """Return `{show_id: hide_from_activity}` for the given shows in the user's My Shows."""
+) -> dict[int, RowFlags]:
+    """Return `{show_id: RowFlags}` for the given shows in the user's My Shows."""
     if not show_ids:
         return {}
     rows = (
         await db.execute(
-            select(UserShowWatch.show_id, UserShowWatch.hide_from_activity).where(
+            select(
+                UserShowWatch.show_id, UserShowWatch.hide_from_activity, UserShowWatch.muted
+            ).where(
                 UserShowWatch.user_id == user_id,
                 UserShowWatch.show_id.in_(show_ids),
             )
         )
     ).all()
-    return {r.show_id: r.hide_from_activity for r in rows}
+    return {r.show_id: RowFlags(r.hide_from_activity, r.muted) for r in rows}
 
 
 async def set_hide_from_activity(
@@ -112,5 +120,16 @@ async def set_hide_from_activity(
         sa_update(UserShowWatch)
         .where(UserShowWatch.user_id == user_id, UserShowWatch.show_id == show_id)
         .values(hide_from_activity=value)
+    )
+    return result.rowcount > 0  # type: ignore[attr-defined]
+
+
+async def set_muted(db: AsyncSession, *, user_id: UUID, show_id: int, value: bool) -> bool:
+    """Set `muted` for a row in My Shows (NEU-1490). Returns True if the row existed
+    (and was updated), False if no such membership row exists."""
+    result = await db.execute(
+        sa_update(UserShowWatch)
+        .where(UserShowWatch.user_id == user_id, UserShowWatch.show_id == show_id)
+        .values(muted=value)
     )
     return result.rowcount > 0  # type: ignore[attr-defined]
