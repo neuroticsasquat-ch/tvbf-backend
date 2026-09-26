@@ -1,6 +1,15 @@
 import os
 
-os.environ["DATABASE_URL"] = os.environ["TEST_DATABASE_URL"]
+from sqlalchemy.engine import make_url
+
+# Under pytest-xdist each worker gets its own database, `<test db>_<worker>`,
+# created on first use by `test_engine`. Isolation has to be a database apart
+# rather than a schema apart: `app` and `catalog` are names the code binds to.
+_url = make_url(os.environ["TEST_DATABASE_URL"])
+if _worker := os.environ.get("PYTEST_XDIST_WORKER"):
+    _url = _url.set(database=f"{_url.database}_{_worker}")
+TEST_DATABASE_URL = _url.render_as_string(hide_password=False)
+os.environ["DATABASE_URL"] = TEST_DATABASE_URL
 # Tests use ASGITransport with a synthetic base_url ("https://test"), which
 # means a parent-domain cookie like ".tvbf.localhost" is silently dropped by
 # httpx's cookie jar as not applicable. Force host-only cookies during the
@@ -21,14 +30,33 @@ from sqlalchemy.ext.asyncio import (  # noqa: E402
 
 from tvbf.app import models as _app_models  # noqa: F401, E402 -- register tables
 from tvbf.catalog import models as _catalog_models  # noqa: F401, E402 -- register tables
+from tvbf.config import Settings  # noqa: E402
 from tvbf.db import Base  # noqa: E402
 from tvbf.rate_budget import reset_rate_limiters  # noqa: E402
+
+# The suite reads the process environment only, as CI does. `backend/.env` is
+# bind-mounted into the container, and with `env_file` left on a test that
+# `delenv`s a credential still gets it from the file — which is how the
+# "missing token" ingest test ran a real multi-hour TMDB pass on every local run.
+Settings.model_config["env_file"] = None
+
+
+async def _ensure_database() -> None:
+    # CREATE DATABASE cannot run inside a transaction, hence autocommit.
+    base = create_async_engine(os.environ["TEST_DATABASE_URL"], isolation_level="AUTOCOMMIT")
+    async with base.connect() as conn:
+        exists = await conn.scalar(
+            text("SELECT 1 FROM pg_database WHERE datname = :name"), {"name": _url.database}
+        )
+        if not exists:
+            await conn.execute(text(f'CREATE DATABASE "{_url.database}"'))
+    await base.dispose()
 
 
 @pytest.fixture(scope="session")
 async def test_engine():
-    url = os.environ["TEST_DATABASE_URL"]
-    engine = create_async_engine(url, pool_pre_ping=True)
+    await _ensure_database()
+    engine = create_async_engine(TEST_DATABASE_URL, pool_pre_ping=True)
     async with engine.begin() as conn:
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
@@ -52,6 +80,26 @@ async def test_engine():
         await conn.execute(text("DROP SCHEMA IF EXISTS app CASCADE"))
         await conn.execute(text("DROP SCHEMA IF EXISTS catalog CASCADE"))
     await engine.dispose()
+
+
+@pytest.fixture(scope="session", autouse=True)
+def _cheap_password_hashing():
+    """Hash at argon2's minimum cost for the whole run.
+
+    Production parameters cost ~65ms per hash and ~70ms per verify, and every
+    user the fixtures create pays one — spread across the suite that was
+    more than a minute of deriving hashes whose strength no test asserts.
+    `tests/unit/app/test_passwords.py` opts back into the production hasher
+    so the real parameters stay exercised.
+    """
+    from argon2 import PasswordHasher
+
+    from tvbf.app import passwords
+
+    original = passwords._hasher
+    passwords._hasher = PasswordHasher(time_cost=1, memory_cost=8, parallelism=1)
+    yield
+    passwords._hasher = original
 
 
 @pytest.fixture(autouse=True)
@@ -148,6 +196,11 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
     async with maker() as s:
         yield s
         await s.rollback()
+    # Truncate only the tables the test wrote to. A blanket TRUNCATE of all 58
+    # costs ~60ms per test even when every table is empty; the EXISTS probes
+    # cost ~2ms, and the typical test dirties a handful. Sequences are reset
+    # separately because they are non-transactional: a rolled-back insert
+    # leaves its table empty and its sequence advanced.
     async with test_engine.begin() as conn:
         result = await conn.execute(
             text(
@@ -157,4 +210,16 @@ async def session(test_engine) -> AsyncIterator[AsyncSession]:
         )
         tables = [r[0] for r in result]
         if tables:
-            await conn.execute(text(f"TRUNCATE {', '.join(tables)} RESTART IDENTITY CASCADE"))
+            probes = " UNION ALL ".join(
+                f"SELECT '{t}' WHERE EXISTS (SELECT 1 FROM {t})" for t in tables
+            )
+            dirty = [r[0] for r in await conn.execute(text(probes))]
+            if dirty:
+                await conn.execute(text(f"TRUNCATE {', '.join(dirty)} CASCADE"))
+        await conn.execute(
+            text(
+                "SELECT setval(format('%I.%I', schemaname, sequencename), start_value, false) "
+                "FROM pg_sequences "
+                "WHERE schemaname IN ('app', 'catalog') AND last_value IS NOT NULL"
+            )
+        )
