@@ -34,6 +34,17 @@ async def create_run(session: AsyncSession, kind: str) -> UUID:
     return run.id
 
 
+async def get_run_kind(session: AsyncSession, run_id: UUID) -> str | None:
+    """The `kind` of one run, or `None` when no such run exists.
+
+    For code handed only a `run_id` that must behave differently per kind —
+    `tmdb/ingest.py:mirror_series` detects catalog changes on `catalog_update`
+    runs alone (NEU-1481), and reading the kind off the row is what keeps that
+    from resting on every caller remembering to pass a flag.
+    """
+    return await session.scalar(select(m.IngestRun.kind).where(m.IngestRun.id == run_id))
+
+
 async def record_progress(
     session: AsyncSession, run_id: UUID, processed_delta: int = 0, failed_delta: int = 0
 ) -> None:

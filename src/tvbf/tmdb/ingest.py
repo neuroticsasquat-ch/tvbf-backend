@@ -86,6 +86,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -93,8 +94,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
-from tvbf.catalog.runs import finalize_run, record_progress, warn_if_all_gone
+from tvbf.catalog.runs import finalize_run, get_run_kind, record_progress, warn_if_all_gone
 from tvbf.tmdb.api_payloads import TMDBSeasonDetail, TMDBSeries
+from tvbf.tmdb.change_events import detect_transitions, record_transitions, snapshot_tracked_show
 from tvbf.tmdb.client import (
     APPEND_TO_RESPONSE_LIMIT,
     DEFAULT_APPEND,
@@ -251,7 +253,16 @@ async def mirror_series(
     Finalizes the run itself **only** on the abort path, and reports that with
     `aborted`. The success finalization belongs to the caller, because only the
     caller knows whether a cursor goes with it.
+
+    On a `catalog_update` run a tracked show's transitions — premiere set or
+    moved, ended, revived — are recorded as `catalog.show_event` rows in the
+    show's own transaction (NEU-1481, `tmdb/change_events.py`). The kind is read
+    off the run row once, so the full pass records nothing without having to say
+    so.
     """
+    async with _owned_session(session_factory) as s:
+        detect_changes = await get_run_kind(s, run_id) == "catalog_update"
+
     processed = 0
     failed = 0
     gone = 0
@@ -262,6 +273,12 @@ async def mirror_series(
         try:
             series, overflow = await fetch_series_with_seasons(client, series_id)
             async with _owned_session(session_factory) as s:
+                # Read before the upsert overwrites what it compares against.
+                before = (
+                    await snapshot_tracked_show(s, tmdb_id=series.tmdb_id)
+                    if detect_changes
+                    else None
+                )
                 show_id = await upsert_series_payload(
                     s,
                     series,
@@ -271,6 +288,15 @@ async def mirror_series(
                     # to name the show's whole season set (ADR-0004).
                     prune_seasons=True,
                 )
+                if before is not None:
+                    await record_transitions(
+                        s,
+                        show_id=show_id,
+                        run_id=run_id,
+                        transitions=detect_transitions(
+                            before, series, today=datetime.now(UTC).date()
+                        ),
+                    )
                 await mark_series_synced(s, show_id=show_id)
                 await record_progress(s, run_id, processed_delta=1)
                 await s.commit()
