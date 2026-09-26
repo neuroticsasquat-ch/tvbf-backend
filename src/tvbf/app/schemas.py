@@ -622,3 +622,44 @@ class FeedItem(BaseModel):
 class FeedPage(BaseModel):
     items: list[FeedItem]
     next_cursor: str | None
+
+
+# ---------------------------------------------------------------------------
+# Push subscriptions (NEU-1485, project spec §5.4)
+# ---------------------------------------------------------------------------
+
+
+def _require_https(v: str) -> str:
+    """The delivery job POSTs to this URL, so it is the one field here that
+    decides where server traffic goes. Every push service is HTTPS; anything
+    else is not a subscription a browser produced."""
+    if not v.startswith("https://"):
+        raise ValueError("endpoint must be an https URL")
+    return v
+
+
+class PushSubscriptionKeys(BaseModel):
+    p256dh: str = Field(min_length=1, max_length=256)
+    auth: str = Field(min_length=1, max_length=256)
+
+
+class PushSubscriptionIn(BaseModel):
+    """`PushSubscription.toJSON()` as the browser produces it. `expirationTime`
+    rides along and is ignored — no push service in use sets it."""
+
+    endpoint: Annotated[str, Field(max_length=2048), AfterValidator(_require_https)]
+    keys: PushSubscriptionKeys
+
+
+class PushSubscriptionCreated(BaseModel):
+    id: UUID
+
+
+class PushSubscriptionOut(BaseModel):
+    """One device in the Settings list. Never the endpoint or the keys: the
+    endpoint is a capability URL, and the SPA has no use for either."""
+
+    id: UUID
+    user_agent: str | None
+    created_at: datetime
+    last_success_at: datetime | None

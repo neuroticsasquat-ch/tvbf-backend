@@ -198,6 +198,9 @@ header, per-user fields and status codes.
   lock instead. The TV Maze triggers were removed in NEU-1050.
 - **Push** — unauthenticated: `GET /push/vapid-public-key` (NEU-1484; `Cache-Control: public,
   max-age=86400`, 503 `vapid_not_configured` unless all three VAPID values are set).
+  Per-user, `get_current_user` + `require_csrf` on the mutating ones: `GET/POST/DELETE
+  /me/push/subscriptions`, `DELETE /me/push/subscriptions/{id}` (NEU-1485; `POST` upserts on the
+  endpoint onto the caller and is 503 without VAPID).
 - FastAPI auto docs at `/docs` and `/redoc`.
 
 ### Database topology
@@ -227,7 +230,9 @@ migration-era history. Read it before adding a table or writing a migration.
   `user_episode_rating`, `connection`, `connection_request_log`, `activity_event`, `watch_archive`,
   `user_recommendation_set`, `user_recommendation`, `user_recommendation_dismissal`, `user_report`,
   `handle_release` (NEU-1163 — a released handle is never claimable by anyone but its original owner,
-  and it is the handle-change throttle's ledger).
+  and it is the handle-change throttle's ledger), `push_subscription` / `push_delivery` (NEU-1485 — one row per browser
+  subscription, unique on `endpoint`; the delivery log, whose `subscription_id` is SET NULL so it
+  outlives a retired subscription).
   One Alembic version table
   (`app.alembic_version`); migrations live in `migrations/versions/`.
 - `import_ne` — staging tables for the one-off Next Episode data import (`series`, `episode_mark`,
@@ -285,7 +290,7 @@ src/tvbf/
     reports.py         # POST /reports — commit-then-notify, so it is always 204 (NEU-1162)
     connections.py        # /connection-requests, /me/connections, /me/blocks — the create route owns NEU-1157's check order
     friend_engagement.py  # /shows/{id}/friends, /episodes/{id}/friends/watched
-    push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484)
+    push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484); /me/push/subscriptions (NEU-1485)
   jobs/
     scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (the weekly pass takes `ping` and the rules only — it has no run row)
     catalog_update.py  # `python -m tvbf.jobs.catalog_update` — the NEU-1035 TMDB catalog delta; exit code IS the result
@@ -359,7 +364,7 @@ src/tvbf/
     user_history.py    # the `app` write sites a catalog-grain retirement moves, shared by episode_repoint and orphan_retire (NEU-1146)
   app/
     handles.py         # RESERVED_HANDLES — the vendored blocklist plus this product's names and an SPA-route snapshot (NEU-1163)
-    models.py          # SQLAlchemy tables in the app schema (user — carrying `handle` since NEU-1163 and `disabled_at` since NEU-1162 — session, login_attempt, auth_attempt, invite, user_show_watch, user_episode_watch, connection, connection_request_log, user_report, handle_release)
+    models.py          # SQLAlchemy tables in the app schema (user — carrying `handle` since NEU-1163 and `disabled_at` since NEU-1162 — session, login_attempt, auth_attempt, invite, user_show_watch, user_episode_watch, connection, connection_request_log, user_report, handle_release, push_subscription, push_delivery)
     schemas.py         # request/response models + sort literals (MyShowsSort, WatchNextSort, UpcomingSort)
     errors.py          # NotFound, AuthError, etc. — mapped to HTTP in routers
     passwords.py       # argon2 hash/verify
