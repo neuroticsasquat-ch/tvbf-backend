@@ -200,7 +200,9 @@ header, per-user fields and status codes.
   max-age=86400`, 503 `vapid_not_configured` unless all three VAPID values are set).
   Per-user, `get_current_user` + `require_csrf` on the mutating ones: `GET/POST/DELETE
   /me/push/subscriptions`, `DELETE /me/push/subscriptions/{id}` (NEU-1485; `POST` upserts on the
-  endpoint onto the caller and is 503 without VAPID).
+  endpoint onto the caller and is 503 without VAPID), `POST /me/push/test` (NEU-1486; sends in the
+  request, `202 {status, status_code}`, 410 and deletes the row when the push service says gone,
+  429 at 5 per hour per user).
 - FastAPI auto docs at `/docs` and `/redoc`.
 
 ### Database topology
@@ -290,7 +292,7 @@ src/tvbf/
     reports.py         # POST /reports — commit-then-notify, so it is always 204 (NEU-1162)
     connections.py        # /connection-requests, /me/connections, /me/blocks — the create route owns NEU-1157's check order
     friend_engagement.py  # /shows/{id}/friends, /episodes/{id}/friends/watched
-    push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484); /me/push/subscriptions (NEU-1485)
+    push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484); /me/push/subscriptions (NEU-1485); POST /me/push/test (NEU-1486)
   jobs/
     scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (the weekly pass takes `ping` and the rules only — it has no run row)
     catalog_update.py  # `python -m tvbf.jobs.catalog_update` — the NEU-1035 TMDB catalog delta; exit code IS the result
@@ -370,7 +372,7 @@ src/tvbf/
     passwords.py       # argon2 hash/verify
     tokens.py          # CSRF + session token helpers
     repos/             # one file per table; thin async query helpers (`recommendation_repo.py` spans the two recommendation *set* tables, because "the current set" is one definition, NEU-1108; `recommendation_dismissal_repo.py` is its own file for the converse reason — a dismissal is part of no set, NEU-1178; `auth_attempt_repo.py` owns the `kind` vocabulary its check constraint mirrors, NEU-1160; `user_report_repo.py` is both the report ledger and the throttle's counter, because every report is persisted anyway, NEU-1162; it also owns the admin queue's two-sided join, NEU-1197; `connection_request_log_repo.py` owns the five-outcome vocabulary its check constraint mirrors, and its `resolve` no-ops on a missing row by construction, NEU-1157)
-    services/          # account_service, my_shows_service, episode_service, invite_service, connection_service, watch_archive_service, reconciliation_service, auth_throttle (the IP-keyed signup/login gate, NEU-1160), connection_throttle (the per-requester outreach budget: `current_ceiling` selects between two `Throttle`s, `enforce` counts creations, `enforce_decline_cooldown` closes the targeted case, NEU-1157), report_service (persist, commit, *then* notify — the commit boundary is the contract, NEU-1162), handle_service (the one claimability rule both write sites need, the change-and-release transaction, and the change budget, NEU-1163)
+    services/          # account_service, my_shows_service, episode_service, invite_service, connection_service, watch_archive_service, reconciliation_service, auth_throttle (the IP-keyed signup/login gate, NEU-1160), connection_throttle (the per-requester outreach budget: `current_ceiling` selects between two `Throttle`s, `enforce` counts creations, `enforce_decline_cooldown` closes the targeted case, NEU-1157), report_service (persist, commit, *then* notify — the commit boundary is the contract, NEU-1162), push_test_service (the synchronous test send: throttle on `push_delivery`, commit `pending`, send, record, NEU-1486), handle_service (the one claimability rule both write sites need, the change-and-release transaction, and the change budget, NEU-1163)
 
 tests/
   unit/                # pure (no-DB) tests: config, sorting, deps, schema helpers, password/token, sort comparators

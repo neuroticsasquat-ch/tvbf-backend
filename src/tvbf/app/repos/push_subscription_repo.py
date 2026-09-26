@@ -3,7 +3,7 @@
 from uuid import UUID
 
 from sqlalchemy import delete as sa_delete
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -66,6 +66,36 @@ async def list_for_user(db: AsyncSession, user_id: UUID) -> list[PushSubscriptio
         .order_by(PushSubscription.created_at.desc(), PushSubscription.id)
     )
     return list(result.scalars().all())
+
+
+async def get_for_user(
+    db: AsyncSession, *, user_id: UUID, subscription_id: UUID
+) -> PushSubscription | None:
+    """The subscription iff it is `user_id`'s — `None` for another user's id
+    and for an unknown one alike."""
+    result = await db.execute(
+        select(PushSubscription).where(
+            PushSubscription.id == subscription_id, PushSubscription.user_id == user_id
+        )
+    )
+    return result.scalar_one_or_none()
+
+
+async def mark_success(db: AsyncSession, subscription_id: UUID) -> None:
+    """Record a 2xx: stamp `last_success_at` and reset the consecutive-failure
+    count (§5.2 step 4). The caller commits."""
+    await db.execute(
+        update(PushSubscription)
+        .where(PushSubscription.id == subscription_id)
+        .values(last_success_at=func.now(), failure_count=0)
+    )
+
+
+async def delete(db: AsyncSession, subscription_id: UUID) -> None:
+    """Retire a subscription the push service answered 404/410 for. Its
+    delivery rows survive with `subscription_id` nulled (§4.3). The caller
+    commits."""
+    await db.execute(sa_delete(PushSubscription).where(PushSubscription.id == subscription_id))
 
 
 async def delete_for_user(db: AsyncSession, *, user_id: UUID, subscription_id: UUID) -> int:

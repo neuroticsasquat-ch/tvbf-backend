@@ -271,6 +271,16 @@ class Settings(BaseSettings):
         default=1440, alias="REPORT_THROTTLE_WINDOW_MINUTES"
     )
 
+    # The per-user budget on `POST /me/push/test` (NEU-1486, project spec §5.4).
+    # Each one is a real push to a real device, sent in the request, so this is
+    # a ceiling on outbound calls to a push service rather than on spam: five an
+    # hour is far above a user checking that notifications work, and caps a
+    # scripted loop at a handful of pushes per device per hour.
+    push_test_throttle_max: int = Field(default=5, alias="PUSH_TEST_THROTTLE_MAX")
+    push_test_throttle_window_minutes: int = Field(
+        default=60, alias="PUSH_TEST_THROTTLE_WINDOW_MINUTES"
+    )
+
     # The per-account budget on `PATCH /me/handle` (NEU-1163 §6.2). The ticket's
     # own sentence — "a handle that changes hourly defeats the purpose" — is
     # about identity stability, not about load, which is what picks a window of
@@ -412,6 +422,13 @@ class Settings(BaseSettings):
         return Throttle(
             max_attempts=self.report_throttle_max,
             window_minutes=self.report_throttle_window_minutes,
+        )
+
+    @property
+    def push_test_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.push_test_throttle_max,
+            window_minutes=self.push_test_throttle_window_minutes,
         )
 
     @property

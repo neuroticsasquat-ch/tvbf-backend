@@ -1,8 +1,9 @@
 """Push endpoints (project spec §5.4).
 
 `GET /push/vapid-public-key` is unauthenticated (NEU-1484). The per-user
-subscription routes under `/me/push/*` (NEU-1485) carry the cookie session, and
-the mutating ones CSRF, exactly as the rest of `/me` does.
+subscription routes under `/me/push/*` (NEU-1485) and the test send (NEU-1486)
+carry the cookie session, and the mutating ones CSRF, exactly as the rest of
+`/me` does.
 """
 
 from typing import Annotated
@@ -12,9 +13,17 @@ from fastapi import APIRouter, Depends, HTTPException, Path, Request, Response, 
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.app.errors import NotFound, TooManyAttempts
 from tvbf.app.models import User
 from tvbf.app.repos import push_subscription_repo
-from tvbf.app.schemas import PushSubscriptionCreated, PushSubscriptionIn, PushSubscriptionOut
+from tvbf.app.schemas import (
+    PushSubscriptionCreated,
+    PushSubscriptionIn,
+    PushSubscriptionOut,
+    PushTestIn,
+    PushTestOut,
+)
+from tvbf.app.services import push_test_service
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_session, require_csrf
 
@@ -137,3 +146,47 @@ async def delete_all_my_push_subscriptions(
     await push_subscription_repo.delete_all_for_user(db, user.id)
     await db.commit()
     return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.post(
+    "/me/push/test",
+    response_model=PushTestOut,
+    status_code=status.HTTP_202_ACCEPTED,
+    dependencies=[Depends(require_csrf)],
+)
+async def send_my_test_push(
+    payload: PushTestIn,
+    response: Response,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+    settings: Settings = Depends(get_settings),
+) -> PushTestOut:
+    """Push the §5.3 `test` notification to one of the caller's devices, now.
+
+    202 with the outcome in the body — `sent` or `failed`, and the push
+    service's status — rather than a bare 202 that would hide a failure from
+    the one person watching for it. **410 when the push service says the
+    subscription is gone**: the row is deleted and the client should drop its
+    local subscription too. 404 `not_found` for an id that is not the caller's;
+    429 `rate_limited` past `PUSH_TEST_THROTTLE_MAX` per window; 503
+    `vapid_not_configured` first, since nothing can be sent without it.
+    """
+    if not settings.vapid_configured:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="vapid_not_configured"
+        )
+    try:
+        outcome = await push_test_service.send_test_push(
+            db, user_id=user.id, subscription_id=payload.subscription_id, settings=settings
+        )
+    except TooManyAttempts as err:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="rate_limited",
+            headers={"Retry-After": str(err.retry_after_seconds)},
+        ) from err
+    except NotFound as err:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_found") from err
+    if outcome.status == "gone":
+        response.status_code = status.HTTP_410_GONE
+    return PushTestOut(status=outcome.status, status_code=outcome.status_code)
