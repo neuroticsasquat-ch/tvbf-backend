@@ -663,3 +663,16 @@ class PushSubscriptionOut(BaseModel):
     user_agent: str | None
     created_at: datetime
     last_success_at: datetime | None
+
+
+class PushTestIn(BaseModel):
+    subscription_id: UUID
+
+
+class PushTestOut(BaseModel):
+    """The outcome of `POST /me/push/test`, reported rather than hidden behind
+    the 202 (NEU-1486). `status_code` is the push service's answer, or `None`
+    when it never answered (a transport error)."""
+
+    status: Literal["sent", "failed", "gone"]
+    status_code: int | None

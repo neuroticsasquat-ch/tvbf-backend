@@ -170,6 +170,7 @@ All config flows through environment variables (read by `src/tvbf/config.py`). F
 | `HEALTHCHECK_PUSH_URL` | unset | healthchecks.io deadman for the scheduled push delivery |
 | `PUSH_DAILY_CAP` | `5` | notifications per user per delivery run before the rest collapse into one summary |
 | `PUSH_EVENT_WINDOW_HOURS` | `48` | how long a detected show change stays deliverable |
+| `PUSH_TEST_THROTTLE_MAX` / `PUSH_TEST_THROTTLE_WINDOW_MINUTES` | `5` / `60` | per-user budget on `POST /me/push/test` |
 | `INGEST_CONSECUTIVE_FAILURE_THRESHOLD` | `10` | abort a run after N consecutive per-show failures |
 | `INGEST_STALE_RUN_MINUTES` | `15` | startup cleanup threshold |
 | `LOG_LEVEL` | `INFO` | Python root logger level |
