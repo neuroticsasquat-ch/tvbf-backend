@@ -89,6 +89,20 @@ class User(Base):
         Boolean, nullable=False, server_default=text("TRUE")
     )
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
+    # Per-kind push opt-outs (NEU-1490, Push Notifications spec §4.4), default on.
+    notify_airs_today: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    notify_premiere_set: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    notify_premiere_moved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    notify_ended: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("TRUE"))
+    notify_revived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
     # Moderation (NEU-1162). A timestamp rather than a boolean because the
     # question asked of a moderation action later is *when*, and §1.1 made this
     # column the only record of the act — there is no `disabled_by` and no
@@ -148,6 +162,9 @@ class UserShowWatch(Base):
     hide_from_activity: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("FALSE")
     )
+    # Silences every push kind for this show (NEU-1490). Not a never-recommend
+    # source: `recommendations/exclusion.py` deliberately does not read it.
+    muted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
 
 
 class UserEpisodeWatch(Base):
