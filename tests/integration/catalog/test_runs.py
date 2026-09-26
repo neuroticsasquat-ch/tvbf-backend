@@ -1,5 +1,5 @@
 from datetime import UTC, datetime, timedelta
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import select
 
@@ -9,6 +9,7 @@ from tvbf.catalog.runs import (
     finalize_run,
     find_live_run,
     get_last_successful_cursor,
+    get_run_kind,
     mark_stale_runs_cancelled,
     record_progress,
 )
@@ -22,6 +23,14 @@ async def test_create_run_inserts_with_running_status(session):
     assert row.kind == "initial"
     assert row.status == "running"
     assert row.shows_processed == 0
+
+
+async def test_get_run_kind_reads_the_kind_off_the_row(session):
+    run_id = await create_run(session, kind="catalog_update")
+    await session.commit()
+
+    assert await get_run_kind(session, run_id) == "catalog_update"
+    assert await get_run_kind(session, uuid4()) is None
 
 
 async def test_record_progress_increments_counters_and_stamps(session):
