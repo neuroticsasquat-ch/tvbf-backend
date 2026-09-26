@@ -1049,8 +1049,8 @@ class ShowEvent(Base):
     upsert overwrites the row it compares against, so the only place "what it
     was" survives is a row written at the moment of the overwrite. The delta
     writes here in the show's own transaction; the push delivery job reads it.
-    Nothing updates a row, and the delivery job's 90-day purge is the only
-    delete.
+    Nothing updates a row. Rows leave by the delivery job's 90-day purge, or
+    with their show or season through the CASCADEs below.
 
     **Tracked shows only, and the delta only** (ADR-0014 §2). The full pass has
     nothing to compare against and records nothing, so an empty history for a
