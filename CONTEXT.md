@@ -200,3 +200,41 @@ A resolution failure is an outcome, not a defect: an unresolved title is either 
 
 That contrast is why this is **not** called matching: in this codebase matching means NEU-1043's `match_method`, a different problem with the opposite cost asymmetry.
 _Avoid_: matching, lookup
+
+### Notifications
+
+**Catalog event**:
+A recorded transition on a tracked show, observed by the daily delta comparing the row it is about to overwrite with the payload it just fetched: a season premiere date set, a premiere date moved, a show's status flipping to ended or cancelled, or a show **revived** — its status leaving ended or cancelled again. Append-only, kept in a `catalog` sidecar, and recorded **only for shows someone tracks** (ADR-0014). A new episode row appearing is deliberately not one.
+_Avoid_: change, diff, notification (an event is the fact; a notification is what may be sent about it)
+
+**Airs-today set**:
+The episodes of a user's My Shows whose corrected air date is today, excluding specials and episodes already watched. Derived from the schedule each morning, not from any catalog event — so a whole season appearing at once, or a catch-up run, never produces one alert per row.
+_Avoid_: new-episode event, release
+
+**Notification**:
+One push about one show for one user, of exactly one kind — *airs today*, *premiere set*, *premiere moved*, *ended* or *revived*. Never a digest across shows: the per-user daily cap folds overflow into a single summary rather than merging kinds.
+_Avoid_: alert, message, ping
+
+**Notification key**:
+What makes a notification the same notification on a re-run: its kind plus the show and the episode, season or event it is about. The delivery log is unique on the key and the subscription, which is what lets a crashed or repeated delivery run be safe.
+_Avoid_: dedupe id, tag (the Web Push tag *carries* the key; it is not the key)
+
+**Push subscription**:
+One browser install's address for receiving pushes — endpoint plus its two keys — belonging to one user. A user has many; a device may rotate its endpoint without warning. Retired the moment the push service answers gone, or after repeated failures; never tied to a session.
+_Avoid_: device, registration, token
+
+**Delivery**:
+One attempt to send one notification to one subscription, recorded before the send and stamped with the outcome. The unit of idempotency, the audit trail, and the evidence a stale subscription is retired on.
+_Avoid_: send, message
+
+**Freshness window**:
+The age past which a catalog event is skipped rather than delivered, and the check that the fact it records is still current. The guard that stops a multi-week catch-up delta from replaying weeks of transitions as tonight's news.
+_Avoid_: backfill guard, throttle
+
+**Mute**:
+A per-show, per-user switch on a My Shows entry: the show stays tracked, appears in Watch Next and Upcoming, and never produces a notification of any kind. Distinct from the per-kind preferences, which apply across every show.
+_Avoid_: unfollow, snooze, silence
+
+**Revived**:
+A tracked show whose status leaves ended or cancelled — a renewal, an un-cancellation, a network pickup. A catalog event of its own, and **not** a resurrection: resurrection is a tombstoned row reappearing upstream, which says nothing about whether the show is making more episodes.
+_Avoid_: resurrected, renewed (TMDB's vocabulary has no such status; the event is the transition), un-cancelled
