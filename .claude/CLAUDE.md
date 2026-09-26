@@ -130,6 +130,10 @@ Recommendations operations (no auth — CLI only, run inside the container):
 - `task recommend:trigger` (`-- <user-uuid>` for one account) — `POST /admin/recommendations`, the HTTP trigger for the same pass (NEU-1110). Bearer `ADMIN_TOKEN`, optional `{"user_id": "..."}` body, `202 + run_id`, background task. It exists so a prompt change can be tried against one account without waiting for Sunday. **The `run_id` is a correlation id, not something to poll** — the job writes no run row, so `task ingest:status` does not read it and `task logs` is where the run is watched. It takes the same `ADVISORY_LOCK_KEY` the schedule takes, through `run_pass_if_free`, so a manual trigger during the cron logs and does nothing rather than spending a second call per user; that shared seam is why neither trigger calls `run_pass` directly. Two refusals answered synchronously, because a 202 is the only other thing it can say: **503** when `RECOMMENDATION_MODEL` / `DEEPINFRA_API_KEY` are unset, **404** for a `user_id` no account has. Unlike `--dry-run`, an HTTP surface is fine here — the endpoint returns no watch history.
 - `task recommend:weekly` (`-- --user <uuid>` for one account) — `python -m tvbf.jobs.weekly_recommendations`, the weekly pass (NEU-1109). The *manual* trigger; in prod it is a **Coolify scheduled task running Sundays**, on `jobs/scheduled.py`'s NEU-1008 contract — the process is the run, the exit code is the result, `configure_logging()` in `main()`. It is the **third Coolify scheduled task**, alongside the nightly catalog delta and the airdate reconciliation, and like both it carries **its own deadman** — `HEALTHCHECK_RECOMMENDATIONS_URL` (NEU-1111) — never a check shared with them, for the reason stated there. **Schedule it Sundays, after that night's catalog delta**; nothing in the repo can enforce that, and the cost of getting it wrong is only that a show mirrored last night is not yet recommendable. The pings hang off `run()` rather than `jobs/scheduled.py` (that shape is built around a run row this job does not have) but keep its three rules: `/start` first, `/fail` on every exit-1 path, and **nothing at all when the advisory lock is held** — the pass that does hold it pings nothing itself, so a success ping would report an outcome this process never learns; silence lets the grace period expire and someone looks. **`-- --user <uuid>` pings nothing either**: a run narrowed to one account is a hand-run, and feeding the check with it would silence the deadman for the week on the strength of one user having been covered. Per user: compile the payload, compare its hash to the current set's, check the floor, call the model, resolve titles, filter exclusions, write the set and its rows. **There is no `ingest_run` row and no run table** — `app.user_recommendation_set` already *is* the per-user run record (project spec §10), so `task ingest:status` does not read this job. `pg_try_advisory_lock(ADVISORY_LOCK_KEY)` replaces `_reject_if_in_flight`, which the missing run table also removes; a second process finding it held **logs and exits 0**, because a concurrent pass is not an error. **Exit 1 if any user failed, 0 otherwise** — at 3-5 accounts one failure is 20-33% of the user base and the client has already walked its backoff curve. `insufficient_history` and `no_matches` are the pass working, not failures. `CONSECUTIVE_FAILURE_LIMIT = 3` abandons the rest. Sequential per user; the fix at 100-200 users is a bounded semaphore, not a rewrite.
 
+Push operations (no auth — CLI only, run inside the container):
+
+- `task vapid:generate` (`-- --subject mailto:you@example.com`) — `python -m tvbf.push.keys` (NEU-1484), prints `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY` and `VAPID_SUBJECT` as env lines on stdout and nothing else there (`silent:` + `-T`, so `>> .env` is safe). Base64url **raw** keys, the format `pywebpush` consumes and the browser's `applicationServerKey` takes. Without `--subject` the subject is a placeholder and a note says so on stderr. **Generating a new set is a key rotation**: every existing subscription was made against the old public key and the push service rejects it, which the delivery job's 404/410 rule retires over the following days (project spec §7). The three values are all-or-nothing — `Settings.vapid_configured` is what the endpoints and the job consult to refuse.
+
 ## Architecture at the big-picture level
 
 ### Runtime shape
@@ -192,6 +196,8 @@ header, per-user fields and status codes.
   in flight** (`_reject_if_in_flight` → `runs.find_live_run`, scoped per kind, liveness qualified by
   `INGEST_STALE_RUN_MINUTES`) — `/admin/recommendations` is the one exception, guarded by an advisory
   lock instead. The TV Maze triggers were removed in NEU-1050.
+- **Push** — unauthenticated: `GET /push/vapid-public-key` (NEU-1484; `Cache-Control: public,
+  max-age=86400`, 503 `vapid_not_configured` unless all three VAPID values are set).
 - FastAPI auto docs at `/docs` and `/redoc`.
 
 ### Database topology
@@ -279,6 +285,7 @@ src/tvbf/
     reports.py         # POST /reports — commit-then-notify, so it is always 204 (NEU-1162)
     connections.py        # /connection-requests, /me/connections, /me/blocks — the create route owns NEU-1157's check order
     friend_engagement.py  # /shows/{id}/friends, /episodes/{id}/friends/watched
+    push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484)
   jobs/
     scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (the weekly pass takes `ping` and the rules only — it has no run row)
     catalog_update.py  # `python -m tvbf.jobs.catalog_update` — the NEU-1035 TMDB catalog delta; exit code IS the result
@@ -296,6 +303,9 @@ src/tvbf/
     trending_snapshot.py # `python -m tvbf.jobs.trending_snapshot` — the NEU-1055 daily trending snapshot; exit code IS the result
     airdate_verify.py  # `python -m tvbf.jobs.airdate_verify capture|verify|shows` — the NEU-1145 proof; exit 1 only on a regression
     weekly_recommendations.py # `python -m tvbf.jobs.weekly_recommendations` — the NEU-1109 weekly pass (advisory lock, hash gate, failure semantics) + NEU-1105's `--dry-run`; exit code IS the result
+  push/
+    keys.py            # `python -m tvbf.push.keys` — a fresh VAPID set as env lines (NEU-1484)
+    sender.py          # `send()` -> Sent | Gone | Failed; the ONE module that imports `pywebpush`, and the seam tests mock (NEU-1484)
   catalog/
     models.py          # SQLAlchemy tables in the catalog schema — the full TMDB surface (NEU-1032); also `ingest_run`, which every run of every kind lives in (moved here from `tvmaze`, NEU-1051)
     runs.py            # ingest_run CRUD helpers — read by the TMDB pass, the delta and the admin router

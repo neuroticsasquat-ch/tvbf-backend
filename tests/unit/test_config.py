@@ -175,3 +175,58 @@ def test_linear_report_label_id_defaults_to_none(monkeypatch):
     monkeypatch.delenv("LINEAR_REPORT_LABEL_ID", raising=False)
     s = Settings()  # type: ignore[call-arg]
     assert s.linear_report_label_id is None
+
+
+_PUSH_ENV = (
+    "VAPID_PRIVATE_KEY",
+    "VAPID_PUBLIC_KEY",
+    "VAPID_SUBJECT",
+    "HEALTHCHECK_PUSH_URL",
+    "PUSH_DAILY_CAP",
+    "PUSH_EVENT_WINDOW_HOURS",
+)
+
+
+def test_push_settings_defaults(monkeypatch):
+    """Nothing defaults the VAPID keys — the job and endpoints refuse instead."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    for key in _PUSH_ENV:
+        monkeypatch.delenv(key, raising=False)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.vapid_private_key is None
+    assert s.vapid_public_key is None
+    assert s.vapid_subject is None
+    assert s.healthcheck_push_url is None
+    assert s.push_daily_cap == 5
+    assert s.push_event_window_hours == 48
+    assert s.vapid_configured is False
+
+
+def test_push_settings_from_env(monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", "priv")
+    monkeypatch.setenv("VAPID_PUBLIC_KEY", "pub")
+    monkeypatch.setenv("VAPID_SUBJECT", "mailto:ops@example.com")
+    monkeypatch.setenv("HEALTHCHECK_PUSH_URL", "https://hc-ping.com/x")
+    monkeypatch.setenv("PUSH_DAILY_CAP", "3")
+    monkeypatch.setenv("PUSH_EVENT_WINDOW_HOURS", "24")
+    s = Settings()  # type: ignore[call-arg]
+    assert (s.vapid_private_key, s.vapid_public_key) == ("priv", "pub")
+    assert s.vapid_subject == "mailto:ops@example.com"
+    assert s.healthcheck_push_url == "https://hc-ping.com/x"
+    assert (s.push_daily_cap, s.push_event_window_hours) == (3, 24)
+    assert s.vapid_configured is True
+
+
+@pytest.mark.parametrize("missing", ["VAPID_PRIVATE_KEY", "VAPID_PUBLIC_KEY", "VAPID_SUBJECT"])
+def test_vapid_configured_needs_all_three(monkeypatch, missing):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv("VAPID_PRIVATE_KEY", "priv")
+    monkeypatch.setenv("VAPID_PUBLIC_KEY", "pub")
+    monkeypatch.setenv("VAPID_SUBJECT", "mailto:ops@example.com")
+    monkeypatch.delenv(missing)
+    s = Settings()  # type: ignore[call-arg]
+    assert s.vapid_configured is False

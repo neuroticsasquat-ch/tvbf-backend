@@ -166,6 +166,10 @@ All config flows through environment variables (read by `src/tvbf/config.py`). F
 | `TMDB_READ_ACCESS_TOKEN` | unset | TMDB API Read Access Token (the long JWT), sent as `Authorization: Bearer` |
 | `TMDB_RATE_LIMIT_REQUESTS` / `TMDB_RATE_LIMIT_WINDOW_SECONDS` | `20` / `1` | token-bucket rate limit |
 | `HEALTHCHECK_CATALOG_URL` | unset | healthchecks.io deadman for the scheduled TMDB delta |
+| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` | unset | Web Push signing keys (base64url raw) and the `mailto:` or app URL push services can reach; `task vapid:generate` prints a fresh set. All three or none — push endpoints answer 503 and the delivery job refuses to start otherwise. Regenerating is a rotation that invalidates every existing subscription. |
+| `HEALTHCHECK_PUSH_URL` | unset | healthchecks.io deadman for the scheduled push delivery |
+| `PUSH_DAILY_CAP` | `5` | notifications per user per delivery run before the rest collapse into one summary |
+| `PUSH_EVENT_WINDOW_HOURS` | `48` | how long a detected show change stays deliverable |
 | `INGEST_CONSECUTIVE_FAILURE_THRESHOLD` | `10` | abort a run after N consecutive per-show failures |
 | `INGEST_STALE_RUN_MINUTES` | `15` | startup cleanup threshold |
 | `LOG_LEVEL` | `INFO` | Python root logger level |
