@@ -1041,6 +1041,71 @@ class TrendingShow(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ShowEvent(Base):
+    """A change the daily delta saw on a tracked show — a *catalog event*
+    (`CONTEXT.md` § Notifications; project spec §4.1).
+
+    **Append-only, and a sidecar rather than columns on `show` / `season`.** The
+    upsert overwrites the row it compares against, so the only place "what it
+    was" survives is a row written at the moment of the overwrite. The delta
+    writes here in the show's own transaction; the push delivery job reads it.
+    Nothing updates a row. Rows leave by the delivery job's 90-day purge, or
+    with their show or season through the CASCADEs below.
+
+    **Tracked shows only, and the delta only** (ADR-0014 §2). The full pass has
+    nothing to compare against and records nothing, so an empty history for a
+    show means nobody was tracking it when it changed, not that it never did.
+
+    **No uniqueness.** A premiere date that moves twice is two rows, and
+    delivery keys on the row's `id`, so there is no natural key to protect.
+
+    `old_value` / `new_value` hold the raw upstream value as text — an ISO date
+    for the premiere kinds, a status string for `ended` / `revived` — because
+    the four kinds do not share a type and the delivery job only compares
+    `new_value` against the row as it now stands.
+    """
+
+    __tablename__ = "show_event"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('premiere_set', 'premiere_moved', 'ended', 'revived')",
+            name="ck_show_event_kind",
+        ),
+        # The delivery job's 48-hour window and the 90-day purge both range on it.
+        Index("ix_show_event_observed_at", "observed_at"),
+        # Leads on `show_id`, so it also carries the CASCADE from `show` below.
+        Index("ix_show_event_show_id_kind", "show_id", "kind"),
+        # Not for reading. The delta prunes seasons upstream no longer lists, and
+        # the CASCADE from `season` would otherwise scan this table on each one.
+        Index(
+            "ix_show_event_season_id",
+            "season_id",
+            postgresql_where=text("season_id IS NOT NULL"),
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    # Set for the two premiere kinds, null for `ended` / `revived`.
+    season_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.season.id", ondelete="CASCADE")
+    )
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # The delta run that saw the change. `SET NULL` rather than `CASCADE`: an
+    # event outlives any tidy-up of the run log, which nothing performs today.
+    run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.ingest_run.id", ondelete="SET NULL")
+    )
+
+
 class ContentRating(Base):
     """Per-country certification — `TV-MA`, `TV-14`, … . No TV Maze equivalent
     exists, which is why skipping it would be a backfill rather than a gap."""
@@ -1567,12 +1632,13 @@ class IngestRun(Base):
             # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034),
             # `catalog_update` its daily delta (NEU-1035), `airdate_reconcile`
             # the nightly airdate pass (NEU-1145) and `trending_snapshot` the
-            # daily `/trending/tv/week` capture (NEU-1055) — the only four kinds
-            # any live code still writes.
+            # daily `/trending/tv/week` capture (NEU-1055). `push_deliver` is the
+            # daily push delivery job's (NEU-1480; the job itself lands in the
+            # Push Notifications project's milestone 3).
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
             "'show_refresh', 'person_update', 'episode_credits_backfill', "
             "'catalog_initial', 'catalog_update', 'airdate_reconcile', "
-            "'trending_snapshot')",
+            "'trending_snapshot', 'push_deliver')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(
