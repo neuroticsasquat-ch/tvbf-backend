@@ -3,7 +3,11 @@
 **Linear project:** tvbf: Push Notifications (P-NEU-5) · initiative TV BingeFriend · team Neuroticsasquatch
 **Repos:** `tvbf-backend` (this repo), `tvbf-frontend`
 **Decisions recorded:** [ADR-0014](../adr/0014-episode-alerts-are-schedule-derived-and-events-are-tracked-only.md); vocabulary in `CONTEXT.md` § Notifications
-**Written:** 2026-09-26, from the `/projectit` grilling session. This is the project-wide spec every
+**Written:** 2026-09-26, from the `/projectit` grilling session.
+**Revised:** 2026-09-26, after checking the scaffolded tickets against the code — §4.3 FK rule,
+§5.1 seam and run-kind read, §5.2 still-current date, `is_ended` naming. No decision changed.
+
+This is the project-wide spec every
 ticket in the project is implemented against unless a per-ticket spec (`docs/specs/NEU-xxxx-*.md`)
 says otherwise. Frontend tickets cite it by this path from `tvbf-frontend`.
 
@@ -102,7 +106,7 @@ Index `(user_id)`. Re-subscribing with an endpoint that already exists (same or 
 | column | type | notes |
 |---|---|---|
 | `id` | bigserial PK | |
-| `subscription_id` | uuid FK `app.push_subscription.id` CASCADE | |
+| `subscription_id` | uuid, nullable, FK `app.push_subscription.id` **SET NULL** | null once the subscription is retired; the row outlives it (see below) |
 | `user_id` | uuid FK `app.user.id` CASCADE | denormalised for stats + the per-user cap |
 | `notification_key` | text not null | see §5.3 |
 | `kind` | text not null CHECK in (`airs_today`, `premiere_set`, `premiere_moved`, `ended`, `revived`, `summary`, `test`) | |
@@ -116,6 +120,13 @@ Index `(user_id)`. Re-subscribing with an endpoint that already exists (same or 
 **Unique `(notification_key, subscription_id)`** — the idempotency rule. A `pending` row is
 inserted before the send inside the same transaction that then flips it; a crash leaves
 `pending`, and the next run treats `pending` older than one hour as `failed` and re-sends.
+
+**`subscription_id` is SET NULL, not CASCADE, on purpose.** Retirement (404/410 or the fifth
+consecutive failure, §5.2 step 4) deletes the subscription, and the delivery row that recorded it
+(`status='failed'`, `error='gone'` or `'failure_limit'`) must survive so `GET /admin/push/stats`
+can count retirements per day (§5.4). A cascade would delete the evidence in the same statement.
+Postgres treats NULLs as distinct in the unique index, so orphaned rows never collide with each
+other; account deletion still cascades through `user_id`.
 
 ### 4.4 Columns added to existing tables
 
@@ -135,11 +146,14 @@ inserted before the send inside the same transaction that then flips it; a crash
 In `tmdb/ingest.py:mirror_series`'s per-show transaction, **only when the run kind is
 `catalog_update`** and the show is tracked (`EXISTS app.user_show_watch WHERE show_id`):
 
-1. Before `upsert_show` / `upsert_seasons`, read the current `catalog.show.status` and, for every
-   season row of the show, `(tmdb_id, air_date)`.
-2. After the upsert (so surrogate ids are known), compute:
+1. Before `upsert_series_payload` (`tmdb/upsert.py` — the one call the per-show path makes; it
+   wraps `upsert_show` and `upsert_seasons`, which are not called from `ingest.py` directly),
+   read the current `catalog.show.status` and, for every season row of the show,
+   `(season_number, coalesce(tmdb_air_date, air_date))`.
+2. After it returns (it yields only the show id; the season surrogate ids for the two premiere
+   kinds are looked up by `(show_id, season_number)` in the same session), compute:
    - `ended`: old status not in (`Ended`, `Canceled`) and new status in it. Uses the same
-     vocabulary as the generated `has_ended` column; the event records the raw status strings.
+     vocabulary as the generated `is_ended` column; the event records the raw status strings.
    - `revived`: old status in (`Ended`, `Canceled`) and new status not in it and not null. The
      mirror image of `ended`; a status going *null* is not an event. Unrelated to
      `deleted_upstream_at` — a tombstone resurrection records nothing here.
@@ -159,6 +173,9 @@ manufacture a "moved" event by shifting a date one day. Concretely: compare
 Tracked-ness is evaluated once per show at detection time; a show tracked by nobody records
 nothing (ADR-0014 §2). The full pass (`catalog_initial`) and every backfill job skip detection
 entirely — the hook is keyed on the run kind, not on the caller remembering to pass a flag.
+`mirror_series` receives only `run_id` today and `catalog/runs.py` has no kind reader, so the
+hook reads `catalog.ingest_run.kind` once per run through a new `runs.py:get_run_kind(session,
+run_id)` and caches it for the loop; `upsert.py` itself is not touched.
 
 ### 5.2 The delivery job (milestone 3)
 
@@ -179,8 +196,11 @@ Steps, in order:
    the show is in the user's My Shows with `muted = false`, and no `user_episode_watch` row.
    Notification key `airs_today:{episode_id}:{air_date}`.
 2. **Event candidates.** `catalog.show_event` rows with `observed_at >= now() - 48h` **and still
-   current** — `premiere_set`/`premiere_moved`: the season's `air_date` still equals `new_value`
-   and is today or later; `ended`: the show's `has_ended` is still true; `revived`: `has_ended` is still false — joined to users who
+   current** — `premiere_set`/`premiere_moved`: the season's **raw** date
+   (`coalesce(tmdb_air_date, air_date)`, the same value §5.1 compared and stored in `new_value`;
+   the corrected `air_date` differs by the offset for every offset-corrected show and would never
+   match) still equals `new_value`, and the season's corrected `air_date` is today or later;
+   `ended`: the show's `is_ended` is still true; `revived`: `is_ended` is still false — joined to users who
    track the show, are not muted on it, have the matching `notify_*` flag, and are not disabled.
    Key `{kind}:{event_id}`. Events older than 48 h are never delivered; nothing marks them,
    the window is the rule.
@@ -190,9 +210,10 @@ Steps, in order:
 4. **Deliver.** For each (candidate, subscription of that user): insert `push_delivery`
    `pending` (skip the candidate if the unique constraint says it was already `sent`), build
    the payload (§5.3), `webpush()` with `TTL=86400` and `urgency=normal`. On 2xx → `sent`,
-   `last_success_at = now()`, `failure_count = 0`. On 404/410 → `failed` and **delete the
-   subscription**. On any other non-2xx or transport error → `failed`, `failure_count += 1`,
-   delete the subscription when it reaches 5. Sequential per subscription; a bounded semaphore is
+   `last_success_at = now()`, `failure_count = 0`. On 404/410 → `failed`, `error='gone'`, and
+   **delete the subscription**. On any other non-2xx or transport error → `failed`,
+   `failure_count += 1`, and delete the subscription when it reaches 5 (that row's `error` is
+   `'failure_limit'`). The delivery rows survive the delete (§4.3). Sequential per subscription; a bounded semaphore is
    the fix at scale, not a rewrite.
 5. **Purge.** Delete `show_event` and `push_delivery` rows with `created_at < now() - 90 days`.
 6. Finalize the run row `succeeded` with counts logged (candidates, sent, failed, retired,
@@ -220,6 +241,9 @@ JSON, encrypted by `pywebpush`, decoded in `sw.js`:
   null is **not** a kind — a date going null is not an event); `ended` `Marked as ended` or
   `Marked as cancelled` from the raw status; `revived` `Renewed — more episodes are coming`; `summary` title `TV BingeFriend`, body
   `{N} more updates today`; `test` title `TV BingeFriend`, body `Notifications are working`.
+- `{Mon D}` in the two premiere bodies is the season's **corrected** `air_date` as of delivery —
+  what the app shows (NEU-1145) — not `new_value`, which is the raw TMDB date §5.1 stores for
+  comparison.
 - `url` is SPA-relative; the worker prefixes `self.location.origin`. `icon` is the poster via
   `catalog/images.py` at `w185`, or omitted when null. `tag` on the notification = `key`.
 - The worker never fetches; everything it shows is in the payload. Payload stays under 4 KB.
