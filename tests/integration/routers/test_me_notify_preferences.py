@@ -6,12 +6,12 @@ import pytest
 from fastapi import Response
 from sqlalchemy import select
 
+from tests.integration.routers.test_auth import _request
 from tvbf.app.models import UserShowWatch
 from tvbf.app.schemas import LoginRequest
 from tvbf.catalog.models import Show
 from tvbf.config import get_settings
 from tvbf.routers import auth as auth_router
-from tests.integration.routers.test_auth import _request
 
 NOTIFY_FIELDS = (
     "notify_airs_today",
