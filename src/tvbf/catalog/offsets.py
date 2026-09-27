@@ -39,7 +39,7 @@ date must.
 import logging
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 
 from sqlalchemy import ColumnElement, delete, func, select, update
 from sqlalchemy.dialects.postgresql import insert
@@ -47,6 +47,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import InstrumentedAttribute
 
 from tvbf.catalog import models as m
+from tvbf.catalog.last_aired import recompute_last_aired
 
 log = logging.getLogger(__name__)
 
@@ -266,6 +267,9 @@ async def project_offsets(session: AsyncSession, *, show_id: int) -> int:
         )
 
     changed += await _project_show_dates(session, show_id=show_id, offsets=offsets)
+    # The only writer of `episode.air_date` besides the upsert, so the stored
+    # **Last aired** has to follow a corrected date here too (NEU-1502).
+    await recompute_last_aired(session, today=datetime.now(UTC).date(), show_ids=[show_id])
     return changed
 
 

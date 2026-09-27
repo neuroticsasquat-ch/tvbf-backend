@@ -93,9 +93,9 @@ Gated by the session cookie. Every response carries `Cache-Control: public, max-
 | `GET /genres` | full genre list (flat, no pagination — ~30 rows) |
 | `GET /networks` | full network list (flat, no pagination — ~400 rows) |
 
-`search` matches the show's primary name OR any of its AKA names (token-AND). When the match is via AKA only, the response row carries `matched_aka` so the UI can show *why* a foreign-titled show came back.
+`search` matches when every token is in the show's primary name, or every token is in one of its AKA names (token-AND, accent- and punctuation-folded). A query whose tokens are all shorter than three characters (`er`, `24 h`) matches the start of a title rather than anywhere in it. When the match is via AKA only, the response row carries `matched_aka` so the UI can show *why* a foreign-titled show came back.
 
-Pagination is offset-based. `page` ≤ 1000, `per_page` ≤ 100. Sort keys: `name`, `-name`, `premiered`, `-premiered`, `tvmaze_updated`, `-tvmaze_updated`, `last_aired`, `-last_aired`. Episodes per show are returned in one response; no pagination on that list.
+Pagination is offset-based. `page` ≤ 1000, `per_page` ≤ 100. Sort keys: `name`, `-name`, `premiered`, `-premiered`, `tvmaze_updated`, `-tvmaze_updated`, `last_aired`, `-last_aired` (the latest regular episode aired on or before today, UTC). Episodes per show are returned in one response; no pagination on that list.
 
 FastAPI's auto-generated API docs are at `/docs` (Swagger UI) and `/redoc`.
 

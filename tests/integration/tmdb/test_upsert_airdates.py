@@ -199,3 +199,21 @@ class TestTheIngestAppliesTheOffset:
             (date(2023, 5, 5), date(2023, 5, 4)),
             (None, None),
         ]
+
+
+class TestTheIngestMaintainsLastAired:
+    """`catalog.show.last_aired` is derived after every series write (NEU-1502)."""
+
+    async def test_the_write_sets_last_aired_from_the_corrected_regular_episodes(self, session):
+        """The corrected date, not the raw one, and never a future episode."""
+        payload = _payload(
+            air_dates={1: "2023-05-04", 2: "2023-05-11", 3: "2099-01-01"},
+            first="2023-05-04",
+            last="2023-05-11",
+        )
+        show_id = await _write(session, payload)
+        assert (await _show(session, show_id)).last_aired == date(2023, 5, 11)
+
+        await _record_offset(session, show_id=show_id, season_number=1, days=1)
+        await _write(session, payload)
+        assert (await _show(session, show_id)).last_aired == date(2023, 5, 12)

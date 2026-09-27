@@ -48,6 +48,7 @@ guest credit resolves to the character the show cast already named. See
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -56,6 +57,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
+from tvbf.catalog.last_aired import recompute_last_aired
 from tvbf.catalog.offsets import (
     EMPTY,
     FIRST_SEASON,
@@ -1839,4 +1841,6 @@ async def upsert_series_payload(
     )
     await _set_air_pointers(session, show_id=show_id, series=series)
     await refresh_runtime(session, show_id=show_id)
+    # Same derive-after-write as the runtime, one per-show UPDATE (NEU-1502).
+    await recompute_last_aired(session, today=datetime.now(UTC).date(), show_ids=[show_id])
     return show_id

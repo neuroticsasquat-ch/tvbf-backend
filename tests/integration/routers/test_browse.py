@@ -594,3 +594,43 @@ async def test_get_shows_issues_a_fixed_number_of_queries_whatever_the_page_size
     assert len(ten.json()["items"]) == 10
     assert len(for_one) == len(for_ten)
     assert len(catalog_queries) == 4, catalog_queries
+
+
+async def test_searched_get_shows_issues_a_fixed_number_of_queries_whatever_the_page_size(
+    authed_client, session
+):
+    """The searched variant of the pin above (NEU-1502 §2.5): six catalog
+    queries — count, page, genres, networks, and the AKA badge's two.
+
+    Search is the path that got slow as features accreted, so a per-row
+    follow-up added to it trips this rather than a user. Counted the same way:
+    statements touching `catalog`, with the page-size invariance asserted over
+    every statement.
+    """
+    from sqlalchemy import event
+
+    from tvbf.db import engine as app_engine
+
+    await seed(session)
+    statements: list[str] = []
+
+    def _record(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+
+    engine = app_engine.sync_engine
+    event.listen(engine, "before_cursor_execute", _record)
+    try:
+        one = await authed_client.get("/shows?search=drama&per_page=1")
+        for_one = list(statements)
+        statements.clear()
+        many = await authed_client.get("/shows?search=drama&per_page=100")
+        for_many = list(statements)
+    finally:
+        event.remove(engine, "before_cursor_execute", _record)
+
+    catalog_queries = [s for s in for_one if "catalog." in s]
+
+    assert len(one.json()["items"]) == 1
+    assert len(many.json()["items"]) > 1
+    assert len(for_one) == len(for_many)
+    assert len(catalog_queries) == 6, catalog_queries

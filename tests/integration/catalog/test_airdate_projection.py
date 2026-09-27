@@ -220,3 +220,15 @@ class TestShowGrain:
         show = await _show_row(session, 708)
         assert (show.first_air_date, show.last_air_date) == before
         assert show.tmdb_first_air_date == date(2023, 5, 4)
+
+
+class TestProjectionMaintainsLastAired:
+    async def test_a_projected_correction_moves_last_aired(self, session):
+        """The other writer of `episode.air_date`, so the stored **Last aired**
+        has to follow it (NEU-1502)."""
+        await _seed(session, show_id=730, seasons={1: [date(2023, 5, 4), date(2023, 5, 11)]})
+        await _offset(session, show_id=730, season_number=1, days=1)
+
+        await project_offsets(session, show_id=730)
+
+        assert (await _show_row(session, 730)).last_aired == date(2023, 5, 12)

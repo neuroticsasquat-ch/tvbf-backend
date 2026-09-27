@@ -247,6 +247,16 @@ class Show(Base):
             "first_air_date",
             postgresql_where=text("deleted_upstream_at IS NULL"),
         ),
+        # Browse's "Last Aired" sort (NEU-1502): unfiltered browse walks this
+        # instead of computing a per-row aggregate over 6.6M episodes. The
+        # trailing `id` is `list_shows`'s tiebreak, so the whole ORDER BY is the
+        # index order. Same partial predicate as above, for the same reason.
+        Index(
+            "ix_show_last_aired_live",
+            text("last_aired DESC NULLS LAST"),
+            "id",
+            postgresql_where=text("deleted_upstream_at IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -336,6 +346,13 @@ class Show(Base):
     # correction idempotent; the reasoning is written out there.
     tmdb_first_air_date: Mapped[date | None] = mapped_column(Date)
     tmdb_last_air_date: Mapped[date | None] = mapped_column(Date)
+    # **Last aired** (CONTEXT.md, NEU-1502): the latest *regular* episode's air
+    # date on or before the server's UTC today, NULL when there is none. Derived
+    # from the episode rows and stored so browse can sort on it — not
+    # `last_air_date` above, which is TMDB's frozen field and counts specials.
+    # `catalog/last_aired.py` owns the recompute and lists its callers; the
+    # daily delta's roll-forward is what moves it as episodes cross into aired.
+    last_aired: Mapped[date | None] = mapped_column(Date)
 
     # The browse `language` filter reads this (audit D3): it is the only one of
     # TMDB's three language concepts with exactly one value per show, which the

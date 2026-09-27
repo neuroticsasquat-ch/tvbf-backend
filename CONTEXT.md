@@ -137,6 +137,14 @@ Specials are **excluded from completion math, aired counts and Watch Next**, whi
 The definition changed with the source (ADR-0007). TV Maze marked a special with a *null episode number* inside its real season and returned it outside the episode embed, so it needed its own fetch; TMDB parks specials in season 0 and returns them in that season's payload like anything else.
 _Avoid_: extra, bonus episode
 
+**Last aired**:
+The air date of a show's most recent **regular** episode on or before today — specials excluded, future-dated episodes excluded, and `NULL` for a show with no dated regular episode. One definition everywhere it is sorted or shown: browse and search's "Last Aired" sort, My Shows' recent-activity order, Watch Next and Watched. "Today" is whichever day the reading surface is working in: a viewer's own device date on the My Shows surfaces, the server's UTC date on the catalog-wide ones. A show moves in this order without any row changing, because episodes cross into "aired" as days pass.
+_Avoid_: last air date (TMDB's own frozen field on the show, which counts specials and goes stale between deltas), latest episode
+
+**Short query**:
+A title search none of whose tokens has three or more characters once folded — `v`, `24`, `er`, `24 h`. Too short to be looked up as a substring, so it matches the **start** of a title or AKA instead (`er` finds *ER*, `24 h` finds *24 H*). A query with at least one longer token is an ordinary substring search, and its short tokens narrow it.
+_Avoid_: stopword, minimum length
+
 ### The app
 
 **My Shows**:
