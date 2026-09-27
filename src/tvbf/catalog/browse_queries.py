@@ -31,8 +31,9 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import Select, false, func, literal, or_, select
+from sqlalchemy import ColumnElement, Select, and_, false, func, literal, select, union
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from tvbf.app.repos import episode_rating_repo, show_rating_repo
 from tvbf.catalog import episodes as episode_rules
@@ -46,16 +47,6 @@ from tvbf.sql_fold import folded
 # Strip leading articles for natural alphabetical sort: "The Office" → "office".
 _NORMALIZED_NAME = func.regexp_replace(func.lower(m.Show.name), SQL_LEADING_ARTICLE_PATTERN, "")
 
-# Most recent already-aired episode airdate per show. Correlated subquery so it can
-# participate in ORDER BY without a join that would multiply rows.
-_LAST_AIRED = (
-    select(func.max(m.Episode.air_date))
-    .where(m.Episode.show_id == m.Show.id)
-    .where(m.Episode.air_date <= func.current_date())
-    .correlate(m.Show)
-    .scalar_subquery()
-)
-
 # `?sort=tvmaze_updated` keeps its name and now means *when we last mirrored this
 # show* — see `schemas._updated_epoch`, which reads the same two columns in the
 # same order so the sort and the serialized field cannot disagree.
@@ -68,8 +59,10 @@ _SORT_EXPRS = {
     "-premiered": m.Show.first_air_date.desc().nulls_last(),
     "tvmaze_updated": _MIRRORED_AT.asc(),
     "-tvmaze_updated": _MIRRORED_AT.desc(),
-    "last_aired": _LAST_AIRED.asc().nulls_last(),
-    "-last_aired": _LAST_AIRED.desc().nulls_last(),
+    # The stored column (NEU-1502), not a per-row aggregate: `-last_aired` over
+    # the whole catalog is then a walk of `ix_show_last_aired_live`.
+    "last_aired": m.Show.last_aired.asc().nulls_last(),
+    "-last_aired": m.Show.last_aired.desc().nulls_last(),
 }
 
 
@@ -556,6 +549,65 @@ def _strip_punct_space(token: str) -> str:
     )
 
 
+def _search_tokens(search: str | None) -> list[str]:
+    """Whitespace tokens that fold to something — the one tokenizer both show
+    search and its badge use. Empty when the query was all punctuation."""
+    return [t for t in (search or "").split() if _strip_punct_space(t)]
+
+
+# pg_trgm can drive an index from a substring pattern only when it holds one
+# whole trigram; a *prefix* is indexable from one character, because the index
+# pads the start of every string.
+_TRIGRAM = 3
+
+
+def _is_short_query(tokens: Sequence[str]) -> bool:
+    """A **Short query** (CONTEXT.md): no token folds to three or more characters.
+
+    Counted in Python, which the fold's own rule forbids for *comparing* titles
+    but which only has to approximate a length here. Punctuation, symbols,
+    separators and combining marks are not counted — the fold strips the first
+    three and `unaccent` drops the last, so a decomposed `ér` is two characters
+    either way. What remains is `unaccent`'s expansions (ß → ss, æ → ae), where
+    this count comes out *lower* than the fold's: such a token can be treated
+    as a prefix search when the fold would make it a substring one. That errs
+    toward the indexable plan, never toward a 1.5 s sequential scan.
+    """
+    return all(
+        sum(1 for c in t if unicodedata.category(c)[0] not in ("P", "S", "Z", "M")) < _TRIGRAM
+        for t in tokens
+    )
+
+
+def _title_predicate(column, tokens: Sequence[str]) -> ColumnElement[bool]:
+    """Whether one title column matches the whole search — the one rule
+    `list_shows` and `hydrate_matched_aka` both build, so the list and its badge
+    cannot drift apart (they did once, NEU-433).
+
+    Every token must be in *this* column: a match lives entirely in the name or
+    entirely in one AKA (NEU-1502 §2.1). The `AND` of plain `LIKE`s is what lets
+    Postgres bitmap-AND the trigram index across tokens; `LIKE ALL (ARRAY[…])`
+    reads the same and falls back to a sequential scan.
+
+    A short query matches the **start** of the title instead — its tokens run
+    together, as the fold runs a title's words together — because a one- or
+    two-character substring is a full scan and a prefix is not (§2.2).
+
+    No wildcard escaping: `%` and `_` are punctuation, which the fold strips
+    from the token before it becomes a pattern (§2.3).
+    """
+    title = folded(column)
+    if _is_short_query(tokens):
+        prefix = folded(literal("".join(tokens), literal_execute=True))
+        return title.like(func.concat(prefix, "%"))
+    return and_(
+        *(
+            title.like(func.concat("%", folded(literal(t, literal_execute=True)), "%"))
+            for t in tokens
+        )
+    )
+
+
 async def list_shows(
     session: AsyncSession,
     filters: ShowFilters,
@@ -572,19 +624,27 @@ async def list_shows(
     # so a user already tracking one keeps their list, ratings and history.
     base = select(m.Show).where(m.Show.deleted_upstream_at.is_(None))
     if filters.search:
-        # Token-based AND match against an accent- and punctuation-folded form of
-        # the show name OR any of its AKAs. Folding both the column and the token
-        # lets "shogun" match "Shōgun" and "spiderman" match "Spider-Man", while
-        # whitespace tokenization keeps "alien earth" matching "Alien: Earth" and
+        # Token-AND against the accent- and punctuation-folded name, or against
+        # one folded AKA. Folding both the column and the token lets "shogun"
+        # match "Shōgun" and "spiderman" match "Spider-Man", while whitespace
+        # tokenization keeps "alien earth" matching "Alien: Earth" and
         # non-Latin titles ("進撃") still match natively.
-        usable = [t for t in filters.search.split() if _strip_punct_space(t)]
+        usable = _search_tokens(filters.search)
         if not usable:
             # Search was all punctuation/whitespace — match nothing, not everything.
             base = base.where(false())
-        for token in usable:
-            needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
-            aka_subq = select(m.ShowAka.show_id).where(folded(m.ShowAka.title).like(needle))
-            base = base.where(or_(folded(m.Show.name).like(needle), m.Show.id.in_(aka_subq)))
+        else:
+            # One semi-join over a UNION of the two sources, not a per-token
+            # `name LIKE … OR id IN (aka …)`: Postgres cannot drive the name's
+            # trigram index through that OR and folded all 231k names per token
+            # (NEU-1502 §2.1). Aliased so the inner `show` is not correlated
+            # away against the outer one.
+            named = aliased(m.Show)
+            matches = union(
+                select(named.id).where(_title_predicate(named.name, usable)),
+                select(m.ShowAka.show_id).where(_title_predicate(m.ShowAka.title, usable)),
+            )
+            base = base.where(m.Show.id.in_(matches))
     if filters.status is not None:
         base = base.where(m.Show.status == filters.status)
     if filters.language is not None:
@@ -671,17 +731,16 @@ async def hydrate_matched_aka(
     if not search or not shows:
         return {}
 
-    tokens = [t for t in search.split() if _strip_punct_space(t)]
+    tokens = _search_tokens(search)
     if not tokens:
         return {}
 
     show_ids = [s.id for s in shows]
 
-    # Best (shortest) AKA per show that matches every folded token.
-    aka_query = select(m.ShowAka.show_id, m.ShowAka.title).where(m.ShowAka.show_id.in_(show_ids))
-    for token in tokens:
-        needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
-        aka_query = aka_query.where(folded(m.ShowAka.title).like(needle))
+    # Best (shortest) AKA per show that matches the whole search.
+    aka_query = select(m.ShowAka.show_id, m.ShowAka.title).where(
+        m.ShowAka.show_id.in_(show_ids), _title_predicate(m.ShowAka.title, tokens)
+    )
     aka_rows = (await session.execute(aka_query)).all()
     best_by_show: dict[int, str] = {}
     for sid, aname in aka_rows:
@@ -691,10 +750,9 @@ async def hydrate_matched_aka(
     # Which shows matched on their own (folded) name? Determined in SQL so the
     # rule is identical to list_shows — a Python unaccent would diverge on
     # characters like ł/ø that NFKD does not decompose.
-    name_query = select(m.Show.id).where(m.Show.id.in_(show_ids))
-    for token in tokens:
-        needle = func.concat("%", folded(literal(token, literal_execute=True)), "%")
-        name_query = name_query.where(folded(m.Show.name).like(needle))
+    name_query = select(m.Show.id).where(
+        m.Show.id.in_(show_ids), _title_predicate(m.Show.name, tokens)
+    )
     name_matched_ids = set((await session.execute(name_query)).scalars().all())
 
     result: dict[int, str | None] = {}

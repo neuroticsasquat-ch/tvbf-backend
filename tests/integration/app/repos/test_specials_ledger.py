@@ -6,10 +6,13 @@ direction** (unmark-show leaving orphan rows, an episode page 404ing a special).
 Explicit-at-each-site fails loudly instead, but only if something notices the
 site that forgot. This file is that something.
 
-`LEDGER` names every public function in the six modules that read
+`LEDGER` names every public function in the seven modules that read
 `catalog.episode` on a user's behalf — `episode_repo`, `episode_watch_repo`,
-`season_repo`, `activity_event_repo`, `episode_rating_repo` and
-`recommendations/exclusion` — and the treatment each owes.
+`season_repo`, `activity_event_repo`, `episode_rating_repo`,
+`recommendations/exclusion` and `catalog/last_aired` — and the treatment each
+owes. The last is a writer rather than a query, but what it writes is the sort
+browse serves, so it makes the same specials decision `latest_aired_per_show`
+does and is held to it here.
 `test_every_query_has_a_ledger_row` fails the moment one is added without a row;
 the behavioural tests below then hold each treatment to what it claims, against
 a fixture show carrying all three shapes at once.
@@ -39,6 +42,7 @@ from tvbf.app.repos import (
     episode_watch_repo,
     season_repo,
 )
+from tvbf.catalog import last_aired
 from tvbf.catalog.models import Episode, Show
 from tvbf.recommendations import exclusion
 
@@ -110,6 +114,10 @@ LEDGER: dict[str, str] = {
     # they have met the show, exactly like a regular episode.
     "exclusion.show_ids_never_to_recommend": EXCLUDE_NOTHING,
     "exclusion.load_show_ids_never_to_recommend": EXCLUDE_NOTHING,
+    # catalog/last_aired (NEU-1502) — the stored **Last aired** browse sorts on,
+    # which shares `latest_aired_per_show`'s definition and so its treatment.
+    # Its behaviour is held in `tests/integration/catalog/test_last_aired.py`.
+    "last_aired.recompute_last_aired": EXCLUDE_BOTH,
 }
 
 
@@ -147,6 +155,7 @@ def test_every_query_has_a_ledger_row():
             )
         ),
         _public_functions(exclusion, include_sync=True),
+        _public_functions(last_aired),
     )
     assert actual == set(LEDGER), {
         "missing from the ledger": sorted(actual - set(LEDGER)),

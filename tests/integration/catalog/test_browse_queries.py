@@ -270,10 +270,14 @@ async def test_list_shows_sort_tvmaze_updated_asc(session):
 
 async def test_list_shows_sort_last_aired_desc(session):
     """`-last_aired` sorts by the most recent already-aired episode airdate.
-    Shows with no aired episodes sort last (NULLS LAST)."""
-    from datetime import date
+    Shows with no aired episodes sort last (NULLS LAST).
+
+    The sort reads the stored column since NEU-1502, so the fixture recomputes
+    it after seeding episodes directly — the step every real writer takes."""
+    from datetime import UTC, date, datetime
 
     from tvbf.catalog import models as m
+    from tvbf.catalog.last_aired import recompute_last_aired
 
     session.add(m.Show(id=88001, name="Old Show"))
     session.add(m.Show(id=88002, name="Recent Show"))
@@ -294,6 +298,10 @@ async def test_list_shows_sort_last_aired_desc(session):
         m.Episode(
             id=88002002, show_id=88002, season_number=1, episode_number=2, air_date=date(2099, 1, 1)
         )
+    )
+    await session.flush()
+    await recompute_last_aired(
+        session, today=datetime.now(UTC).date(), show_ids=[88001, 88002, 88003]
     )
     await session.commit()
 

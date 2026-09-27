@@ -464,3 +464,62 @@ async def test_one_bad_series_does_not_stop_the_ones_after_it(session):
     _, result = await _run(session, failure_threshold=10)
 
     assert (result.shows_processed, result.shows_failed) == (1, 1)
+
+
+# --- the last-aired roll-forward (NEU-1502) ----------------------------------
+
+
+async def _show_with_episode(session, *, show_id: int, air_date: date) -> None:
+    """A show the delta will not re-fetch, whose one episode airs `air_date`."""
+    session.add(m.Show(id=show_id, name=f"Show {show_id}"))
+    await session.flush()
+    session.add(
+        m.Episode(
+            id=show_id * 10, show_id=show_id, season_number=1, episode_number=1, air_date=air_date
+        )
+    )
+    await session.commit()
+
+
+async def _last_aired(session, show_id: int) -> date | None:
+    return (
+        await session.execute(
+            select(m.Show.last_aired)
+            .where(m.Show.id == show_id)
+            .execution_options(populate_existing=True)
+        )
+    ).scalar_one()
+
+
+@respx.mock
+async def test_the_run_rolls_last_aired_forward_for_shows_it_did_not_touch(session):
+    """An episode crosses into aired with no row changing, so without the
+    roll-forward today's premiere would never reach the top of the sort."""
+    await _seed_cursor(session, TODAY - timedelta(days=1))
+    mock_changes({})
+    await _show_with_episode(session, show_id=964_001, air_date=TODAY)
+
+    run_id, _ = await _run(session)
+
+    assert await _last_aired(session, 964_001) == TODAY
+    assert (await _run_row(session, run_id)).status == "succeeded"
+
+
+@respx.mock
+async def test_a_failed_roll_forward_is_logged_and_the_run_still_succeeds(
+    session, monkeypatch, caplog
+):
+    """Idempotent and total, so tomorrow heals it — holding the cursor back
+    over a day-stale sort would cost far more."""
+    await _seed_cursor(session, TODAY - timedelta(days=1))
+    mock_changes({})
+
+    async def _boom(*args, **kwargs):
+        raise RuntimeError("recompute exploded")
+
+    monkeypatch.setattr("tvbf.tmdb.update.recompute_last_aired", _boom)
+
+    run_id, _ = await _run(session)
+
+    assert (await _run_row(session, run_id)).status == "succeeded"
+    assert "last-aired roll-forward failed" in caplog.text
