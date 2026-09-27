@@ -68,6 +68,13 @@ async def list_for_user(db: AsyncSession, user_id: UUID) -> list[PushSubscriptio
     return list(result.scalars().all())
 
 
+async def count_totals(db: AsyncSession) -> tuple[int, int]:
+    """`(subscriptions, distinct users holding one)` across every account."""
+    result = await db.execute(select(func.count(), func.count(PushSubscription.user_id.distinct())))
+    subscriptions, users = result.one()
+    return subscriptions, users
+
+
 async def get_for_user(
     db: AsyncSession, *, user_id: UUID, subscription_id: UUID
 ) -> PushSubscription | None:
