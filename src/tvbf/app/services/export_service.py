@@ -5,8 +5,15 @@ The document shape is locked by the ticket:
     {
       "account": { id, email, email_verified_at, display_name, handle, created_at },
       "my_shows":      [ { show_id, show_name, added_at }, ... ],
-      "watch_history": [ { episode_id, show_id, season, number, watched_at }, ... ]
+      "watch_history": [ { episode_id, show_id, season, number, watched_at }, ... ],
+      "push_subscriptions": [ { id, user_agent, created_at, last_success_at }, ... ],
+      "notification_preferences": { notify_airs_today, notify_premiere_set,
+                                    notify_premiere_moved, notify_ended, notify_revived }
     }
+
+The two push keys are NEU-1493's (push spec §7). A subscription is exported as
+`GET /me/push/subscriptions` shows it — never the endpoint or the keys, which
+are capability secrets rather than the user's data.
 
 We stream rather than buffer the whole thing because watch history can grow
 unboundedly. `stream_export` is an async generator over UTF-8 string chunks;
@@ -28,6 +35,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.app.models import User, UserEpisodeWatch, UserShowWatch
+from tvbf.app.repos import push_subscription_repo
 from tvbf.catalog.models import Episode, Show
 
 
@@ -51,6 +59,16 @@ def _account_payload(user: User) -> dict[str, Any]:
         "display_name": user.display_name,
         "handle": user.handle,
         "created_at": user.created_at,
+    }
+
+
+def _notification_preferences_payload(user: User) -> dict[str, Any]:
+    return {
+        "notify_airs_today": user.notify_airs_today,
+        "notify_premiere_set": user.notify_premiere_set,
+        "notify_premiere_moved": user.notify_premiere_moved,
+        "notify_ended": user.notify_ended,
+        "notify_revived": user.notify_revived,
     }
 
 
@@ -105,4 +123,23 @@ async def stream_export(db: AsyncSession, *, user: User) -> AsyncIterator[str]:
                 "watched_at": watched_at,
             }
         )
-    yield "]}"
+    yield "]"
+
+    # push_subscriptions — a handful per user at most, so no streaming.
+    subscriptions = await push_subscription_repo.list_for_user(db, user.id)
+    yield ',"push_subscriptions":'
+    yield _dumps(
+        [
+            {
+                "id": sub.id,
+                "user_agent": sub.user_agent,
+                "created_at": sub.created_at,
+                "last_success_at": sub.last_success_at,
+            }
+            for sub in subscriptions
+        ]
+    )
+
+    yield ',"notification_preferences":'
+    yield _dumps(_notification_preferences_payload(user))
+    yield "}"

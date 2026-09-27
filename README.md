@@ -141,6 +141,8 @@ A full catalog pass is ~229k series and takes ~8.7 hours: the loop is sequential
 
 The daily delta runs as a Coolify scheduled task, `python -m tvbf.jobs.catalog_update`, whose exit code *is* the result; `HEALTHCHECK_CATALOG_URL` points at a healthchecks.io deadman for the case Coolify cannot see, which is the task never running at all.
 
+Push notifications go out from a second scheduled task, `python -m tvbf.jobs.push_deliver` (`task push:deliver` by hand), which sends today's airs-today and show-change pushes, retires dead subscriptions and purges delivery rows and catalog events older than 90 days. **First deploy:** run `task vapid:generate -- --subject mailto:<ops address>` and set the three `VAPID_*` values in Coolify's env (generating a new set later is a rotation that invalidates every subscription); create a daily healthchecks.io check and set `HEALTHCHECK_PUSH_URL` to its ping URL; then add the Coolify scheduled task `python -m tvbf.jobs.push_deliver` **daily at 13:00 UTC**, after the catalog delta and the airdate reconcile it reads from — nothing enforces that order, and getting it wrong delivers a day late. The task exits 1 without VAPID keys, and otherwise only when every send failed.
+
 Invite codes never expire — they consume on first use. Revoke an unredeemed invite by deleting its row.
 
 ## Database
@@ -166,6 +168,11 @@ All config flows through environment variables (read by `src/tvbf/config.py`). F
 | `TMDB_READ_ACCESS_TOKEN` | unset | TMDB API Read Access Token (the long JWT), sent as `Authorization: Bearer` |
 | `TMDB_RATE_LIMIT_REQUESTS` / `TMDB_RATE_LIMIT_WINDOW_SECONDS` | `20` / `1` | token-bucket rate limit |
 | `HEALTHCHECK_CATALOG_URL` | unset | healthchecks.io deadman for the scheduled TMDB delta |
+| `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` | unset | Web Push signing keys (base64url raw) and the `mailto:` or app URL push services can reach; `task vapid:generate` prints a fresh set. All three or none — push endpoints answer 503 and the delivery job refuses to start otherwise. Regenerating is a rotation that invalidates every existing subscription. |
+| `HEALTHCHECK_PUSH_URL` | unset | healthchecks.io deadman for the scheduled push delivery |
+| `PUSH_DAILY_CAP` | `5` | notifications per user per delivery run before the rest collapse into one summary |
+| `PUSH_EVENT_WINDOW_HOURS` | `48` | how long a detected show change stays deliverable |
+| `PUSH_TEST_THROTTLE_MAX` / `PUSH_TEST_THROTTLE_WINDOW_MINUTES` | `5` / `60` | per-user budget on `POST /me/push/test` |
 | `INGEST_CONSECUTIVE_FAILURE_THRESHOLD` | `10` | abort a run after N consecutive per-show failures |
 | `INGEST_STALE_RUN_MINUTES` | `15` | startup cleanup threshold |
 | `LOG_LEVEL` | `INFO` | Python root logger level |

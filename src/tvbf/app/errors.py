@@ -98,9 +98,10 @@ class TooManyAttempts(DomainError):
     """A request budget rejected the request.
 
     Raised by the IP-keyed signup/login throttle (NEU-1160), by the
-    per-reporter report budget (NEU-1162) and by the per-requester connection
-    budget (NEU-1157) — named for the refusal rather than for the key, the same
-    reason `config.Throttle` is.
+    per-reporter report budget (NEU-1162), by the per-requester connection
+    budget (NEU-1157) and by the per-user push test budget (NEU-1486) — named
+    for the refusal rather than for the key, the same reason `config.Throttle`
+    is.
 
     Carries the window in seconds so the router can set `Retry-After` without
     re-deriving the budget it just passed in.

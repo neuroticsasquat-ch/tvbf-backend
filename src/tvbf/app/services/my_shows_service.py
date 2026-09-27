@@ -191,6 +191,17 @@ async def set_hide_from_activity(
     return updated
 
 
+async def set_muted(db: AsyncSession, *, user_id: UUID, show_id: int, value: bool) -> bool:
+    """Update the muted flag on a My Shows row (NEU-1490). Returns True iff the
+    row existed; commits on success."""
+    updated = await show_membership_repo.set_muted(
+        db, user_id=user_id, show_id=show_id, value=value
+    )
+    if updated:
+        await db.commit()
+    return updated
+
+
 async def remove(db: AsyncSession, *, user_id: UUID, show_id: int) -> None:
     """Remove membership row (idempotent), commit."""
     await show_membership_repo.remove(db, user_id=user_id, show_id=show_id)
@@ -216,9 +227,7 @@ async def list_my_shows(
     my_ratings = await show_rating_repo.get_many_for_user(
         db, user_id=user_id, show_ids=show_ids_all
     )
-    hide_flags = await show_membership_repo.get_hide_flags(
-        db, user_id=user_id, show_ids=show_ids_all
-    )
+    row_flags = await show_membership_repo.get_row_flags(db, user_id=user_id, show_ids=show_ids_all)
     if rated_only:
         pairs = [(show, added) for (show, added) in pairs if show.id in my_ratings]
         if not pairs:
@@ -258,6 +267,7 @@ async def list_my_shows(
         next_ep = next_eps_by_show.get(show.id)
         total = total_counts.get(show.id, 0)
         aired = aired_counts.get(show.id, 0)
+        flags = row_flags.get(show.id, show_membership_repo.RowFlags(False, False))
         entries.append(
             MyShowEntry(
                 show=build_show_summary_from_refs(
@@ -279,7 +289,8 @@ async def list_my_shows(
                 ),
                 added_at=added_at_by_show[show.id],
                 my_rating=my_ratings.get(show.id),
-                hide_from_activity=hide_flags.get(show.id, False),
+                hide_from_activity=flags.hide_from_activity,
+                muted=flags.muted,
             )
         )
 

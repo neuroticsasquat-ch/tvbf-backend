@@ -89,6 +89,20 @@ class User(Base):
         Boolean, nullable=False, server_default=text("TRUE")
     )
     is_admin: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
+    # Per-kind push opt-outs (NEU-1490, Push Notifications spec §4.4), default on.
+    notify_airs_today: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    notify_premiere_set: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    notify_premiere_moved: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
+    notify_ended: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("TRUE"))
+    notify_revived: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, server_default=text("TRUE")
+    )
     # Moderation (NEU-1162). A timestamp rather than a boolean because the
     # question asked of a moderation action later is *when*, and §1.1 made this
     # column the only record of the act — there is no `disabled_by` and no
@@ -148,6 +162,9 @@ class UserShowWatch(Base):
     hide_from_activity: Mapped[bool] = mapped_column(
         Boolean, nullable=False, server_default=text("FALSE")
     )
+    # Silences every push kind for this show (NEU-1490). Not a never-recommend
+    # source: `recommendations/exclusion.py` deliberately does not read it.
+    muted: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
 
 
 class UserEpisodeWatch(Base):
@@ -864,4 +881,153 @@ class HandleRelease(Base):
     )
     released_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+
+
+class PushSubscription(Base):
+    """One browser's Web Push subscription (project spec §4.2, NEU-1485).
+
+    Many per user — one per browser the user turned notifications on in — and
+    never tied to a session: logging out does not unsubscribe a device, and a
+    session expiring must not silently stop its pushes.
+
+    **`endpoint` is unique, so an endpoint belongs to exactly one user.**
+    Subscribing with one that already exists upserts the row onto the caller
+    (`push_subscription_repo.upsert`): browsers re-issue the same endpoint after
+    a `pushsubscriptionchange`, and a device that changed hands should follow its
+    current login rather than keep notifying the last one.
+
+    `failure_count` counts *consecutive* failures and resets on any 2xx; the
+    delivery job retires the row at five, or at once on a 404/410 (§5.2).
+    """
+
+    __tablename__ = "push_subscription"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="pk_push_subscription"),
+        UniqueConstraint("endpoint", name="uq_push_subscription_endpoint"),
+        Index("ix_push_subscription_user_id", "user_id"),
+        {"schema": "app"},
+    )
+
+    id: Mapped[UUID] = mapped_column(PGUUID(as_uuid=True), server_default=text("gen_random_uuid()"))
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_push_subscription_user"),
+        nullable=False,
+    )
+    # The push service URL the job POSTs to, and two base64url client keys. None
+    # of the three ever leaves the backend (`GET /me/push/subscriptions`).
+    endpoint: Mapped[str] = mapped_column(Text, nullable=False)
+    p256dh: Mapped[str] = mapped_column(Text, nullable=False)
+    auth: Mapped[str] = mapped_column(Text, nullable=False)
+    # As sent at subscribe time; the SPA's device list derives its label from it.
+    user_agent: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    last_success_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    failure_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+
+
+# What a delivery row records (project spec §4.3). `test` is `POST /me/push/test`,
+# `summary` is the one push the per-user cap folds its overflow into; the rest are
+# the airs-today set and the four catalog-event kinds.
+PUSH_DELIVERY_KINDS: tuple[str, ...] = (
+    "airs_today",
+    "premiere_set",
+    "premiere_moved",
+    "ended",
+    "revived",
+    "summary",
+    "test",
+)
+
+# `pending` is inserted before the send and flipped to a terminal state after it;
+# nothing else ever updates a row (§7).
+PUSH_DELIVERY_PENDING = "pending"
+PUSH_DELIVERY_SENT = "sent"
+PUSH_DELIVERY_FAILED = "failed"
+PUSH_DELIVERY_SKIPPED = "skipped"
+
+PUSH_DELIVERY_STATUSES: tuple[str, ...] = (
+    PUSH_DELIVERY_PENDING,
+    PUSH_DELIVERY_SENT,
+    PUSH_DELIVERY_FAILED,
+    PUSH_DELIVERY_SKIPPED,
+)
+
+
+class PushDelivery(Base):
+    """One attempt to deliver one notification to one subscription (§4.3, NEU-1485).
+
+    **The idempotency rule is the unique `(notification_key, subscription_id)`.**
+    The job inserts a `pending` row before it sends, so a second run — or a
+    crash and a re-run — finds the row and does not send twice.
+
+    **`subscription_id` is SET NULL, not CASCADE, on purpose.** Retiring a
+    subscription deletes it, and the `failed` row that recorded why
+    (`error='gone'` / `'failure_limit'`) has to survive so
+    `GET /admin/push/stats` can count retirements per day; a cascade would
+    delete the evidence in the same statement. Postgres treats NULLs as distinct
+    in the unique index, so orphaned rows never collide with each other. Account
+    deletion still takes everything, through `user_id`.
+
+    `user_id` is denormalised from the subscription for exactly that reason, and
+    for the per-user daily cap, which counts on `(user_id, created_at)`.
+    Append-only in spirit: the 90-day purge is the only delete.
+    """
+
+    __tablename__ = "push_delivery"
+    __table_args__ = (
+        PrimaryKeyConstraint("id", name="pk_push_delivery"),
+        UniqueConstraint(
+            "notification_key", "subscription_id", name="uq_push_delivery_key_subscription"
+        ),
+        CheckConstraint(_one_of("kind", PUSH_DELIVERY_KINDS), name="ck_push_delivery_kind"),
+        CheckConstraint(_one_of("status", PUSH_DELIVERY_STATUSES), name="ck_push_delivery_status"),
+        # The per-user cap and the stats both range on it.
+        Index("ix_push_delivery_user_id_created_at", "user_id", "created_at"),
+        # Not for reading: the unique index leads on `notification_key`, so the
+        # SET NULL from `push_subscription` would otherwise scan this table on
+        # every retirement.
+        Index(
+            "ix_push_delivery_subscription_id",
+            "subscription_id",
+            postgresql_where=text("subscription_id IS NOT NULL"),
+        ),
+        {"schema": "app"},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, autoincrement=True)
+    subscription_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey(
+            "app.push_subscription.id", ondelete="SET NULL", name="fk_push_delivery_subscription"
+        ),
+        nullable=True,
+    )
+    user_id: Mapped[UUID] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("app.user.id", ondelete="CASCADE", name="fk_push_delivery_user"),
+        nullable=False,
+    )
+    notification_key: Mapped[str] = mapped_column(Text, nullable=False)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    # Null for `summary` and `test`, and once a show row is gone.
+    show_id: Mapped[int | None] = mapped_column(
+        BigInteger,
+        ForeignKey("catalog.show.id", ondelete="SET NULL", name="fk_push_delivery_show"),
+        nullable=True,
+    )
+    status: Mapped[str] = mapped_column(Text, nullable=False)
+    status_code: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=text("now()")
+    )
+    sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    run_id: Mapped[UUID | None] = mapped_column(
+        PGUUID(as_uuid=True),
+        ForeignKey("catalog.ingest_run.id", ondelete="SET NULL", name="fk_push_delivery_run"),
+        nullable=True,
     )

@@ -1,5 +1,26 @@
 # Release notes
 
+## 0.4.0 — 2026-09-27
+
+### Catalog
+
+- Add show_event sidecar and push_deliver run kind ([NEU-1480](https://linear.app/neuroticsasquatch/issue/NEU-1480)) ([#360](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/360))
+- Detect premiere and ended/revived transitions in the delta ([NEU-1481](https://linear.app/neuroticsasquatch/issue/NEU-1481))
+
+### General
+
+- Use a rolling date for the "still anticipated" fixture in test_me_recommendations
+
+### Push
+
+- VAPID settings, key generation, public-key endpoint and push sender ([NEU-1484](https://linear.app/neuroticsasquatch/issue/NEU-1484)) ([#362](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/362))
+- Push_subscription + push_delivery tables and /me/push/subscriptions ([NEU-1485](https://linear.app/neuroticsasquatch/issue/NEU-1485)) ([#363](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/363))
+- POST /me/push/test sends a test push to one of my devices ([NEU-1486](https://linear.app/neuroticsasquatch/issue/NEU-1486)) ([#364](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/364))
+- Notify_* preference flags, per-show mute, mute endpoint ([NEU-1490](https://linear.app/neuroticsasquatch/issue/NEU-1490)) ([#365](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/365))
+- Notification candidates and payload builder ([NEU-1488](https://linear.app/neuroticsasquatch/issue/NEU-1488)) ([#366](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/366))
+- Daily push delivery job with retirement and purge ([NEU-1489](https://linear.app/neuroticsasquatch/issue/NEU-1489)) ([#367](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/367))
+- GET /admin/push/stats and push data in /me/export ([NEU-1493](https://linear.app/neuroticsasquatch/issue/NEU-1493)) ([#368](https://github.com/neuroticsasquat-ch/music-discovery-engine/pull/368))
+
 ## 0.3.4 — 2026-08-23
 
 ### General
