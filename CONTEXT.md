@@ -147,8 +147,8 @@ _Avoid_: watchlist, favorites, following
 The computed next unwatched episode for each show in a user's My Shows.
 
 **Connection**:
-A link between two users, in one of three states: requested, accepted, or blocked. Friend-scoped features read only accepted connections.
-_Avoid_: friend, follow, relationship
+A link between two users, in one of three states: pending, accepted, or blocked. Friend-scoped features read only accepted connections.
+_Avoid_: friend, follow, relationship, requested (the state is `pending`)
 
 **Invite code**:
 A single-use code that may optionally be supplied at signup. Never expires; consumed on use. An admin creates one; the invitee supplies it — an invited signup gets three things an open signup does not: pre-verification (skipping the email gate), an auto-connection to the inviter, and a consumed invite row. Since NEU-1165 supplying one is optional — `INVITE_REQUIRED` can re-close registration without a deploy.
@@ -160,6 +160,22 @@ _Avoid_: confirmed, activated, validated
 **Outreach** / **consumption**:
 The two halves of the social layer, and the line the verification gate is drawn on (NEU-1152, NEU-1161). **Outreach** is reaching a user who has not consented — sending a connection request, being discoverable in `/users/search` — and requires a verified email. **Consumption** is reading what an accepted connection already agreed to share — a friend's library, friend engagement on a show — and requires only the connection. Defensive acts (blocking) and withdrawal (declining, cancelling, disconnecting) are neither, and are never gated: an unverified user must always be able to protect themselves and to say yes to someone who asked.
 _Avoid_: social actions (it collapses the distinction the gate rests on)
+
+**Activity**:
+One user action on one target, as the friend-scoped surfaces see it: adding a show to My Shows, marking an episode, a season or a whole show watched, or rating a show or an episode. An activity is a single record per (user, kind, target) — a bulk mark is one activity, not one per episode — and undoing the action removes it rather than adding a second. Every friend-scoped aggregate (the feed, popular with friends) reads activities, never the underlying watch or rating rows, because activities are the layer the sharing switches apply to.
+_Avoid_: event (the storage term), watch (one of six kinds)
+
+**Sharing switches**:
+The two controls a user has over what connections see of their activity: a global switch that hides all of it, and a per-show switch that hides activity on one show. Both apply to every friend-scoped aggregate. They do not apply to a friend's library or to the names on a show page's engagement strip.
+_Avoid_: privacy settings (broader), opt-out
+
+**Trending**:
+The world-wide list — TMDB's weekly ranking, snapshotted daily and served unchanged. A claim about the world, not about the viewer or their connections; the same for every user.
+_Avoid_: popular (that word is reserved for the friend-scoped list below), hot
+
+**Popular with friends**:
+The shows the viewer's accepted connections have had activity on recently, ranked by how many distinct connections were active on each, and per-viewer by construction. It is the social counterpart of trending: trending says what the world is watching, popular with friends says what your people are. It honours the sharing switches and counts nothing of the viewer's own.
+_Avoid_: trending with friends (trending is TMDB's), friends trending, friend activity (that is the feed)
 
 ### Recommendations
 
