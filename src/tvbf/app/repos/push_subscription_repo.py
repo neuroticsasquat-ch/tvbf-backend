@@ -91,10 +91,23 @@ async def mark_success(db: AsyncSession, subscription_id: UUID) -> None:
     )
 
 
+async def record_failure(db: AsyncSession, subscription_id: UUID) -> int | None:
+    """Count one more consecutive failure and return the new count, which the
+    delivery job retires the subscription on (§5.2 step 4) — or `None` when the
+    row is gone, because its user deleted it mid-send. The caller commits."""
+    result = await db.execute(
+        update(PushSubscription)
+        .where(PushSubscription.id == subscription_id)
+        .values(failure_count=PushSubscription.failure_count + 1)
+        .returning(PushSubscription.failure_count)
+    )
+    return result.scalar_one_or_none()
+
+
 async def delete(db: AsyncSession, subscription_id: UUID) -> None:
-    """Retire a subscription the push service answered 404/410 for. Its
-    delivery rows survive with `subscription_id` nulled (§4.3). The caller
-    commits."""
+    """Retire a subscription: the push service answered 404/410 for it, or it
+    reached the delivery job's failure limit. Its delivery rows survive with
+    `subscription_id` nulled (§4.3). The caller commits."""
     await db.execute(sa_delete(PushSubscription).where(PushSubscription.id == subscription_id))
 
 

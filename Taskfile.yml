@@ -149,6 +149,16 @@ tasks:
     cmds:
       - "{{.EXEC}} python -m tvbf.jobs.trending_snapshot"
 
+  push:deliver:
+    # The *manual* trigger. In prod this runs as the fifth Coolify scheduled
+    # task, daily at 13:00 UTC after the catalog delta and the airdate
+    # reconcile, with its own `HEALTHCHECK_PUSH_URL` deadman. Refuses (exit 1)
+    # without VAPID keys; exit 1 otherwise only when every send failed. Poll the
+    # run through `task ingest:status -- <uuid>`.
+    desc: 'Send today''s push notifications, then purge 90-day-old events and deliveries (NEU-1489)'
+    cmds:
+      - "{{.EXEC}} python -m tvbf.jobs.push_deliver"
+
   vapid:generate:
     desc: 'Print a fresh VAPID key set as env lines (task vapid:generate -- --subject mailto:you@example.com) (NEU-1484)'
     # `silent` + `-T` for `queue:list`'s reasons: the env lines are the process

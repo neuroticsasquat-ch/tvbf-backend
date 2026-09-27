@@ -10,7 +10,7 @@ from collections.abc import Collection, Sequence
 from datetime import datetime
 from typing import Literal
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
@@ -50,3 +50,11 @@ async def recent_events(
         .order_by(m.ShowEvent.observed_at, m.ShowEvent.id)
     )
     return list(result.scalars())
+
+
+async def purge_events_before(session: AsyncSession, cutoff: datetime) -> int:
+    """Delete events observed before `cutoff` — the delivery job's retention
+    step (§5.2 step 5). Long past the freshness window, nothing reads them. The
+    caller commits."""
+    result = await session.execute(delete(m.ShowEvent).where(m.ShowEvent.observed_at < cutoff))
+    return result.rowcount  # type: ignore[attr-defined]
