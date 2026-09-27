@@ -285,6 +285,42 @@ class TrendingOut(BaseModel):
     shows: list[TrendingShowOut] = []
 
 
+class PopularShowOut(MarkedShowOut):
+    """One entry of `GET /me/friends/popular` (NEU-1499, project spec §5.2): a
+    `ShowSummary` **flattened**, marked, plus how many of the viewer's friends
+    were visibly active on it in the window.
+
+    Flattened on `TrendingShowOut`'s reasoning — `ShowGrid` and `ShowCard` take
+    a `ShowSummary`, and a wrapper would cost the SPA something for two scalars.
+
+    `friend_count` is the only ranking fact exposed, and it is ≥ 1 by
+    construction. The activity count and last-activity time order the list but
+    are not fields: a number the client can render is a number it will, and
+    neither means anything to a user.
+    """
+
+    friend_count: int
+
+
+class PopularWithFriendsOut(BaseModel):
+    """The `GET /me/friends/popular` body.
+
+    `connection_count` is the size of the viewer's accepted, enabled
+    connections, present on every response. It is what lets the SPA tell its
+    two empty states apart ("connect with someone" versus "a quiet fortnight")
+    without a second request or a rule of its own. A friend whose every activity
+    is hidden by a sharing switch still counts: the number is "who could
+    contribute", and reporting it lower would leak that someone hid something.
+
+    `window_days` is copy fuel only; the SPA never computes with it. `shows` is
+    in server rank order and is never re-sorted.
+    """
+
+    window_days: int
+    connection_count: int
+    shows: list[PopularShowOut]
+
+
 class AnticipatedShowOut(MarkedShowOut):
     """One entry of the most-anticipated list: a `ShowSummary` **flattened**,
     plus the same mark trending carries (NEU-1059).

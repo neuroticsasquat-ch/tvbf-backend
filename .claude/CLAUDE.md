@@ -189,9 +189,11 @@ header, per-user fields and status codes.
   → pair `409` → `201`. The throttle goes first so that at the cap every target answers an identical
   `429 rate_limited`; last, it would be a free silent oracle. Accepting, declining and cancelling are
   never throttled. See `.claude/docs/patterns-auth-and-abuse.md`.
-- **Friend engagement** — `get_current_user` dep, accepted connections only (`_accepted_friend_ids`;
-  pending, blocked and — since NEU-1162 — disabled excluded): `GET /shows/{show_id}/friends`,
-  `GET /episodes/{episode_id}/friends/watched`.
+- **Friend engagement** — `get_current_user` dep, accepted connections only
+  (`connection_service.accepted_friend_ids`; pending, blocked and — since NEU-1162 — disabled
+  excluded): `GET /shows/{show_id}/friends`, `GET /episodes/{episode_id}/friends/watched`,
+  `GET /shows/{show_id}/friends/ratings`, `GET /episodes/{episode_id}/friends/ratings`,
+  `GET /me/friends/popular` (NEU-1499 — Popular with Friends, `private, no-store`).
 - **Admin** — `Authorization: Bearer $ADMIN_TOKEN`: `POST /admin/catalog-ingest`, `GET
   /admin/catalog-ingest/{run_id}`, `POST /admin/catalog-update`, `GET /admin/ingest/{run_id}` (any-kind
   run status), `POST /admin/recommendations`, `POST /admin/invites`, `GET /admin/invites`. Every `POST`
