@@ -313,6 +313,8 @@ src/tvbf/
   push/
     keys.py            # `python -m tvbf.push.keys` — a fresh VAPID set as env lines (NEU-1484)
     sender.py          # `send()` -> Sent | Gone | Failed; the ONE module that imports `pywebpush`, and the seam tests mock (NEU-1484)
+    candidates.py      # what the delivery job would send: the airs-today set (Q16), fresh still-current events, the per-user cap + summary (NEU-1488)
+    payloads.py        # `build_payload(candidate)` -> the §5.3 JSON `sw.js` renders; pure, clipped to stay under 4 KB (NEU-1488)
   catalog/
     models.py          # SQLAlchemy tables in the catalog schema — the full TMDB surface (NEU-1032); also `ingest_run`, which every run of every kind lives in (moved here from `tvmaze`, NEU-1051)
     runs.py            # ingest_run CRUD helpers — read by the TMDB pass, the delta and the admin router
