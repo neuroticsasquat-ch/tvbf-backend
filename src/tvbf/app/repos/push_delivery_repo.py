@@ -1,13 +1,25 @@
-"""Writes to `app.push_delivery`, the delivery log (NEU-1485, project spec §4.3)."""
+"""Reads and writes on `app.push_delivery`, the delivery log (NEU-1485, project spec §4.3)."""
 
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
 from uuid import UUID
 
 from sqlalchemy import and_, delete, func, or_, select, update
+from sqlalchemy import cast as sa_cast
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.types import Date
 
-from tvbf.app.models import PUSH_DELIVERY_FAILED, PUSH_DELIVERY_PENDING, PushDelivery
+from tvbf.app.models import (
+    PUSH_DELIVERY_FAILED,
+    PUSH_DELIVERY_PENDING,
+    PUSH_DELIVERY_SENT,
+    PushDelivery,
+)
+
+# The `error` values the delivery job writes when it retires a subscription
+# (§5.2 step 4): the push service answered 404/410, or the fifth consecutive
+# failure. `GET /admin/push/stats` counts these as retirements.
+RETIREMENT_ERRORS: tuple[str, ...] = ("gone", "failure_limit")
 
 # A `pending` row this old was left by a run that crashed mid-send (§4.3): the
 # job counts it as failed and sends again. Younger than this it may be a send
@@ -132,6 +144,27 @@ async def count_for_user_since(
         )
     )
     return result.scalar_one()
+
+
+async def daily_counts_since(db: AsyncSession, since: date) -> dict[date, tuple[int, int, int]]:
+    """`(sent, failed, retired)` per UTC day of `created_at`, for days on or
+    after `since` — only days holding a row. A retirement is a `failed` row
+    with a `RETIREMENT_ERRORS` error, so it is counted under `failed` as well;
+    its `subscription_id` is null by now, which nothing here filters on (§4.3).
+    `pending` and `skipped` rows count nowhere."""
+    day = sa_cast(func.timezone("UTC", PushDelivery.created_at), Date)
+    failed = PushDelivery.status == PUSH_DELIVERY_FAILED
+    result = await db.execute(
+        select(
+            day,
+            func.count().filter(PushDelivery.status == PUSH_DELIVERY_SENT),
+            func.count().filter(failed),
+            func.count().filter(failed, PushDelivery.error.in_(RETIREMENT_ERRORS)),
+        )
+        .where(day >= since)
+        .group_by(day)
+    )
+    return {d: (sent, failed_n, retired) for d, sent, failed_n, retired in result.all()}
 
 
 async def purge_before(db: AsyncSession, cutoff: datetime) -> int:

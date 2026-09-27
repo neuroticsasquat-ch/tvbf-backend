@@ -705,6 +705,25 @@ class PushSubscriptionOut(BaseModel):
     last_success_at: datetime | None
 
 
+class PushStatsDay(BaseModel):
+    """One UTC day of `app.push_delivery`. `retired` is the subset of `failed`
+    that retired its subscription (`error` 'gone' or 'failure_limit')."""
+
+    day: date
+    sent: int
+    failed: int
+    retired: int
+
+
+class PushStatsOut(BaseModel):
+    """`GET /admin/push/stats` (NEU-1493, spec §5.4): the live subscription
+    totals, and the last 30 days oldest first, zero-filled."""
+
+    subscriptions: int
+    users_subscribed: int
+    by_day: list[PushStatsDay]
+
+
 class PushTestIn(BaseModel):
     subscription_id: UUID
 

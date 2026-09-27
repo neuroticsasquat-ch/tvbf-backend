@@ -179,6 +179,8 @@ header, per-user fields and status codes.
 - **Admin reports** — cookie session, `require_admin_user`, no CSRF (it is a GET): `GET
   /admin/reports` (NEU-1197; paged, `?reported_user_id=` filters, and it deliberately filters
   nothing on `disabled_at`).
+- **Admin push stats** — cookie session, `require_admin_user`, a GET: `GET /admin/push/stats`
+  (NEU-1493; subscription totals + 30 zero-filled UTC days of `sent`/`failed`/`retired`, read-only).
 - **Connections** — `get_current_user` dep, mutating routes also `require_csrf`: `POST
   /connection-requests`, `GET /me/connection-requests`, `POST /connection-requests/{id}/accept`, `DELETE
   /connection-requests/{id}`, `GET /me/connections`, `DELETE /me/connections/{user_id}`, `POST/DELETE
@@ -290,6 +292,7 @@ src/tvbf/
     invites_admin.py   # /admin/invites
     admin_users.py     # /admin/users + the is_admin and disabled toggles (cookie-session admin, NEU-1162)
     admin_reports.py   # GET /admin/reports — the read-only report queue; filters nothing, no-store (NEU-1197)
+    admin_push.py      # GET /admin/push/stats — read-only delivery stats; a retirement is its surviving `failed` row (NEU-1493)
     reports.py         # POST /reports — commit-then-notify, so it is always 204 (NEU-1162)
     connections.py        # /connection-requests, /me/connections, /me/blocks — the create route owns NEU-1157's check order
     friend_engagement.py  # /shows/{id}/friends, /episodes/{id}/friends/watched
