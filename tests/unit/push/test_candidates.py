@@ -178,8 +178,27 @@ def test_past_the_cap_the_remainder_becomes_one_summary():
     assert [c.kind for c in kept] == ["airs_today"] * 4 + ["ended"]
     assert kept[-1].event_id == 1
     assert summary == Candidate(
-        user_id=ALICE, kind="summary", key=f"summary:{ALICE}:2026-09-26", count=3
+        user_id=ALICE,
+        kind="summary",
+        key=f"summary:{ALICE}:2026-09-26",
+        count=3,
+        show_names=("Zed",),
     )
+
+
+def test_a_summary_names_each_overflowing_show_once_in_delivery_order():
+    candidates = [
+        _airs(ALICE, "Andor", 1),
+        _airs(ALICE, "Severance", 2),
+        _airs(ALICE, "Severance", 3, episode_number=2),
+        _airs(ALICE, "The Wire", 4),
+        _ev(ALICE, 1, hour=3),
+    ]
+
+    summary = apply_cap({ALICE: candidates}, 1, today=TODAY)[ALICE][-1]
+
+    assert summary.count == 4
+    assert summary.show_names == ("Severance", "The Wire", "Zed")
 
 
 def test_the_cap_is_per_user():
