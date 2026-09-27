@@ -1,12 +1,16 @@
-"""Feed query layer (NEU-178).
+"""Friend-scoped reads over the activity ledger: the feed (NEU-178) and the
+Popular with Friends ranking (NEU-1498).
 
-Builds a reverse-chronological page of activity events from a set of friend
-actors, applying read-time rollup of consecutive same-actor / same-show
+The feed builds a reverse-chronological page of activity events from a set of
+friend actors, applying read-time rollup of consecutive same-actor / same-show
 `watched_episode` rows within a configurable time window into a single
-`watched_episode_run` virtual item.
+`watched_episode_run` virtual item. Output is a list of `FeedRow` dataclasses;
+hydration of user/show/episode display fields happens in the service layer.
 
-Output is a list of `_FeedRow` dataclasses; hydration of user/show/episode
-display fields happens in the service layer.
+The ranking lives beside it because it is the same table under the same two
+sharing switches and the same show-resolution rule (ADR-0015). The two are two
+copies rather than one shared fragment; each file's tests assert the switch
+behaviour, so a predicate changed in one and not the other fails loudly.
 """
 
 from __future__ import annotations
@@ -208,3 +212,96 @@ async def fetch_feed_page(
             )
         )
     return rows
+
+
+POPULAR_WINDOW_DAYS = 14
+"""Project spec Q3: catches a weekly show twice and survives a quiet week."""
+
+POPULAR_LIMIT = 24
+"""Project spec Q9: matches Most Anticipated's grid."""
+
+
+@dataclass(frozen=True)
+class PopularShowRow:
+    show_id: int
+    friend_count: int
+
+
+# The two sharing switches and the episode -> show resolution are the feed
+# query's (`_QUERY` above). If those change, this changes with them. The verb
+# allow-list is the feed's too: its CASE resolves an unknown verb to NULL, so a
+# verb the feed would not show is not counted here either.
+#
+# The activity count and last-activity time are ordering keys only — they are
+# never selected, so nothing downstream can expose them (project spec §5.2). The
+# show id closes the ordering, so an unchanged ledger reads back identically.
+#
+# `adult` / `deleted_upstream_at` are filtered at read time, as every browse
+# list does (`browse_queries.list_similar_shows`, `get_trending_snapshot`).
+_POPULAR_QUERY = text(
+    """
+WITH resolved AS (
+    SELECT
+        e.actor_id,
+        e.created_at,
+        CASE WHEN e.target_type = 'episode' THEN ep.show_id
+             ELSE e.target_id::int END AS show_id
+    FROM app.activity_event e
+    JOIN app.user u ON u.id = e.actor_id AND u.activity_feed_enabled = TRUE
+    LEFT JOIN catalog.episode ep
+        ON e.target_type = 'episode' AND ep.id = e.target_id
+    WHERE e.actor_id = ANY(:friend_ids)
+      AND e.verb IN ('added_show','watched_episode','watched_season',
+                     'watched_show','rated_show','rated_episode')
+      AND e.created_at >= now() - make_interval(days => :window_days)
+),
+visible AS (
+    SELECT r.*
+    FROM resolved r
+    LEFT JOIN app.user_show_watch usw
+        ON usw.user_id = r.actor_id AND usw.show_id = r.show_id
+    WHERE r.show_id IS NOT NULL
+      AND usw.hide_from_activity IS NOT TRUE
+)
+SELECT v.show_id, COUNT(DISTINCT v.actor_id) AS friend_count
+FROM visible v
+JOIN catalog.show s ON s.id = v.show_id
+WHERE s.adult IS FALSE
+  AND s.deleted_upstream_at IS NULL
+GROUP BY v.show_id
+ORDER BY COUNT(DISTINCT v.actor_id) DESC,
+         COUNT(*) DESC,
+         MAX(v.created_at) DESC,
+         v.show_id
+LIMIT :limit
+"""
+).bindparams(bindparam("friend_ids", type_=ARRAY(PGUUID(as_uuid=True))))
+
+
+async def popular_shows_for_friends(
+    session: AsyncSession,
+    *,
+    friend_ids: list[UUID],
+    window_days: int = POPULAR_WINDOW_DAYS,
+    limit: int = POPULAR_LIMIT,
+) -> list[PopularShowRow]:
+    """Shows ranked by how many of `friend_ids` were visibly active on them
+    within the window (project spec §5.1).
+
+    Order: distinct friends, then activity count, then most recent activity,
+    then show id — total, so two reads of an unchanged ledger agree.
+
+    `friend_ids` is expected to come from `connection_service.accepted_friend_ids`,
+    which already drops pending, blocked and disabled users and never contains
+    the viewer. Empty short-circuits without a query.
+    """
+    if not friend_ids:
+        return []
+    result = await session.execute(
+        _POPULAR_QUERY,
+        {"friend_ids": friend_ids, "window_days": window_days, "limit": limit},
+    )
+    return [
+        PopularShowRow(show_id=r["show_id"], friend_count=r["friend_count"])
+        for r in result.mappings().all()
+    ]
