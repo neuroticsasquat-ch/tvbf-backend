@@ -206,7 +206,8 @@ Steps, in order:
    the window is the rule.
 3. **Per-user cap.** Order a user's candidates airs-today first (by show name), then events by
    `observed_at`. Take the first 5; if more remain, replace the remainder with one `summary`
-   notification ("and N more updates today" → `/upcoming`), key `summary:{user_id}:{today}`.
+   notification ("N more updates today", listing their shows → `/upcoming`), key
+   `summary:{user_id}:{today}`.
 4. **Deliver.** For each (candidate, subscription of that user): insert `push_delivery`
    `pending` (skip the candidate if the unique constraint says it was already `sent`), build
    the payload (§5.3), `webpush()` with `TTL=86400` and `urgency=normal`. On 2xx → `sent`,
@@ -239,8 +240,10 @@ JSON, encrypted by `pywebpush`, decoded in `sw.js`:
   (`S{s}E{e} airs today` when the episode has no title); `premiere_set` `Season {n} premieres
   {Mon D}`; `premiere_moved` `Season {n} moved to {Mon D}` (`…date removed` when `new_value` is
   null is **not** a kind — a date going null is not an event); `ended` `Marked as ended` or
-  `Marked as cancelled` from the raw status; `revived` `Renewed — more episodes are coming`; `summary` title `TV BingeFriend`, body
-  `{N} more updates today`; `test` title `TV BingeFriend`, body `Notifications are working`.
+  `Marked as cancelled` from the raw status; `revived` `Renewed — more episodes are coming`; `summary` title
+  `{N} more updates today` (`1 more update today`), body the remainder's distinct show names in
+  delivery order, as many whole names as fit and then `and {k} more shows` — not the app name as
+  title, which iOS already prints under it as "from TV BingeFriend"; `test` title `TV BingeFriend`, body `Notifications are working`.
 - `{Mon D}` in the two premiere bodies is the season's **corrected** `air_date` as of delivery —
   what the app shows (NEU-1145) — not `new_value`, which is the raw TMDB date §5.1 stores for
   comparison.

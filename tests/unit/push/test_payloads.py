@@ -92,18 +92,55 @@ def test_revived():
     )
 
 
-def test_summary():
-    payload = build_payload(
-        Candidate(user_id=USER, kind="summary", key=f"summary:{USER}:2026-09-26", count=3)
+def _summary(count: int, *names: str) -> Candidate:
+    return Candidate(
+        user_id=USER,
+        kind="summary",
+        key=f"summary:{USER}:2026-09-26",
+        count=count,
+        show_names=names,
     )
+
+
+def test_summary():
+    payload = build_payload(_summary(3, "Andor", "Severance"))
 
     assert payload == {
         "key": f"summary:{USER}:2026-09-26",
         "kind": "summary",
-        "title": "TV BingeFriend",
-        "body": "3 more updates today",
+        "title": "3 more updates today",
+        "body": "Andor, Severance",
         "url": "/upcoming",
     }
+
+
+def test_a_summary_of_one_update_is_singular():
+    assert build_payload(_summary(1, "Andor"))["title"] == "1 more update today"
+
+
+def test_a_summary_lists_as_many_whole_names_as_fit():
+    names = tuple(f"Show number {i:02d}" for i in range(20))
+
+    body = build_payload(_summary(20, *names))["body"]
+
+    assert len(body) <= MAX_TEXT_CHARS
+    assert body.startswith("Show number 00, Show number 01, ")
+    shown = body.split(" and ")[0].split(", ")
+    assert all(name in names for name in shown)
+    assert body.endswith(f" and {20 - len(shown)} more shows")
+
+
+def test_a_summary_names_one_remaining_show_in_the_singular():
+    names = ("x" * 60, "y" * 60)
+
+    assert build_payload(_summary(2, *names))["body"] == "x" * 60 + " and 1 more show"
+
+
+def test_a_summary_clips_a_first_name_too_long_to_fit_alone():
+    body = build_payload(_summary(2, "x" * 500, "Andor"))["body"]
+
+    assert len(body) == MAX_TEXT_CHARS
+    assert body.endswith("x… and 1 more show")
 
 
 def test_icon_is_omitted_without_a_poster():
@@ -124,5 +161,11 @@ def test_the_worst_case_payload_stays_under_4kb():
     payload = build_payload(
         _airs_today(show_name="📺" * 1000, episode_name="📺" * 1000, poster_path="/" + "a" * 64)
     )
+
+    assert len(json.dumps(payload).encode()) < 4096
+
+
+def test_the_worst_case_summary_stays_under_4kb():
+    payload = build_payload(_summary(99, *("📺" * 1000 for _ in range(50))))
 
     assert len(json.dumps(payload).encode()) < 4096

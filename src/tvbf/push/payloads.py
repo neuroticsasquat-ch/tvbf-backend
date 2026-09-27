@@ -39,6 +39,30 @@ def _mon_d(value: date | None) -> str:
     return f"{value:%b} {value.day}"
 
 
+def _plural(count: int, noun: str) -> str:
+    return f"{count} {noun}" if count == 1 else f"{count} {noun}s"
+
+
+def _show_list(names: tuple[str, ...], limit: int = MAX_TEXT_CHARS) -> str:
+    """`Andor, Severance and 2 more shows` — as many whole names as fit `limit`.
+
+    Whole names rather than a clipped string, so the list never ends mid-title;
+    only a first name too long to fit on its own is clipped.
+    """
+
+    def more(rest: int) -> str:
+        return f" and {_plural(rest, 'more show')}" if rest else ""
+
+    if not names:
+        return ""
+    for shown in range(len(names), 0, -1):
+        text = ", ".join(names[:shown]) + more(len(names) - shown)
+        if len(text) <= limit:
+            return text
+    suffix = more(len(names) - 1)
+    return _clip(names[0], limit - len(suffix)) + suffix
+
+
 def _body(candidate: Candidate) -> str:
     match candidate.kind:
         case "airs_today":
@@ -57,7 +81,7 @@ def _body(candidate: Candidate) -> str:
         case "revived":
             return "Renewed — more episodes are coming"
         case "summary":
-            return f"{candidate.count} more updates today"
+            return _show_list(candidate.show_names)
 
 
 def _url(candidate: Candidate) -> str:
@@ -70,7 +94,11 @@ def _url(candidate: Candidate) -> str:
 
 def build_payload(candidate: Candidate) -> dict[str, str]:
     """The §5.3 JSON for one notification. `icon` is omitted when there is no poster."""
-    title = APP_NAME if candidate.kind == "summary" else (candidate.show_name or APP_NAME)
+    if candidate.kind == "summary":
+        # Not the app name: iOS already prints "from TV BingeFriend" under the title.
+        title = f"{_plural(candidate.count or 0, 'more update')} today"
+    else:
+        title = candidate.show_name or APP_NAME
     payload = {
         "key": candidate.key,
         "kind": candidate.kind,

@@ -70,8 +70,10 @@ class Candidate:
     # The raw status an `ended` / `revived` event recorded (`show_event.new_value`).
     status: str | None = None
     observed_at: datetime | None = None
-    # How many notifications a `summary` stands in for.
+    # How many notifications a `summary` stands in for, and the distinct shows
+    # they are about, in delivery order — the body lists these (§5.3).
     count: int | None = None
+    show_names: tuple[str, ...] = ()
 
 
 def _has_subscription():
@@ -295,14 +297,15 @@ def apply_cap(
         )
         ordered = airs + events
         kept = ordered[:cap]
-        overflow = len(ordered) - len(kept)
-        if overflow:
+        rest = ordered[cap:]
+        if rest:
             kept.append(
                 Candidate(
                     user_id=user_id,
                     kind="summary",
                     key=f"summary:{user_id}:{today.isoformat()}",
-                    count=overflow,
+                    count=len(rest),
+                    show_names=tuple(dict.fromkeys(c.show_name for c in rest if c.show_name)),
                 )
             )
         capped[user_id] = kept
