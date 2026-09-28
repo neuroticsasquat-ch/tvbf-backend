@@ -284,7 +284,7 @@ All under the cookie session; mutating ones require CSRF. Documented in
 
 ### 6.1 Manifest and worker (milestone 2)
 
-- `public/manifest.webmanifest`: `name` TV BingeFriend, `short_name` BingeFriend,
+- `public/manifest.webmanifest`: `name` TV BingeFriend, `short_name` TVBF,
   `start_url` `/`, `display` `standalone`, `background_color`/`theme_color` `#0f1729`, icons
   192 and 512 (`any` and `maskable` variants) generated from `favicon.svg`. Linked from
   `index.html` with `<link rel="manifest">` and `apple-touch-icon` (180 px PNG).
