@@ -283,6 +283,9 @@ async def test_a_changed_show_is_re_fetched_even_though_it_is_already_synced(ses
     assert show.name == "Show 1396"
     assert show.tmdb_synced_at is not None
     assert show.tmdb_synced_at > datetime(2026, 1, 1, tzinfo=UTC)
+    # The delta fetches every season's regulars too, so it retires the show
+    # from the season credits backfill (NEU-1512).
+    assert show.season_credits_synced_at is not None
 
 
 @respx.mock

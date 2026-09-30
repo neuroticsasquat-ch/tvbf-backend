@@ -324,6 +324,43 @@ class TMDBEpisodeCrewMember(TMDBEpisodeCreditPerson):
     credit_id: OptionalStr = None
 
 
+class TMDBSeasonRegular(TMDBEpisodeCreditPerson):
+    """One entry of a season's `credits.cast[]` — a season regular (NEU-1512).
+
+    Upstream's own list of who was a regular *that season*, and the only place
+    TMDB says so: `aggregate_credits` mixes regulars and guests at show grain,
+    and the appended season block's `episodes[]` carries `guest_stars` and no
+    `cast`. A regular is credited on the whole season whether or not they
+    appear in a given episode, which is why this lands on a season and never
+    on an episode.
+
+    **Lenient identity, the episode grain's rather than the show grain's.**
+    `scripts/probe_tmdb_season_credits.py` measured 0 of 32 entries missing
+    `id` or `name` (2026-09-30), which is too small a sample to rule out the
+    ~0.4%-of-shows shape NEU-1128 found at episode grain — and this class sits
+    inside every series payload the ingest parses, so a strict one would lose a
+    whole show to one entry, on the daily delta as much as anywhere.
+    """
+
+    character: OptionalStr = None
+    credit_id: OptionalStr = None
+    # Upstream's `order`: the season's billing order (`CONTEXT.md`), present on
+    # all 32 measured entries.
+    billing_order: int | None = Field(default=None, alias="order")
+
+
+class TMDBSeasonCredits(_Payload):
+    """A season's `credits` — `season/{n}/credits`, appended or standalone.
+
+    `crew` is present upstream and deliberately ignored: series crew is already
+    in `aggregate_credits` and per-episode crew in `episodes[].crew`, and no
+    page asks for a third grain (NEU-1512 §2.2). `_Payload` drops it, and the
+    payload's `id`, which is the season's.
+    """
+
+    cast: list[TMDBSeasonRegular] = Field(default_factory=list)
+
+
 class TMDBEpisode(_Payload):
     """One episode, identical in shape wherever it appears — inside a season's
     `episodes[]`, and as `last_episode_to_air` / `next_episode_to_air`.
@@ -398,6 +435,13 @@ class TMDBSeasonDetail(_Payload):
     # (audit §8) — the series-level field at season grain.
     networks: list[TMDBCompany] = Field(default_factory=list)
     episodes: list[TMDBEpisode] = Field(default_factory=list)
+    # The season's regular cast (NEU-1512). `None` means the request did not ask
+    # for it, and the writer leaves the season's rows alone; `cast: []` is
+    # upstream stating the season has no regulars, and clears them. It arrives
+    # as `credits` on a standalone `get_tv_season(..., append=("credits",))` and
+    # under its own `season/N/credits` key on the series request, which
+    # `TMDBSeries._collect_appended_seasons` folds in here.
+    credits: TMDBSeasonCredits | None = None
 
 
 class TMDBExternalIds(_Payload):
@@ -647,10 +691,31 @@ class TMDBSeries(_Payload):
         `appended_seasons` is discarded rather than merged: the response is the
         only authority on what rode along, and quietly honouring both would make
         a typo'd key look like a season that was not requested.
+
+        `season/N/credits` (NEU-1512) is **not** a season: it is folded into the
+        `season/N` block as that detail's `credits`, so the writer sees one shape
+        whichever request a season arrived on. A credits key with no season key
+        beside it is dropped — there is no detail to hang it on, and `plan_append`
+        never asks for one without the other.
         """
         if not isinstance(data, dict):
             return data
-        seasons = [v for k, v in data.items() if isinstance(k, str) and k.startswith("season/")]
-        if not seasons and "appended_seasons" not in data:
+        seasons: dict[str, dict] = {}
+        credits: dict[str, Any] = {}
+        for key, value in data.items():
+            if not isinstance(key, str) or not key.startswith("season/"):
+                continue
+            number, _, rest = key.removeprefix("season/").partition("/")
+            if not rest and isinstance(value, dict):
+                seasons[number] = value
+            elif rest == "credits":
+                credits[number] = value
+        if not seasons and not credits and "appended_seasons" not in data:
             return data
-        return {**data, "appended_seasons": [s for s in seasons if isinstance(s, dict)]}
+        return {
+            **data,
+            "appended_seasons": [
+                {**season, "credits": credits[number]} if number in credits else season
+                for number, season in seasons.items()
+            ],
+        }

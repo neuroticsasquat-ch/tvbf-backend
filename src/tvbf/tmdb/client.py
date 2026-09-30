@@ -92,7 +92,8 @@ _MAX_CONNECTIONS = 10
 APPEND_TO_RESPONSE_LIMIT = 20
 
 # The decided list (NEU-1031 §1, widened by NEU-1052). Twelve namespaces,
-# leaving eight season slots out of the 20 above.
+# leaving eight slots out of the 20 above — four seasons since NEU-1512, because
+# each season now takes two (see `plan_append`).
 #
 # Going from the provisional three to eleven cost +12,618 requests — about 11
 # minutes on a pass that runs an hour and a half either way — because 2.9% of
@@ -118,7 +119,9 @@ APPEND_TO_RESPONSE_LIMIT = 20
 # overflow the cap into a hard 400.
 #
 # Three namespaces stay omitted and none of them for cost: `credits` is strictly
-# weaker than `aggregate_credits`, `similar` was measured against
+# weaker than `aggregate_credits` at show grain (its season-grain counterpart,
+# `season/N/credits`, is appended per season since NEU-1512 — see
+# `plan_append`), `similar` was measured against
 # `recommendations` and lost outright (project spec §2 — it returns zero
 # wherever recommendations does, and noise elsewhere), and `reviews` is another
 # product's user-generated content.
@@ -182,6 +185,21 @@ def season_key(season_number: int) -> str:
     return f"season/{season_number}"
 
 
+def season_credits_key(season_number: int) -> str:
+    """The `append_to_response` entry that rides one season's regular cast (NEU-1512).
+
+    A compound key, and measured to work: `scripts/probe_tmdb_season_credits.py`
+    (2026-09-30) got it back on all 8 probed seasons, identical to the
+    standalone `/season/{n}/credits` response every time.
+    """
+    return f"season/{season_number}/credits"
+
+
+# The `append_to_response` entries one season costs: its episodes and its
+# regular cast (NEU-1512). The second one is what halved the season window.
+ENTRIES_PER_SEASON = 2
+
+
 def plan_append(
     season_numbers: Iterable[int],
     namespaces: Sequence[str] = DEFAULT_APPEND,
@@ -191,6 +209,13 @@ def plan_append(
     Returns `(append, overflow)` — the `append_to_response` list for
     `get_tv_series`, and the season numbers that need their own
     `get_tv_season` call afterwards.
+
+    Every season it places costs **two** entries, `season/N` and
+    `season/N/credits` (NEU-1512): the regular cast is recorded per season
+    upstream and rides nowhere else, and a season that arrived without it would
+    be a season the writer cannot vouch for. So eight free slots place four
+    seasons, and an overflow season fetches its credits on its own request
+    (`get_tv_season(..., append=("credits",))`).
 
     The arithmetic is here rather than in the caller because it is the whole
     consequence of `APPEND_TO_RESPONSE_LIMIT`: namespaces and seasons draw on
@@ -206,8 +231,9 @@ def plan_append(
             f"{APPEND_TO_RESPONSE_LIMIT}-entry cap with no room for seasons"
         )
     seasons = list(season_numbers)
-    room = APPEND_TO_RESPONSE_LIMIT - len(namespaces)
-    return namespaces + [season_key(n) for n in seasons[:room]], seasons[room:]
+    room = (APPEND_TO_RESPONSE_LIMIT - len(namespaces)) // ENTRIES_PER_SEASON
+    placed = [key for n in seasons[:room] for key in (season_key(n), season_credits_key(n))]
+    return namespaces + placed, seasons[room:]
 
 
 class TMDBClient:
@@ -438,13 +464,22 @@ class TMDBClient:
         resp = await self._request("GET", f"{self._base_url}/trending/tv/{window}")
         return resp.json()
 
-    async def get_tv_season(self, series_id: int, season_number: int) -> dict:
+    async def get_tv_season(
+        self, series_id: int, season_number: int, *, append: Sequence[str] = ()
+    ) -> dict:
         """One season with its full episode list.
 
         The follow-up for seasons `plan_append` could not fit. A show needs one
         of these per overflow season, which is why the cap governs the cost of a
         full pass.
+
+        `append` rides namespaces on the season request the way `get_tv_series`
+        does. The ingest passes `("credits",)` so an overflow season carries its
+        regular cast like an appended one (NEU-1512) — measured to come back
+        under a `credits` key, identical to the standalone
+        `/season/{n}/credits` (`scripts/probe_tmdb_season_credits.py`).
         """
         url = f"{self._base_url}/tv/{series_id}/season/{season_number}"
-        resp = await self._request("GET", url)
+        params = {"append_to_response": ",".join(append)} if append else None
+        resp = await self._request("GET", url, params=params)
         return resp.json()

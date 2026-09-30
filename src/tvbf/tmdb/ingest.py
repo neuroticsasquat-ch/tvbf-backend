@@ -25,9 +25,13 @@ resumes rather than restarts.
 ## One request per show, and the guess that makes it one
 
 `append_to_response` takes 20 entries, namespaces and `season/N` blocks drawing
-on the same budget (NEU-1028). The twelve namespaces leave eight season slots
+on the same budget (NEU-1028). The twelve namespaces leave eight slots
 — the audit's eleven plus NEU-1052's `recommendations`, which narrowed the
-window from `0..8` to `0..7` and moved 1,054 shows into a second request. But a
+window from `0..8` to `0..7` and moved 1,054 shows into a second request.
+NEU-1512 then halved it to `0..3`: each season also appends `season/N/credits`,
+its regular cast, so eight slots hold four seasons and catalog-wide overflow
+rises from ~52k to ~90k standalone season requests (~35 minutes on a full
+pass) — the price of the one list upstream keeps regulars in. But a
 show's season *numbers* are only knowable from a response we have not made
 yet, so the first request guesses a window and reconciles afterwards against
 `seasons[]`, fetching whatever it missed with `get_tv_season`.
@@ -100,6 +104,7 @@ from tvbf.tmdb.change_events import detect_transitions, record_transitions, snap
 from tvbf.tmdb.client import (
     APPEND_TO_RESPONSE_LIMIT,
     DEFAULT_APPEND,
+    ENTRIES_PER_SEASON,
     TMDBClient,
     is_gone_upstream,
     plan_append,
@@ -122,8 +127,11 @@ def speculative_seasons(namespaces: Sequence[str] = DEFAULT_APPEND) -> tuple[int
     at 0 covers 97.5% of sampled shows against 94.0% for one starting at 1. See
     the module docstring, including what NEU-1052's twelfth namespace cost by
     narrowing the top of it.
+
+    Each season costs `ENTRIES_PER_SEASON` slots — its episodes and its regular
+    cast (NEU-1512) — so the window is half the free slots, not all of them.
     """
-    return tuple(range(0, APPEND_TO_RESPONSE_LIMIT - len(namespaces)))
+    return tuple(range(0, (APPEND_TO_RESPONSE_LIMIT - len(namespaces)) // ENTRIES_PER_SEASON))
 
 
 SPECULATIVE_SEASONS: tuple[int, ...] = speculative_seasons()
@@ -212,9 +220,15 @@ async def fetch_series_with_seasons(
 
     `namespaces` exists for the one caller that needs the episodes and nothing
     else — NEU-1045's episode mapping, which passes `()` and thereby trades the
-    twelve namespaces for twelve more speculative seasons. The ingest
+    twelve namespaces for six more speculative seasons. The ingest
     itself never passes it: a narrower payload here would mean a show mirrored
     without its credits and then stamped as complete.
+
+    Every season comes back carrying its regular cast whatever `namespaces`
+    says (NEU-1512): an appended one under `season/N/credits`, an overflow one
+    through `append=("credits",)`. A season's episodes and its regulars are
+    one fetch, so no caller can hold a season whose credits were never asked
+    for.
     """
     append, _ = plan_append(speculative_seasons(namespaces), namespaces)
     series = TMDBSeries.model_validate(await client.get_tv_series(series_id, append=append))
@@ -222,7 +236,9 @@ async def fetch_series_with_seasons(
     arrived = {detail.season_number for detail in series.appended_seasons}
     missing = sorted({summary.season_number for summary in series.seasons} - arrived)
     overflow = [
-        TMDBSeasonDetail.model_validate(await client.get_tv_season(series_id, number))
+        TMDBSeasonDetail.model_validate(
+            await client.get_tv_season(series_id, number, append=("credits",))
+        )
         for number in missing
     ]
     if overflow:

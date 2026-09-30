@@ -272,6 +272,19 @@ tasks:
     cmds:
       - "{{.EXEC_T}} python -m tvbf.jobs.credits_backfill report"
 
+  backfill:season-credits:
+    desc: 'TMDB season regulars for every mirrored catalog show without them — ~231k requests, resumable (NEU-1512)'
+    cmds:
+      # `{{.CLI_ARGS}}` carries --limit N for a smoke run before the full pass.
+      - "{{.EXEC}} python -m tvbf.jobs.season_credits_backfill backfill {{.CLI_ARGS}}"
+
+  backfill:season-credits:report:
+    desc: 'What catalog.season_cast holds and how many shows are left to fetch, as JSON (NEU-1512)'
+    # `silent` + `-T` for the same reasons `backfill:credits:report` needs them.
+    silent: true
+    cmds:
+      - "{{.EXEC_T}} python -m tvbf.jobs.season_credits_backfill report"
+
   backfill:recommendations:
     desc: 'TMDB recommendations for every mirrored catalog show that has none, most popular first — ~8.8h, resumable, stoppable (NEU-1052)'
     cmds:

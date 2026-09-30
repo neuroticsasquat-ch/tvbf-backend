@@ -203,6 +203,37 @@ def make_episode_crew_member(
     )
 
 
+def make_season_regular(
+    tmdb_person_id: int,
+    name: str,
+    character: str,
+    *,
+    order: int = 0,
+    **overrides: Any,
+) -> dict[str, Any]:
+    """An entry of a season's `credits.cast[]` — a season regular (NEU-1512).
+
+    The eleven keys `scripts/probe_tmdb_season_credits.py` measured: the shared
+    person half plus `character`, `credit_id` and `order`.
+    """
+    return (
+        _credit_person(tmdb_person_id, name)
+        | {
+            "character": character,
+            "credit_id": f"regular-{tmdb_person_id}-{character}",
+            "order": order,
+        }
+        | overrides
+    )
+
+
+def make_season_credits(cast: list[dict[str, Any]] | None = None) -> dict[str, Any]:
+    """`season/{n}/credits` — appended under that key, or as `credits` on a
+    standalone season. Upstream also sends `crew` and an `id`, which the parser
+    drops; `crew` is spelled so a test proves it is ignored rather than absent."""
+    return {"id": 3572, "cast": cast or [], "crew": []}
+
+
 def make_aggregate_credits(
     cast: list[dict[str, Any]] | None = None,
     crew: list[dict[str, Any]] | None = None,

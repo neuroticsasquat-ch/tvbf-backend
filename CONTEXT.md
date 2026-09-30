@@ -82,11 +82,11 @@ _Avoid_: role, part
 The umbrella term for a link between a person and something they worked on. Never used bare where the kind matters — say cast credit, crew credit, guest credit or episode crew credit.
 
 **Cast credit**:
-A person portraying a character on a show. Person-as-character.
+A person portraying a character on a show. Person-as-character. Comes in two grains: a **regular credit** across a show and a **guest credit** in one episode. Upstream's show-level list carries both without saying which is which — a guest's show-level entry is the same appearances counted, not a second credit — so the grain is derived (see *Regular credit*), never read off the row.
 _Avoid_: role, appearance, starring
 
 **Crew credit**:
-A person performing a named function on a show, such as Executive Producer or Editor. Person-in-function.
+A person performing a named function on a show, such as Executive Producer or Editor. Person-in-function. Like a cast credit it comes in two grains, a **series crew credit** and an **episode crew credit**, and upstream's show-level list mixes them the same way.
 
 **Crew role**:
 The named function someone performs, as a **department and a job together** — Directing/Director, Writing/Writer, Sound/Original Music Composer. Upstream sends both as free text; we intern the pair into a local lookup. One lookup covers show crew and episode crew alike.
@@ -95,15 +95,27 @@ The scope widened with the source (ADR-0007). TV Maze had two disjoint vocabular
 _Avoid_: crew type, job title, episode crew role, guest crew type
 
 **Guest credit**:
-A person portraying a character in a single episode rather than across a show. Arrives on the season payload alongside the episode crew credits for the same episodes — which under TMDB is the show request itself, so both cost no request of their own (NEU-1040).
+A person portraying a character in a single episode rather than across a show. Arrives on the season payload alongside the episode crew credits for the same episodes — which under TMDB is the show request itself, so both cost no request of their own (NEU-1040). Someone who was a regular in one season and a guest in another holds both kinds on the same show; neither cancels the other.
 _Avoid_: guest star, one-off
+
+**Regular credit**:
+A person portraying a character as one of a **season's** regular cast — upstream's own list for that season, ingested per season (NEU-1512). Upstream credits a regular on every episode of the season whether or not they appear, so a regular credit says "on this season", never "in this episode"; that is why an episode page lists guests and links to the season for its regulars. At show grain a regular is anyone with a regular credit on any of the show's seasons, and everyone else in upstream's show-level list is a guest — a set difference, not an inference. "Regular" qualifies the credit here; a *regular episode* is an unrelated term meaning a non-special one (see *Last aired*).
+_Avoid_: main cast, series regular, lead, starring
+
+**Series crew credit**:
+A crew credit held at show level rather than assembled from episodes: Executive Producer, Creator, Composer. Unlike a regular credit it is **derived**, because upstream's season-level crew list is not worth a third grain: a job is series crew when its show-level episode count exceeds the person's episode crew credits in it. A director of forty episodes holds forty episode crew credits and **no** series crew credit; upstream's show-level row for them is a sum, and the show page's Crew tab lists only series crew.
+_Avoid_: show crew, regular crew, staff
+
+**Season cast**:
+What a season page lists as its cast: the season's regular cast in billing order, then its guest stars — everyone with a guest credit on one of the season's episodes, counted by appearances within the season. Someone on both lists for one season is upstream inconsistency and is shown as a regular only. An episode page has no cast of its own beyond its guest credits; it points at the season cast.
+_Avoid_: full cast, complete cast, episode cast
 
 **Episode crew credit**:
 A person performing a named function on a single episode. Distinct from a crew credit by **grain, not by vocabulary** — the same crew role can be held at either, and one lookup serves both. TV Maze called this "guest crew" for symmetry with guest cast, but an episode's director is not a guest.
 _Avoid_: guest crew, episode guest crew
 
 **Billing order**:
-The order upstream returns a show's cast in. Preserved rather than re-sorted. A property of show cast only — **crew has no order at all** under TMDB, at either grain.
+The order upstream returns a show's cast in, and — per season — a season's regular cast in. Preserved rather than re-sorted. A property of cast only — **crew has no order at all** under TMDB, at any grain.
 
 It stopped being the proxy for how much someone appears when the source changed (ADR-0007): TMDB gives a credit its own **episode count**, which is the real measure and the one credits are sorted by. Billing order still says who is top-billed, which an episode count does not.
 _Avoid_: cast order, importance, prominence
@@ -113,11 +125,11 @@ The sequence upstream lists a single episode's guest cast in. Preserved rather t
 _Avoid_: billing order, sort order
 
 **Filmography**:
-The complete itemized set of a person's credits — cast, crew, guest and episode crew — as presented on their page.
+The complete itemized set of a person's credits — regular, guest, series crew and episode crew — as presented on their page along two axes, cast and crew, one entry per show, newest credited date first.
 _Avoid_: credits list, appearances
 
 **Credit group**:
-All of one person's credits of a single kind on a single show, presented as one filmography entry — "Director · 12 episodes of *Severance*" rather than twelve rows. A presentation concept only: the API returns credits individually and grouping happens client-side. Grouping never merges across kinds, so a person who both acted in and directed a show has a cast entry and an episode-crew entry for it.
+All of one person's credits along one axis — cast or crew — on a single show, presented as one filmography entry — "*Severance* · 12 episodes" with the directed episodes beneath, or "*Breaking Bad* · 62 episodes" with the regular seasons and a later guest episode beneath. A presentation concept only: the API returns credits individually and grouping happens client-side. Grouping merges **grains** (a regular credit and guest credits on the same show share one entry, since NEU-1512) but never **axes**: a person who both acted in and directed a show has a cast entry and a crew entry for it.
 _Avoid_: credit cluster, merged credit
 
 ### Shows and episodes
