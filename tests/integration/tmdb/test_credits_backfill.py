@@ -30,6 +30,7 @@ from tests.fixtures.tmdb.series_factory import (
     make_guest_star,
     make_job,
     make_role,
+    make_season_credits,
     make_season_detail,
     make_season_summary,
     make_series,
@@ -132,7 +133,13 @@ def mock_series(tmdb_id: int, seasons: dict[int, list[int]], **kwargs) -> dict[i
         for key in request.url.params.get("append_to_response", "").split(","):
             if not key.startswith("season/"):
                 continue
-            number = int(key.removeprefix("season/"))
+            number_text, _, rest = key.removeprefix("season/").partition("/")
+            number = int(number_text)
+            if rest == "credits":
+                # NEU-1512's compound key; this pass reads nothing from it.
+                if number in seasons:
+                    payload[key] = make_season_credits()
+                continue
             if number in seasons:
                 payload[key] = _season_block(template, tmdb_id, number, seasons[number])
         return httpx.Response(200, json=payload)

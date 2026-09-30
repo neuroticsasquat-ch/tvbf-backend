@@ -16,7 +16,9 @@ from tests.fixtures.tmdb.series_factory import (
     make_guest_star,
     make_job,
     make_role,
+    make_season_credits,
     make_season_detail,
+    make_season_regular,
     make_series,
 )
 from tvbf.tmdb.api_payloads import (
@@ -120,6 +122,81 @@ class TestAppendedSeasons:
         detail = TMDBSeasonDetail.model_validate(make_season_detail(1, id=3572))
 
         assert detail.tmdb_id == 3572
+
+
+class TestSeasonCredits:
+    """A season's regular cast (NEU-1512) — `season/N/credits` on the series
+    request, `credits` on a standalone season. Measured identical either way
+    (`scripts/probe_tmdb_season_credits.py`)."""
+
+    def test_a_standalone_season_parses_its_regulars(self):
+        detail = TMDBSeasonDetail.model_validate(
+            make_season_detail(
+                1,
+                credits=make_season_credits([make_season_regular(17419, "Bryan", "Walt", order=0)]),
+            )
+        )
+
+        assert detail.credits is not None
+        [regular] = detail.credits.cast
+        assert (regular.tmdb_person_id, regular.name, regular.character) == (17419, "Bryan", "Walt")
+        assert (regular.billing_order, regular.credit_id) == (0, "regular-17419-Walt")
+
+    def test_a_season_that_did_not_ask_has_none(self):
+        """`None` is "the caller did not ask" — the writer leaves the season alone."""
+        assert TMDBSeasonDetail.model_validate(make_season_detail(1)).credits is None
+
+    def test_an_empty_cast_is_an_empty_list(self):
+        """`[]` is upstream stating a zero — the writer clears the season."""
+        detail = TMDBSeasonDetail.model_validate(
+            make_season_detail(1, credits=make_season_credits([]))
+        )
+
+        assert detail.credits is not None
+        assert detail.credits.cast == []
+
+    def test_crew_is_ignored(self):
+        credits = make_season_credits([])
+        credits["crew"] = [{"id": 1, "name": "Producer", "job": "Producer"}]
+
+        detail = TMDBSeasonDetail.model_validate(make_season_detail(1, credits=credits))
+
+        assert detail.credits is not None
+        assert not hasattr(detail.credits, "crew")
+
+    def test_a_regular_with_no_person_parses(self):
+        """Lenient, as the episode grain is (NEU-1128): 32 measured entries were
+        clean, too few to risk losing a whole show to one that is not."""
+        nameless = make_season_regular(1, "Ignored", "Ghost")
+        del nameless["id"]
+        del nameless["name"]
+
+        detail = TMDBSeasonDetail.model_validate(
+            make_season_detail(1, credits=make_season_credits([nameless]))
+        )
+
+        assert detail.credits is not None
+        assert (detail.credits.cast[0].tmdb_person_id, detail.credits.cast[0].name) == (None, None)
+
+    def test_the_compound_key_lands_on_its_season_and_is_not_a_season(self):
+        payload = make_series(seasons=2)
+        payload["season/2/credits"] = make_season_credits([make_season_regular(9, "Lead", "X")])
+
+        series = TMDBSeries.model_validate(payload)
+
+        by_number = {d.season_number: d for d in series.appended_seasons}
+        assert sorted(by_number) == [1, 2]
+        assert by_number[1].credits is None
+        assert by_number[2].credits is not None
+        assert [r.name for r in by_number[2].credits.cast] == ["Lead"]
+
+    def test_credits_with_no_season_beside_them_are_dropped(self):
+        payload = make_series(seasons=1)
+        payload["season/5/credits"] = make_season_credits([make_season_regular(9, "Lead", "X")])
+
+        series = TMDBSeries.model_validate(payload)
+
+        assert [d.season_number for d in series.appended_seasons] == [1]
 
 
 class TestNamespacePresence:

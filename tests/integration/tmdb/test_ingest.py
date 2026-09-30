@@ -21,7 +21,9 @@ from sqlalchemy import func, select, update
 
 from tests.fixtures.tmdb.series_factory import (
     make_episode,
+    make_season_credits,
     make_season_detail,
+    make_season_regular,
     make_season_summary,
     make_series,
 )
@@ -31,7 +33,7 @@ from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import SPECULATIVE_SEASONS, run_catalog_ingest
 
 BASE = "https://api.themoviedb.org/3"
-_SEASON_URL_RE = re.compile(rf"{re.escape(BASE)}/tv/\d+/season/\d+")
+_SEASON_PATH_RE = re.compile(r"/3/tv/\d+/season/\d+")
 
 
 def _series_payload(tmdb_id: int, season_numbers: list[int], *, episodes: int = 1) -> dict:
@@ -45,7 +47,12 @@ def _series_payload(tmdb_id: int, season_numbers: list[int], *, episodes: int = 
 
 
 def _season_block(
-    tmdb_id: int, number: int, *, episodes: int = 1, standalone: bool = False
+    tmdb_id: int,
+    number: int,
+    *,
+    episodes: int = 1,
+    standalone: bool = False,
+    regulars: list[dict] | None = None,
 ) -> dict:
     block = make_season_detail(
         number,
@@ -56,17 +63,29 @@ def _season_block(
     )
     if standalone:
         # `GET /tv/{id}/season/{n}` carries a real `id`; the appended form does
-        # not. Both are exercised, because a show splits across the two.
+        # not. Both are exercised, because a show splits across the two. The
+        # ingest asks it for `credits` too (NEU-1512), which it answers inline.
         block["id"] = tmdb_id * 100 + number
+        block["credits"] = make_season_credits(regulars)
     return block
 
 
-def mock_series(tmdb_id: int, season_numbers: list[int], *, episodes: int = 1, **overrides):
+def mock_series(
+    tmdb_id: int,
+    season_numbers: list[int],
+    *,
+    episodes: int = 1,
+    regulars: dict[int, list[dict]] | None = None,
+    **overrides,
+):
     """Route `/tv/{id}` and every `/tv/{id}/season/{n}` for one show.
 
+    `regulars` is each season's `credits.cast`, served on whichever request the
+    season arrives on.
+
     The series route honours `append_to_response` exactly as measured: it
-    returns a `season/N` block only for seasons the show actually has *and* the
-    caller asked for.
+    returns a `season/N` block — and a `season/N/credits` one (NEU-1512) — only
+    for seasons the show actually has *and* the caller asked for.
     """
 
     def _respond(request: httpx.Request) -> httpx.Response:
@@ -75,16 +94,27 @@ def mock_series(tmdb_id: int, season_numbers: list[int], *, episodes: int = 1, *
         for key in asked:
             if not key.startswith("season/"):
                 continue
-            number = int(key.removeprefix("season/"))
-            if number in season_numbers:
-                payload[key] = _season_block(tmdb_id, number, episodes=episodes)
+            number, _, rest = key.removeprefix("season/").partition("/")
+            if int(number) in season_numbers:
+                payload[key] = (
+                    make_season_credits((regulars or {}).get(int(number)))
+                    if rest == "credits"
+                    else _season_block(tmdb_id, int(number), episodes=episodes)
+                )
         return httpx.Response(200, json=payload)
 
     respx.get(f"{BASE}/tv/{tmdb_id}").mock(side_effect=_respond)
     for number in season_numbers:
         respx.get(f"{BASE}/tv/{tmdb_id}/season/{number}").mock(
             return_value=httpx.Response(
-                200, json=_season_block(tmdb_id, number, episodes=episodes, standalone=True)
+                200,
+                json=_season_block(
+                    tmdb_id,
+                    number,
+                    episodes=episodes,
+                    standalone=True,
+                    regulars=(regulars or {}).get(number),
+                ),
             )
         )
 
@@ -211,6 +241,34 @@ async def test_a_copied_and_enriched_row_is_ingested_in_place(session):
     assert show.id == 4821
     assert show.name == "Show 1396"
     assert show.tmdb_synced_at is not None
+    assert show.season_credits_synced_at is not None
+
+
+@respx.mock
+async def test_regulars_land_from_appended_and_overflow_seasons_alike(session):
+    """NEU-1512 end to end: a season inside the window brings its regulars on
+    the compound `season/N/credits` key, one past it on the standalone fetch's
+    inline `credits` — and the writer cannot tell the two apart."""
+    mock_series(
+        1396,
+        [1, 9],
+        regulars={
+            1: [make_season_regular(1, "Early", "A")],
+            9: [make_season_regular(2, "Late", "B")],
+        },
+    )
+
+    await _run(session, [1396])
+
+    show = await _show(session, 1396)
+    rows = await session.execute(
+        select(m.Season.season_number, m.Person.name)
+        .join(m.SeasonCast, m.SeasonCast.season_id == m.Season.id)
+        .join(m.Person, m.Person.id == m.SeasonCast.person_id)
+        .where(m.Season.show_id == show.id)
+        .order_by(m.Season.season_number)
+    )
+    assert [tuple(row) for row in rows.all()] == [(1, "Early"), (9, "Late")]
 
 
 @respx.mock
@@ -265,11 +323,14 @@ async def test_a_forty_season_show_is_fetched_completely(session):
     ).scalar_one()
     assert episodes == 40
 
-    season_calls = [c for c in respx.calls if _SEASON_URL_RE.fullmatch(str(c.request.url))]
+    season_calls = [c for c in respx.calls if _SEASON_PATH_RE.fullmatch(c.request.url.path)]
     # Season 0 is asked for and does not exist, which TMDB drops silently; the
     # rest of the window rides along, and everything above it is a follow-up.
+    # 37 since NEU-1512 halved the window to make room for season credits.
     overflow = [n for n in numbers if n not in SPECULATIVE_SEASONS]
-    assert len(season_calls) == len(overflow) == 33
+    assert len(season_calls) == len(overflow) == 37
+    # Every follow-up asks for the season's regular cast alongside its episodes.
+    assert {c.request.url.params.get("append_to_response") for c in season_calls} == {"credits"}
 
 
 @respx.mock

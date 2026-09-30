@@ -26,6 +26,7 @@ from sqlalchemy import func, select
 from tests.fixtures.spines import without_catalog_fk
 from tests.fixtures.tmdb.series_factory import (
     make_episode,
+    make_season_credits,
     make_season_detail,
     make_season_summary,
     make_series,
@@ -83,7 +84,13 @@ def mock_series(tmdb_id: int, seasons: dict[int, list[int]]) -> dict[int, respx.
         for key in request.url.params.get("append_to_response", "").split(","):
             if not key.startswith("season/"):
                 continue
-            number = int(key.removeprefix("season/"))
+            number_text, _, rest = key.removeprefix("season/").partition("/")
+            number = int(number_text)
+            if rest == "credits":
+                # NEU-1512's compound key; this pass reads nothing from it.
+                if number in seasons:
+                    payload[key] = make_season_credits()
+                continue
             if number in seasons:
                 payload[key] = _season_block(tmdb_id, number, seasons[number])
         return httpx.Response(200, json=payload)
@@ -199,15 +206,16 @@ async def test_a_season_outside_the_speculative_window_still_maps(session):
 
 
 @respx.mock
-async def test_a_twelfth_season_rides_the_first_request(session):
-    """The budget the ingest spends on namespaces is spent on seasons here."""
+async def test_a_ninth_season_rides_the_first_request(session):
+    """The budget the ingest spends on namespaces is spent on seasons here —
+    ten of them (0..9), since NEU-1512 made every season cost two entries."""
     show_id = await _seed_show(session, tmdb_id=1396)
-    await _seed_episode(session, show_id, season=12, number=1)
-    season_routes = mock_series(1396, {12: [1]})
+    await _seed_episode(session, show_id, season=9, number=1)
+    season_routes = mock_series(1396, {9: [1]})
 
     await _run(session)
 
-    assert season_routes[12].call_count == 0
+    assert season_routes[9].call_count == 0
 
 
 @respx.mock

@@ -5,12 +5,17 @@ separate from the ingest's DB-backed behaviour because it is neither.
 """
 
 from tvbf.catalog import models as m
-from tvbf.tmdb.client import APPEND_TO_RESPONSE_LIMIT, DEFAULT_APPEND, plan_append
+from tvbf.tmdb.client import (
+    APPEND_TO_RESPONSE_LIMIT,
+    DEFAULT_APPEND,
+    ENTRIES_PER_SEASON,
+    plan_append,
+)
 from tvbf.tmdb.ingest import SPECULATIVE_SEASONS
 
 
 def test_the_speculative_window_is_exactly_what_the_namespaces_leave():
-    """Eight slots after the twelve namespaces, so seasons 0..7.
+    """Eight slots after the twelve namespaces, two per season, so seasons 0..3.
 
     Derived rather than written out, and NEU-1052 is the case that proves it: it
     added the twelfth namespace (`recommendations`) and the window narrowed on
@@ -19,9 +24,16 @@ def test_the_speculative_window_is_exactly_what_the_namespaces_leave():
     The cost of that narrowing was measured rather than assumed — across all
     210,343 mirrored shows carrying ingested seasons, 96.84% fit inside 0..8 and
     96.34% inside 0..7, so 1,054 shows pay one extra `get_tv_season` each.
+
+    NEU-1512 halved it: every season also appends `season/N/credits`, its
+    regular cast, so eight slots hold four seasons and catalog-wide overflow
+    rises from ~52k to ~90k standalone season requests.
     """
-    assert SPECULATIVE_SEASONS == (0, 1, 2, 3, 4, 5, 6, 7)
-    assert len(SPECULATIVE_SEASONS) == APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND)
+    assert SPECULATIVE_SEASONS == (0, 1, 2, 3)
+    assert (
+        len(SPECULATIVE_SEASONS)
+        == (APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND)) // ENTRIES_PER_SEASON
+    )
 
 
 def test_the_first_request_fits_the_cap_with_nothing_left_over():
@@ -30,7 +42,7 @@ def test_the_first_request_fits_the_cap_with_nothing_left_over():
     assert len(append) == APPEND_TO_RESPONSE_LIMIT
     assert not overflow, "the window is sized to fit, so nothing should spill here"
     assert append[len(DEFAULT_APPEND) :] == [
-        f"season/{n}" for n in range(0, APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND))
+        key for n in SPECULATIVE_SEASONS for key in (f"season/{n}", f"season/{n}/credits")
     ]
 
 

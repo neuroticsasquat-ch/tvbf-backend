@@ -333,6 +333,81 @@ class TestCreditDeleteBehaviour:
         assert (await session.execute(select(m.EpisodeCrew))).scalars().all() == []
 
 
+async def _season(session, show, number=1) -> m.Season:
+    season = m.Season(show_id=show.id, season_number=number)
+    session.add(season)
+    await session.flush()
+    return season
+
+
+class TestSeasonCast:
+    """`catalog.season_cast` (NEU-1512): a season's regulars, three-part unique
+    like the episode grain, cascading from the season."""
+
+    async def test_one_person_may_play_two_characters_in_a_season(self, session):
+        show = await _show(session, tmdb_id=1)
+        season = await _season(session, show)
+        person = await _person(session, "Tatiana Maslany", tmdb_id=1)
+        first = await _character(session, show, "Sarah")
+        second = await _character(session, show, "Alison")
+        session.add_all(
+            [
+                m.SeasonCast(season_id=season.id, person_id=person.id, character_id=first.id),
+                m.SeasonCast(season_id=season.id, person_id=person.id, character_id=second.id),
+            ]
+        )
+        await session.flush()
+
+        assert len((await session.execute(select(m.SeasonCast))).scalars().all()) == 2
+
+    async def test_the_same_regular_cannot_be_recorded_twice(self, session):
+        show = await _show(session, tmdb_id=1)
+        season = await _season(session, show)
+        person = await _person(session, "A Person", tmdb_id=1)
+        character = await _character(session, show, "Someone")
+        row = {"season_id": season.id, "person_id": person.id, "character_id": character.id}
+        session.add(m.SeasonCast(**row))
+        await session.flush()
+        session.add(m.SeasonCast(**row))
+
+        with pytest.raises(IntegrityError):
+            await session.flush()
+
+    async def test_two_characterless_regulars_still_conflict(self, session):
+        """`NULLS NOT DISTINCT`, for `uq_egc_episode_person_character`'s reason."""
+        show = await _show(session, tmdb_id=1)
+        season = await _season(session, show)
+        person = await _person(session, "A Host", tmdb_id=1)
+        session.add(m.SeasonCast(season_id=season.id, person_id=person.id))
+        await session.flush()
+        session.add(m.SeasonCast(season_id=season.id, person_id=person.id))
+
+        with pytest.raises(IntegrityError):
+            await session.flush()
+
+    async def test_deleting_a_season_takes_its_regulars(self, session):
+        """A pruned season (ADR-0004) must not leave its regulars behind."""
+        show = await _show(session, tmdb_id=1)
+        season = await _season(session, show)
+        person = await _person(session, "A Person", tmdb_id=1)
+        session.add(m.SeasonCast(season_id=season.id, person_id=person.id))
+        await session.flush()
+
+        await session.delete(season)
+        await session.flush()
+
+        assert (await session.execute(select(m.SeasonCast))).scalars().all() == []
+        assert len((await session.execute(select(m.Person))).scalars().all()) == 1
+
+    async def test_a_regular_must_be_a_known_person(self, session):
+        show = await _show(session, tmdb_id=1)
+        season = await _season(session, show)
+        session.add(m.SeasonCast(season_id=season.id, person_id=987_654_321))
+
+        with pytest.raises(IntegrityError):
+            await session.flush()
+
+
 class TestPersonIdentity:
     """ADR-0008's convention, one more time: the surrogate is ours, `tmdb_id` is
     upstream's, and NULL there means locally-authored."""
