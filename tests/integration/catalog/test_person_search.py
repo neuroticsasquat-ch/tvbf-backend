@@ -14,6 +14,13 @@ async def _add_people(session, *names: tuple[int, str]) -> None:
     await session.commit()
 
 
+async def _add_scored_people(session, *people: tuple[int, str, float | None]) -> None:
+    session.add_all(
+        [m.Person(id=pid, tmdb_id=pid, name=name, popularity=score) for pid, name, score in people]
+    )
+    await session.commit()
+
+
 async def test_search_matches_accented_name_without_accents(session):
     # The whole reason folding matters more for names than titles: nobody types
     # the diacritics, and the catalog is full of them.
@@ -75,26 +82,42 @@ async def test_absent_or_blank_search_matches_nothing(session):
         assert rows == [] and total == 0
 
 
-async def test_results_are_alphabetical_and_case_insensitive(session):
-    await _add_people(session, (80070, "zoe Xu"), (80071, "Alan Xu"), (80072, "Molly Xu"))
+async def test_results_are_ordered_by_popularity_unscored_last(session):
+    """Popularity first (NEU-1513 §2.3): `carell` should lead with Steve Carell,
+    not whoever sorts first alphabetically."""
+    await _add_scored_people(
+        session,
+        (80070, "Alan Xu", 0.6),
+        (80071, "Molly Xu", None),
+        (80072, "zoe Xu", 12.5),
+    )
+    rows, _ = await search_people(session, "xu", page=1, per_page=20)
+    assert [r.name for r in rows] == ["zoe Xu", "Alan Xu", "Molly Xu"]
+
+
+async def test_equal_scores_are_alphabetical_and_case_insensitive(session):
+    # Ties are common at the low end, so name keeps a band readable.
+    await _add_scored_people(
+        session, (80075, "zoe Xu", 0.6), (80076, "Alan Xu", 0.6), (80077, "Molly Xu", 0.6)
+    )
     rows, _ = await search_people(session, "xu", page=1, per_page=20)
     assert [r.name for r in rows] == ["Alan Xu", "Molly Xu", "zoe Xu"]
 
 
 async def test_pagination_slices_a_stable_total(session):
-    await _add_people(
+    await _add_scored_people(
         session,
-        (80080, "Match One"),
-        (80081, "Match Two"),
-        (80082, "Match Three"),
-        (80083, "Unrelated"),
+        (80080, "Match One", 1.0),
+        (80081, "Match Two", 3.0),
+        (80082, "Match Three", 2.0),
+        (80083, "Unrelated", 9.0),
     )
     page1, total1 = await search_people(session, "match", page=1, per_page=2)
     page2, total2 = await search_people(session, "match", page=2, per_page=2)
     # Total is the full match count, not the page size.
     assert total1 == total2 == 3
-    assert [p.name for p in page1] == ["Match One", "Match Three"]
-    assert [p.name for p in page2] == ["Match Two"]
+    assert [p.name for p in page1] == ["Match Two", "Match Three"]
+    assert [p.name for p in page2] == ["Match One"]
 
 
 async def test_page_past_the_end_is_empty_not_an_error(session):

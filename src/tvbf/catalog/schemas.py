@@ -63,6 +63,8 @@ ALLOWED_SORT_KEYS = {
     "-tvmaze_updated",
     "last_aired",
     "-last_aired",
+    "popularity",
+    "-popularity",
 }
 
 # TMDB's integer gender enum, in the vocabulary TV Maze used and the SPA renders.

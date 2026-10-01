@@ -257,6 +257,16 @@ class Show(Base):
             "id",
             postgresql_where=text("deleted_upstream_at IS NULL"),
         ),
+        # Browse's "Popularity" sort (NEU-1513), on the same shape as the one
+        # above: `ORDER BY popularity DESC NULLS LAST, id` over live shows is
+        # the index order, so the unsearched route is an index walk. A searched
+        # page is bounded by the title semi-join whatever the sort.
+        Index(
+            "ix_show_popularity_live",
+            text("popularity DESC NULLS LAST"),
+            "id",
+            postgresql_where=text("deleted_upstream_at IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 

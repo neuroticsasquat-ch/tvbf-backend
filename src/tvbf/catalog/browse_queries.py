@@ -78,6 +78,12 @@ _SORT_EXPRS = {
     # the whole catalog is then a walk of `ix_show_last_aired_live`.
     "last_aired": m.Show.last_aired.asc().nulls_last(),
     "-last_aired": m.Show.last_aired.desc().nulls_last(),
+    # TMDB's **Popularity** score, refreshed nightly from the id export
+    # (NEU-1172). Nullable, so a show the export has never scored sorts after
+    # every scored one in both directions (NEU-1513). `-popularity` over the
+    # whole catalog walks `ix_show_popularity_live`.
+    "popularity": m.Show.popularity.asc().nulls_last(),
+    "-popularity": m.Show.popularity.desc().nulls_last(),
 }
 
 
@@ -991,6 +997,11 @@ async def search_people(
     browse-all-people surface, and an unfiltered listing would sort the entire
     table on every request off the back of an index that only covers the folded
     name.
+
+    Ordered by **Popularity**, then name, then id (NEU-1513), with no sort
+    parameter: a search box wants the person you meant first, and name keeps a
+    band of equal scores readable. Unscored people sort last. No index on the
+    score — the plan is a trigram bitmap scan and a top-N sort whatever the key.
     """
     # Token-AND, same as show search: "zachary levi" matches, "zachary garcia"
     # doesn't. A query that folds to nothing ("--", "") matches nothing — never
@@ -1007,7 +1018,11 @@ async def search_people(
     total = (await session.execute(select(func.count()).select_from(base.subquery()))).scalar_one()
 
     stmt = (
-        base.order_by(func.lower(m.Person.name).asc(), m.Person.id.asc())
+        base.order_by(
+            m.Person.popularity.desc().nulls_last(),
+            func.lower(m.Person.name).asc(),
+            m.Person.id.asc(),
+        )
         .limit(per_page)
         .offset((page - 1) * per_page)
     )

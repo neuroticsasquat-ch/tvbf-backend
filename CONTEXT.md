@@ -157,6 +157,10 @@ _Avoid_: last air date (TMDB's own frozen field on the show, which counts specia
 A title search none of whose tokens has three or more characters once folded — `v`, `24`, `er`, `24 h`. Too short to be looked up as a substring, so it matches the **start** of a title or AKA instead (`er` finds *ER*, `24 h` finds *24 H*). A query with at least one longer token is an ordinary substring search, and its short tokens narrow it.
 _Avoid_: stopword, minimum length
 
+**Popularity**:
+TMDB's interest score for one show or one person, mirrored as a property of that row. A number about one entity, not a list: it is what search ranks shows and people by when the viewer has not chosen another order, and what breaks ties when two titles resolve equally. It says how much attention the show or person gets world-wide, nothing about the viewer or their connections — the reserved word "popular" belongs to the friend-scoped list, and **trending** is TMDB's separate weekly ranking, which is demonstrably not this score in order. A show's score is refreshed nightly; a person's only when a show crediting them is re-mirrored, so person scores are of mixed vintage.
+_Avoid_: popular, most popular (reserved for the friend-scoped list), trending (a different TMDB list), relevance (this sort is not query-aware)
+
 ### The app
 
 **My Shows**:
