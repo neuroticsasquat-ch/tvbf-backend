@@ -199,8 +199,14 @@ async def test_get_shows_multi_network(client):
 
 
 async def test_get_shows_sort_invalid_returns_422(client):
-    r = await client.get("/shows?sort=popularity")
+    r = await client.get("/shows?sort=rating")
     assert r.status_code == 422
+
+
+async def test_get_shows_sort_popularity_is_accepted_both_ways(client):
+    for sort in ("popularity", "-popularity"):
+        r = await client.get(f"/shows?sort={sort}")
+        assert r.status_code == 200, sort
 
 
 async def test_get_shows_sort_premiered_desc(client):

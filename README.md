@@ -95,7 +95,7 @@ Gated by the session cookie. Every response carries `Cache-Control: public, max-
 
 `search` matches when every token is in the show's primary name, or every token is in one of its AKA names (token-AND, accent- and punctuation-folded). A query whose tokens are all shorter than three characters (`er`, `24 h`) matches the start of a title rather than anywhere in it. When the match is via AKA only, the response row carries `matched_aka` so the UI can show *why* a foreign-titled show came back.
 
-Pagination is offset-based. `page` ≤ 1000, `per_page` ≤ 100. Sort keys: `name`, `-name`, `premiered`, `-premiered`, `tvmaze_updated`, `-tvmaze_updated`, `last_aired`, `-last_aired` (the latest regular episode aired on or before today, UTC). Episodes per show are returned in one response; no pagination on that list.
+Pagination is offset-based. `page` ≤ 1000, `per_page` ≤ 100. Sort keys: `name`, `-name`, `premiered`, `-premiered`, `tvmaze_updated`, `-tvmaze_updated`, `last_aired`, `-last_aired` (the latest regular episode aired on or before today, UTC), `popularity`, `-popularity` (TMDB's score, refreshed nightly; unscored shows last either way). Episodes per show are returned in one response; no pagination on that list.
 
 FastAPI's auto-generated API docs are at `/docs` (Swagger UI) and `/redoc`.
 

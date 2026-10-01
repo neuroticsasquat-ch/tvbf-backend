@@ -316,12 +316,62 @@ async def test_list_shows_sort_last_aired_desc(session):
     assert ids == [88002, 88001, 88003]
 
 
+async def _seed_scored_shows(session, *shows: tuple[int, str, float | None]) -> None:
+    session.add_all([m.Show(id=sid, name=name, popularity=score) for sid, name, score in shows])
+    await session.commit()
+
+
+async def test_list_shows_sort_popularity_desc(session):
+    """`-popularity` puts the highest score first and an unscored show last;
+    `popularity` reverses the scored ones and still puts the unscored one last
+    (NEU-1513 §2.1, NULLS LAST both ways, as `premiered` and `last_aired`)."""
+    await _seed_scored_shows(
+        session,
+        (88101, "Scored Low", 11.3),
+        (88102, "Unscored", None),
+        (88103, "Scored High", 150.0),
+    )
+    ids = {88101, 88102, 88103}
+
+    rows, _ = await list_shows(session, ShowFilters(), sort="-popularity", page=1, per_page=100)
+    assert [r.id for r in rows if r.id in ids] == [88103, 88101, 88102]
+
+    rows, _ = await list_shows(session, ShowFilters(), sort="popularity", page=1, per_page=100)
+    assert [r.id for r in rows if r.id in ids] == [88101, 88103, 88102]
+
+
+async def test_list_shows_sort_popularity_breaks_ties_on_id(session):
+    # Inserted out of id order, so the assertion cannot pass by insertion order.
+    await _seed_scored_shows(session, (88112, "Tie B", 4.2), (88111, "Tie A", 4.2))
+    ids = {88111, 88112}
+    for sort in ("popularity", "-popularity"):
+        rows, _ = await list_shows(session, ShowFilters(), sort=sort, page=1, per_page=100)
+        assert [r.id for r in rows if r.id in ids] == [88111, 88112]
+
+
+async def test_list_shows_sort_popularity_applies_to_a_search(session):
+    """The predicate and the sort are independent: a searched page comes back in
+    score order, not name order."""
+    await _seed_scored_shows(
+        session,
+        (88121, "Apple Office", 2.0),
+        (88122, "Zebra Office", 149.6),
+        (88123, "Middle Office", 20.0),
+        (88124, "Unrelated", 600.0),
+    )
+    rows, total = await list_shows(
+        session, ShowFilters(search="office"), sort="-popularity", page=1, per_page=100
+    )
+    assert [r.id for r in rows] == [88122, 88123, 88121]
+    assert total == 3
+
+
 async def test_list_shows_invalid_sort_raises(session):
     await seed(session)
     try:
-        await list_shows(session, ShowFilters(), sort="popularity", page=1, per_page=100)
+        await list_shows(session, ShowFilters(), sort="rating", page=1, per_page=100)
     except ValueError as e:
-        assert "popularity" in str(e)
+        assert "rating" in str(e)
     else:
         raise AssertionError("expected ValueError")
 
