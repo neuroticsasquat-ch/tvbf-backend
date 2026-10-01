@@ -14,6 +14,11 @@ source and every one is a decision recorded in `catalog/models.py` or
   `w185` / `original` URLs off `TMDB_IMAGE_BASE_URL` rather than stored strings.
 * **A character belongs to one show and carries no image**, so a guest role that
   recurs across three shows is three interned rows.
+
+Since NEU-1512 **`cast` holds regular credits only** — a (show, character) with a
+`season_cast` row — with the seasons, the aggregate episode count and the latest
+air date across those seasons; and **`crew` holds series crew only**, a job whose
+aggregate count exceeds the person's episode rows in it on that show.
 """
 
 from datetime import date
@@ -72,6 +77,7 @@ async def seeded_people(client, session):
             m.Character(id=52, show_id=3, name="Guest Of The Week"),
             m.Character(id=53, show_id=1, name="Guest Of The Week"),
             m.Character(id=54, show_id=2, name="Guest Of The Week"),
+            m.Character(id=55, show_id=4, name="Narrator"),
             m.CrewRole(id=60, department="Production", job="Executive Producer"),
             m.CrewRole(id=61, department="Writing", job="Creator"),
             # One `(department, job)` vocabulary at both grains, where `tvmaze`
@@ -81,8 +87,14 @@ async def seeded_people(client, session):
         ]
     )
     # Guest credits order by air date, so give the target episodes real dates.
-    # Episode 3011 is left null to prove nulls sort last, not first.
-    for ep_id, airdate in ((1011, date(2021, 5, 1)), (2011, date(2022, 7, 4))):
+    # Episode 3011 is left null to prove nulls sort last, not first. 1022 and
+    # 3021 date the regular seasons, for `last_credited`.
+    for ep_id, airdate in (
+        (1011, date(2021, 5, 1)),
+        (2011, date(2022, 7, 4)),
+        (1022, date(2023, 1, 1)),
+        (3021, date(2019, 6, 1)),
+    ):
         ep = (await session.execute(select(m.Episode).where(m.Episode.id == ep_id))).scalar_one()
         ep.air_date = airdate
     await session.flush()
@@ -91,12 +103,23 @@ async def seeded_people(client, session):
             # Show 3 premiered 2019, show 1 premiered 2020 — inserted oldest first.
             m.ShowCast(show_id=3, person_id=EVERY_KIND, character_id=51, episode_count=9),
             m.ShowCast(show_id=1, person_id=EVERY_KIND, character_id=50, episode_count=1),
+            # Regular in both of show 3's seasons; in show 1's season 2, having
+            # guested in its season 1 (episode 1011, below); and in show 4's
+            # season 1 with no aggregate row and no dated episode. Show 2 is
+            # guest-only.
+            m.SeasonCast(season_id=302, person_id=EVERY_KIND, character_id=51),
+            m.SeasonCast(season_id=102, person_id=EVERY_KIND, character_id=50),
+            m.SeasonCast(season_id=301, person_id=EVERY_KIND, character_id=51),
+            m.SeasonCast(season_id=401, person_id=EVERY_KIND, character_id=55),
             # Two crew credits on one show — routine (writer *and* director), and
             # the credit tables carry no unique constraint, so the route has to
             # order them deterministically rather than lean on insertion order.
             m.ShowCrew(show_id=2, person_id=EVERY_KIND, role_id=60, episode_count=2),
             m.ShowCrew(show_id=2, person_id=EVERY_KIND, role_id=61, episode_count=1),
             m.ShowCrew(show_id=2, person_id=CREW_ONLY, role_id=61, episode_count=1),
+            # Directed one episode of show 3 (3011, below), and the aggregate says
+            # one: a sum of episode credits, so not series crew.
+            m.ShowCrew(show_id=3, person_id=EVERY_KIND, role_id=66, episode_count=1),
             # Episode 3011 has no airdate; 1011 aired 2021, 2011 aired 2022.
             m.EpisodeGuestCast(
                 episode_id=3011, person_id=EVERY_KIND, character_id=52, credit_order=0
@@ -165,7 +188,8 @@ async def test_credits_returns_all_four_kinds(seeded_people):
     r = await seeded_people.get(f"/people/{EVERY_KIND}/credits")
     assert r.status_code == 200
     body = r.json()
-    assert [c["show"]["id"] for c in body["cast"]] == [1, 3]  # premiere date desc
+    # Latest credited air date desc, nulls last: show 1 (2023), 3 (2019), 4 (none).
+    assert [c["show"]["id"] for c in body["cast"]] == [1, 3, 4]
     assert [c["show"]["id"] for c in body["crew"]] == [2, 2]
     # Air date desc, nulls last: 2011 (2022), 1011 (2021), 3011 (no airdate).
     assert [g["episode"]["id"] for g in body["guest_cast"]] == [2011, 1011, 3011]
@@ -180,6 +204,9 @@ async def test_cast_credit_entry_shape(seeded_people):
         "character": {"id": 50, "name": "Hero", "image_medium": None},
         "self": False,
         "voice": False,
+        "episode_count": 1,
+        "seasons": [2],
+        "last_credited": "2023-01-01",
     }
     # `self`, `voice` and a character image have no TMDB counterpart, so they are
     # false/null on every entry rather than only on this one.
@@ -196,7 +223,44 @@ async def test_crew_credit_entry_shape(seeded_people):
             "premiered": "2012-01-01",
         },
         "role": "Creator",
+        "episode_count": 1,
     }
+
+
+async def test_regular_credit_carries_seasons_count_and_last_credited(seeded_people):
+    body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
+    by_show = {c["show"]["id"]: c for c in body["cast"]}
+    assert by_show[3]["seasons"] == [1, 2]  # ascending, though inserted 2 then 1
+    assert by_show[3]["episode_count"] == 9
+    assert by_show[3]["last_credited"] == "2019-06-01"
+    # A regular with no aggregate row and no dated episode.
+    assert by_show[4]["episode_count"] is None
+    assert by_show[4]["last_credited"] is None
+
+
+async def test_guest_only_show_is_absent_from_cast(seeded_people):
+    body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
+    assert 2 not in [c["show"]["id"] for c in body["cast"]]
+    assert 2 in [g["show"]["id"] for g in body["guest_cast"]]
+
+
+async def test_guest_then_regular_is_one_cast_entry_plus_the_guest_episodes(seeded_people):
+    # Guest in show 1's season 1 (1011), regular in its season 2.
+    body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
+    assert [c["seasons"] for c in body["cast"] if c["show"]["id"] == 1] == [[2]]
+    assert [g["episode"]["id"] for g in body["guest_cast"] if g["show"]["id"] == 1] == [1011]
+
+
+async def test_crew_holds_series_crew_only(seeded_people):
+    # The show 3 Director credit is the sum of one episode credit, which
+    # `episode_crew` already lists.
+    body = (await seeded_people.get(f"/people/{EVERY_KIND}/credits")).json()
+    assert [(c["show"]["id"], c["role"]) for c in body["crew"]] == [
+        (2, "Creator"),
+        (2, "Executive Producer"),
+    ]
+    assert [c["episode_count"] for c in body["crew"]] == [1, 2]
+    assert 3011 in [c["episode"]["id"] for c in body["episode_crew"]]
 
 
 async def test_multiple_credits_on_one_show_order_deterministically(seeded_people):
