@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.app.models import User
 from tvbf.app.repos import show_membership_repo
 from tvbf.catalog import browse_queries
+from tvbf.catalog import models as m
 from tvbf.catalog.schemas import (
     ALLOWED_SORT_KEYS,
     AnticipatedShowOut,
@@ -18,6 +19,7 @@ from tvbf.catalog.schemas import (
     PersonCreditsOut,
     PersonListPage,
     PersonOut,
+    SeasonCastOut,
     SeasonOut,
     ShowDetail,
     ShowFilters,
@@ -344,8 +346,14 @@ async def get_anticipated_route(
 # Credits are deliberately not embedded in GET /shows/{id}: cast is unbounded
 # (The Simpsons has 1,420 cast and 533 crew rows), and the detail route serves a
 # card. Separate routes keep that payload bounded and let the SPA lazy-load.
-# Both take the router-level `private, max-age=300` — no per-user fields here,
-# so no no-store override.
+# None carries a per-user field, so all take the router-level
+# `private, max-age=300` rather than a no-store override.
+#
+# Since NEU-1512 each route returns what one panel renders: `/cast` the regular
+# credits and `/guest-cast` the rest of `show_cast`; `/crew` the series crew and
+# `/episode-crew` the rest of `show_crew`. Deciding "who is a regular" here keeps
+# it out of the SPA, and keeps the show page from fetching Law & Order's 11,550
+# cast rows to render its 33 regulars.
 @router.get("/shows/{show_id}/cast", response_model=list[CastMemberOut])
 async def get_show_cast_route(
     show_id: int,
@@ -356,8 +364,21 @@ async def get_show_cast_route(
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return [
-        build_cast_member(person, character)
-        for person, character in await browse_queries.list_show_cast(session, show_id)
+        build_cast_member(person, character, count)
+        for person, character, count in await browse_queries.list_show_cast(session, show_id)
+    ]
+
+
+@router.get("/shows/{show_id}/guest-cast", response_model=list[CastMemberOut])
+async def get_show_guest_cast_route(
+    show_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    return [
+        build_cast_member(person, character, count)
+        for person, character, count in await browse_queries.list_show_guest_cast(session, show_id)
     ]
 
 
@@ -369,8 +390,68 @@ async def get_show_crew_route(
     if not await browse_queries.show_exists(session, show_id):
         raise HTTPException(status_code=404, detail="show not found")
     return [
-        build_crew_member(person, role)
-        for person, role in await browse_queries.list_show_crew(session, show_id)
+        build_crew_member(person, role, count)
+        for person, role, count in await browse_queries.list_show_crew(session, show_id)
+    ]
+
+
+@router.get("/shows/{show_id}/episode-crew", response_model=list[CrewMemberOut])
+async def get_show_episode_crew_route(
+    show_id: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    return [
+        build_crew_member(person, role, count)
+        for person, role, count in await browse_queries.list_show_episode_crew(session, show_id)
+    ]
+
+
+async def _season_or_404(session: AsyncSession, show_id: int, number: int) -> m.Season:
+    """The season a show serves at `number`. Unlike `/episodes?season=N`, where a
+    season is a filter, here it is the parent — so an unknown one is a 404."""
+    if not await browse_queries.show_exists(session, show_id):
+        raise HTTPException(status_code=404, detail="show not found")
+    season = await browse_queries.get_show_season(session, show_id, number)
+    if season is None:
+        raise HTTPException(status_code=404, detail="season not found")
+    return season
+
+
+@router.get("/shows/{show_id}/seasons/{number}/cast", response_model=SeasonCastOut)
+async def get_season_cast_route(
+    show_id: int,
+    number: int,
+    session: AsyncSession = Depends(get_session),
+) -> SeasonCastOut:
+    season = await _season_or_404(session, show_id, number)
+    return SeasonCastOut(
+        # A regular's count would be TMDB's "every episode", a claim rather than
+        # a count, so it stays null (NEU-1512 §4.1).
+        regulars=[
+            build_cast_member(person, character)
+            for person, character in await browse_queries.list_season_regulars(session, season)
+        ],
+        guests=[
+            build_cast_member(person, character, appearances)
+            for person, character, appearances in await browse_queries.list_season_guests(
+                session, season
+            )
+        ],
+    )
+
+
+@router.get("/shows/{show_id}/seasons/{number}/crew", response_model=list[CrewMemberOut])
+async def get_season_crew_route(
+    show_id: int,
+    number: int,
+    session: AsyncSession = Depends(get_session),
+) -> list:
+    season = await _season_or_404(session, show_id, number)
+    return [
+        build_crew_member(person, role, episodes)
+        for person, role, episodes in await browse_queries.list_season_crew(session, season)
     ]
 
 

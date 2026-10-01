@@ -20,6 +20,11 @@ query had to change, it is because the target schema forced it:
 * **Credits sort by `episode_count`, not by a billing order.** TMDB sends no
   `order` on a crew entry at all and `aggregate_credits` gives the measure
   `order` only ever proxied for, so both credit tables lead their index on it.
+* **"Regular" is read off `season_cast`, never inferred** (NEU-1512). A regular
+  credit is a (person, character) upstream lists on one of the show's seasons;
+  every other `show_cast` row is a guest. Crew has no season-grain source worth
+  fetching, so a series crew credit is the one derivation left: a `show_crew` job
+  whose aggregate count exceeds the person's `episode_crew` rows in it.
 
 `GET /shows` still issues four queries for a page of any size: count, page,
 genres-by-show, networks-by-show. It was five before — dropping `web_channel`
@@ -28,10 +33,20 @@ dropped one.
 
 import unicodedata
 from collections.abc import Sequence
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from uuid import UUID
 
-from sqlalchemy import ColumnElement, Select, and_, false, func, literal, select, union
+from sqlalchemy import (
+    ColumnElement,
+    Select,
+    and_,
+    distinct,
+    false,
+    func,
+    literal,
+    select,
+    union,
+)
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 
@@ -130,6 +145,16 @@ async def get_show_seasons(session: AsyncSession, show_id: int) -> list[m.Season
         select(m.Season).where(m.Season.show_id == show_id).order_by(*season_rules.SEASON_ORDER)
     )
     return season_rules.deduped(result.scalars().all())
+
+
+async def get_show_season(session: AsyncSession, show_id: int, number: int) -> m.Season | None:
+    """The season row a show serves at one season number, or None.
+
+    Resolved through `get_show_seasons` rather than a `WHERE season_number =`,
+    so a duplicated number picks the same row the seasons route lists.
+    """
+    seasons = await get_show_seasons(session, show_id)
+    return next((s for s in seasons if s.season_number == number), None)
 
 
 async def show_exists(session: AsyncSession, show_id: int) -> bool:
@@ -356,11 +381,32 @@ _CREDIT_COUNT_DESC = func.coalesce(m.ShowCast.episode_count, 0).desc()
 _CREW_COUNT_DESC = func.coalesce(m.ShowCrew.episode_count, 0).desc()
 
 
-async def list_show_cast(session: AsyncSession, show_id: int) -> list[tuple[m.Person, m.Character]]:
-    """Cast credits for one show, most-present first.
+# A null `billing_order` or `credit_order` sorts after every real one.
+_LAST = 2**31 - 1
 
-    Covered by ix_show_cast_show_id_episode_count. Single-show route, so unlike
-    `hydrate_show_refs` there is no N+1 to batch away.
+
+def _series_crew(episode_rows: ColumnElement) -> ColumnElement[bool]:
+    """A `show_crew` job is series crew when its aggregate count exceeds the
+    person's episode credits in it on that show (NEU-1512 §2.2).
+
+    A director of forty episodes holds forty episode credits and an aggregate of
+    forty — a sum, which the episode rows already list. An Executive Producer
+    holds no episode rows at all. `episode_rows` is the count of the former,
+    null when there are none.
+    """
+    return func.coalesce(m.ShowCrew.episode_count, 0) > func.coalesce(episode_rows, 0)
+
+
+async def list_show_cast(
+    session: AsyncSession, show_id: int
+) -> list[tuple[m.Person, m.Character, int | None]]:
+    """Regular credits for one show, with the aggregate episode count (NEU-1512).
+
+    A regular is a (person, character) with a `season_cast` row on any of the
+    show's seasons — once, however many seasons. The count and billing order come
+    from `show_cast`; a regular upstream's aggregate omits has neither and sorts
+    last. `show_cast` is grouped first because nothing makes (show, person,
+    character) unique there, and a duplicate must not list a regular twice.
 
     **The join to `character` is inner, which drops a credit whose character TMDB
     left blank** — measured at 1 of 7,629 sampled roles. `catalog.show_cast`
@@ -368,33 +414,224 @@ async def list_show_cast(session: AsyncSession, show_id: int) -> list[tuple[m.Pe
     `CastMemberOut.character` is required, and widening it is a contract change
     for a row that would render as "person as (nothing)" anyway.
     """
+    regulars = (
+        select(m.SeasonCast.person_id, m.SeasonCast.character_id)
+        .join(m.Season, m.Season.id == m.SeasonCast.season_id)
+        .where(m.Season.show_id == show_id)
+        .distinct()
+        .subquery()
+    )
+    aggregate = (
+        select(
+            m.ShowCast.person_id,
+            m.ShowCast.character_id,
+            func.max(m.ShowCast.episode_count).label("episode_count"),
+            func.min(m.ShowCast.billing_order).label("billing_order"),
+        )
+        .where(m.ShowCast.show_id == show_id)
+        .group_by(m.ShowCast.person_id, m.ShowCast.character_id)
+        .subquery()
+    )
     stmt = (
-        select(m.Person, m.Character)
+        select(m.Person, m.Character, aggregate.c.episode_count)
+        .select_from(regulars)
+        .join(m.Person, m.Person.id == regulars.c.person_id)
+        .join(m.Character, m.Character.id == regulars.c.character_id)
+        .outerjoin(
+            aggregate,
+            and_(
+                aggregate.c.person_id == regulars.c.person_id,
+                aggregate.c.character_id == regulars.c.character_id,
+            ),
+        )
+        .order_by(
+            aggregate.c.episode_count.desc().nulls_last(),
+            aggregate.c.billing_order.asc().nulls_last(),
+            m.Person.id.asc(),
+            m.Character.id.asc(),
+        )
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_show_guest_cast(
+    session: AsyncSession, show_id: int
+) -> list[tuple[m.Person, m.Character, int | None]]:
+    """The `show_cast` rows that are not regular credits, most-present first.
+
+    Together with `list_show_cast` this partitions `show_cast`: a regular who
+    guested in another season as the same character is one aggregate row, and it
+    is a regular's. The anti-join matches `character_id` with `=` rather than
+    `IS NOT DISTINCT FROM` because the inner join to `character` has already
+    dropped the null ones, and `=` is what lets Postgres hash it — Law & Order
+    carries 11,550 rows here. Covered by ix_show_cast_show_id_episode_count.
+    """
+    is_regular = (
+        select(m.SeasonCast.id)
+        .join(m.Season, m.Season.id == m.SeasonCast.season_id)
+        .where(
+            m.Season.show_id == m.ShowCast.show_id,
+            m.SeasonCast.person_id == m.ShowCast.person_id,
+            m.SeasonCast.character_id == m.ShowCast.character_id,
+        )
+        .exists()
+    )
+    stmt = (
+        select(m.Person, m.Character, m.ShowCast.episode_count)
         .join(m.ShowCast, m.ShowCast.person_id == m.Person.id)
         .join(m.Character, m.Character.id == m.ShowCast.character_id)
-        .where(m.ShowCast.show_id == show_id)
+        .where(m.ShowCast.show_id == show_id, ~is_regular)
         .order_by(
             _CREDIT_COUNT_DESC,
-            func.coalesce(m.ShowCast.billing_order, 2**31 - 1).asc(),
+            func.coalesce(m.ShowCast.billing_order, _LAST).asc(),
             m.ShowCast.id.asc(),
         )
     )
-    result = await session.execute(stmt)
-    return list(result.tuples().all())
+    return list((await session.execute(stmt)).tuples().all())
 
 
-async def list_show_crew(session: AsyncSession, show_id: int) -> list[tuple[m.Person, m.CrewRole]]:
-    """Crew credits for one show, most-present first. Covered by
-    ix_show_crew_show_id_episode_count."""
+async def _list_show_crew(
+    session: AsyncSession, show_id: int, *, series: bool
+) -> list[tuple[m.Person, m.CrewRole, int | None]]:
+    """One half of a show's crew, split by `_series_crew`, most-present first.
+
+    Covered by ix_show_crew_show_id_episode_count, plus the show's episodes'
+    crew rows counted per (person, role) — ix_episode_show_id_season_number, then
+    uq_episode_crew_episode_person_role.
+    """
+    episode_rows = (
+        select(m.EpisodeCrew.person_id, m.EpisodeCrew.role_id, func.count().label("n"))
+        .join(m.Episode, m.Episode.id == m.EpisodeCrew.episode_id)
+        .where(m.Episode.show_id == show_id)
+        .group_by(m.EpisodeCrew.person_id, m.EpisodeCrew.role_id)
+        .subquery()
+    )
+    is_series = _series_crew(episode_rows.c.n)
     stmt = (
-        select(m.Person, m.CrewRole)
+        select(m.Person, m.CrewRole, m.ShowCrew.episode_count)
         .join(m.ShowCrew, m.ShowCrew.person_id == m.Person.id)
         .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
-        .where(m.ShowCrew.show_id == show_id)
+        .outerjoin(
+            episode_rows,
+            and_(
+                episode_rows.c.person_id == m.ShowCrew.person_id,
+                episode_rows.c.role_id == m.ShowCrew.role_id,
+            ),
+        )
+        .where(m.ShowCrew.show_id == show_id, is_series if series else ~is_series)
         .order_by(_CREW_COUNT_DESC, m.CrewRole.job.asc(), m.ShowCrew.id.asc())
     )
-    result = await session.execute(stmt)
-    return list(result.tuples().all())
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_show_crew(
+    session: AsyncSession, show_id: int
+) -> list[tuple[m.Person, m.CrewRole, int | None]]:
+    """Series crew for one show (NEU-1512 §2.2) — Executive Producer, Creator,
+    Composer: jobs held across the series rather than episode by episode."""
+    return await _list_show_crew(session, show_id, series=True)
+
+
+async def list_show_episode_crew(
+    session: AsyncSession, show_id: int
+) -> list[tuple[m.Person, m.CrewRole, int | None]]:
+    """The rest of a show's crew: jobs whose aggregate is the sum of the episode
+    credits `episode_crew` already holds — directors, writers, editors."""
+    return await _list_show_crew(session, show_id, series=False)
+
+
+async def list_season_regulars(
+    session: AsyncSession, season: m.Season
+) -> list[tuple[m.Person, m.Character]]:
+    """A season's regular cast in billing order (NEU-1512). Covered by the
+    leading column of uq_season_cast_season_person_character."""
+    stmt = (
+        select(m.Person, m.Character)
+        .join(m.SeasonCast, m.SeasonCast.person_id == m.Person.id)
+        .join(m.Character, m.Character.id == m.SeasonCast.character_id)
+        .where(m.SeasonCast.season_id == season.id)
+        .order_by(func.coalesce(m.SeasonCast.billing_order, _LAST).asc(), m.SeasonCast.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_season_guests(
+    session: AsyncSession, season: m.Season
+) -> list[tuple[m.Person, m.Character, int]]:
+    """A season's guest stars, one per (person, character) with its appearances.
+
+    The season's episodes are the show's at that season number — the scope
+    `GET /shows/{id}/episodes?season=N` serves. A pair the season's regular list
+    also holds is dropped: an entry in both is upstream inconsistency, and the
+    season's own list wins at season grain. Ordered by appearances, then the
+    earliest credit position, then person.
+    """
+    is_regular = (
+        select(m.SeasonCast.id)
+        .where(
+            m.SeasonCast.season_id == season.id,
+            m.SeasonCast.person_id == m.EpisodeGuestCast.person_id,
+            m.SeasonCast.character_id == m.EpisodeGuestCast.character_id,
+        )
+        .exists()
+    )
+    guests = (
+        select(
+            m.EpisodeGuestCast.person_id,
+            m.EpisodeGuestCast.character_id,
+            func.count().label("appearances"),
+            func.min(m.EpisodeGuestCast.credit_order).label("first_credit"),
+        )
+        .join(m.Episode, m.Episode.id == m.EpisodeGuestCast.episode_id)
+        .where(
+            m.Episode.show_id == season.show_id,
+            m.Episode.season_number == season.season_number,
+            ~is_regular,
+        )
+        .group_by(m.EpisodeGuestCast.person_id, m.EpisodeGuestCast.character_id)
+        .subquery()
+    )
+    stmt = (
+        select(m.Person, m.Character, guests.c.appearances)
+        .select_from(guests)
+        .join(m.Person, m.Person.id == guests.c.person_id)
+        .join(m.Character, m.Character.id == guests.c.character_id)
+        .order_by(
+            guests.c.appearances.desc(),
+            guests.c.first_credit.asc().nulls_last(),
+            m.Person.id.asc(),
+            m.Character.id.asc(),
+        )
+    )
+    return list((await session.execute(stmt)).tuples().all())
+
+
+async def list_season_crew(
+    session: AsyncSession, season: m.Season
+) -> list[tuple[m.Person, m.CrewRole, int]]:
+    """A season's crew, one per (person, role) with the episodes they hold it on.
+
+    Season-grain crew is not ingested (NEU-1512 §2.2); this is the season's
+    episode crew grouped. Same episode scope as `list_season_guests`.
+    """
+    crew = (
+        select(m.EpisodeCrew.person_id, m.EpisodeCrew.role_id, func.count().label("episodes"))
+        .join(m.Episode, m.Episode.id == m.EpisodeCrew.episode_id)
+        .where(
+            m.Episode.show_id == season.show_id,
+            m.Episode.season_number == season.season_number,
+        )
+        .group_by(m.EpisodeCrew.person_id, m.EpisodeCrew.role_id)
+        .subquery()
+    )
+    stmt = (
+        select(m.Person, m.CrewRole, crew.c.episodes)
+        .select_from(crew)
+        .join(m.Person, m.Person.id == crew.c.person_id)
+        .join(m.CrewRole, m.CrewRole.id == crew.c.role_id)
+        .order_by(crew.c.episodes.desc(), m.CrewRole.job.asc(), m.Person.id.asc())
+    )
+    return list((await session.execute(stmt)).tuples().all())
 
 
 async def list_episode_guest_cast(
@@ -414,7 +651,7 @@ async def list_episode_guest_cast(
         .join(m.Character, m.Character.id == m.EpisodeGuestCast.character_id)
         .where(m.EpisodeGuestCast.episode_id == episode_id)
         .order_by(
-            func.coalesce(m.EpisodeGuestCast.credit_order, 2**31 - 1).asc(),
+            func.coalesce(m.EpisodeGuestCast.credit_order, _LAST).asc(),
             m.EpisodeGuestCast.id.asc(),
         )
     )
@@ -465,30 +702,93 @@ _CREDIT_EPISODE_ORDER = (m.Episode.air_date.desc().nulls_last(), m.Episode.id.as
 
 async def list_person_cast_credits(
     session: AsyncSession, person_id: int
-) -> list[tuple[m.Show, m.Character]]:
-    """Regular cast credits for one person. Covered by ix_show_cast_person_id."""
-    stmt = (
-        select(m.Show, m.Character)
-        .join(m.ShowCast, m.ShowCast.show_id == m.Show.id)
-        .join(m.Character, m.Character.id == m.ShowCast.character_id)
-        .where(m.ShowCast.person_id == person_id)
-        # `aggregate_credits` nests one row per role, so one person legitimately
-        # holds several credits on the same show. Break the tie on the credit
-        # itself, or the order within a show is nondeterministic across requests.
-        .order_by(*_CREDIT_SHOW_ORDER, _CREDIT_COUNT_DESC, m.ShowCast.id.asc())
+) -> list[tuple[m.Show, m.Character, int | None, list[int], date | None]]:
+    """Regular credits for one person: one per (show, character) they are a
+    season regular as (NEU-1512), with the aggregate episode count, the season
+    numbers and the latest air date across those seasons' episodes.
+
+    Most recently credited first, nulls last. Guest-only shows are absent — they
+    are `list_person_guest_credits`' rows, and the SPA merges the two per show.
+    Covered by ix_season_cast_person_id, ix_episode_show_id_season_number and
+    ix_show_cast_person_id.
+    """
+    held = (
+        select(
+            m.Season.show_id.label("show_id"),
+            m.SeasonCast.character_id.label("character_id"),
+            func.array_agg(distinct(m.Season.season_number)).label("seasons"),
+            func.max(m.Episode.air_date).label("last_credited"),
+        )
+        .select_from(m.SeasonCast)
+        .join(m.Season, m.Season.id == m.SeasonCast.season_id)
+        # The season routes' episode scope, `(show_id, season_number)`, so the
+        # date agrees with the season the person page links to.
+        .outerjoin(
+            m.Episode,
+            and_(
+                m.Episode.show_id == m.Season.show_id,
+                m.Episode.season_number == m.Season.season_number,
+            ),
+        )
+        .where(m.SeasonCast.person_id == person_id)
+        .group_by(m.Season.show_id, m.SeasonCast.character_id)
+        .subquery()
     )
-    return list((await session.execute(stmt)).tuples().all())
+    aggregate = (
+        select(
+            m.ShowCast.show_id,
+            m.ShowCast.character_id,
+            func.max(m.ShowCast.episode_count).label("episode_count"),
+        )
+        .where(m.ShowCast.person_id == person_id)
+        .group_by(m.ShowCast.show_id, m.ShowCast.character_id)
+        .subquery()
+    )
+    stmt = (
+        select(m.Show, m.Character, aggregate.c.episode_count, held.c.seasons, held.c.last_credited)
+        .select_from(held)
+        .join(m.Show, m.Show.id == held.c.show_id)
+        .join(m.Character, m.Character.id == held.c.character_id)
+        .outerjoin(
+            aggregate,
+            and_(
+                aggregate.c.show_id == held.c.show_id,
+                aggregate.c.character_id == held.c.character_id,
+            ),
+        )
+        .order_by(held.c.last_credited.desc().nulls_last(), m.Show.id.asc(), m.Character.id.asc())
+    )
+    rows = (await session.execute(stmt)).tuples().all()
+    # `array_agg(DISTINCT …)` promises no order; the contract is ascending.
+    return [(show, char, count, sorted(seasons), last) for show, char, count, seasons, last in rows]
 
 
 async def list_person_crew_credits(
     session: AsyncSession, person_id: int
-) -> list[tuple[m.Show, m.CrewRole]]:
-    """Crew credits for one person. Covered by ix_show_crew_person_id."""
+) -> list[tuple[m.Show, m.CrewRole, int | None]]:
+    """Series crew credits for one person (NEU-1512 §2.2), with the aggregate
+    episode count. A job that only sums their episode credits is left to
+    `list_person_episode_crew_credits`. Covered by ix_show_crew_person_id and
+    ix_episode_crew_person_id."""
+    episode_rows = (
+        select(m.Episode.show_id, m.EpisodeCrew.role_id, func.count().label("n"))
+        .join(m.Episode, m.Episode.id == m.EpisodeCrew.episode_id)
+        .where(m.EpisodeCrew.person_id == person_id)
+        .group_by(m.Episode.show_id, m.EpisodeCrew.role_id)
+        .subquery()
+    )
     stmt = (
-        select(m.Show, m.CrewRole)
+        select(m.Show, m.CrewRole, m.ShowCrew.episode_count)
         .join(m.ShowCrew, m.ShowCrew.show_id == m.Show.id)
         .join(m.CrewRole, m.CrewRole.id == m.ShowCrew.role_id)
-        .where(m.ShowCrew.person_id == person_id)
+        .outerjoin(
+            episode_rows,
+            and_(
+                episode_rows.c.show_id == m.ShowCrew.show_id,
+                episode_rows.c.role_id == m.ShowCrew.role_id,
+            ),
+        )
+        .where(m.ShowCrew.person_id == person_id, _series_crew(episode_rows.c.n))
         # Crew is the common multi-credit case — one person is routinely writer
         # and director on the same show — so job name orders within a show, and
         # the credit id keeps even identical jobs stable.
