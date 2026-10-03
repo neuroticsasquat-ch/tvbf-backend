@@ -25,9 +25,13 @@ resumes rather than restarts.
 ## One request per show, and the guess that makes it one
 
 `append_to_response` takes 20 entries, namespaces and `season/N` blocks drawing
-on the same budget (NEU-1028). The twelve namespaces leave eight season slots
+on the same budget (NEU-1028). The twelve namespaces leave eight slots
 — the audit's eleven plus NEU-1052's `recommendations`, which narrowed the
-window from `0..8` to `0..7` and moved 1,054 shows into a second request. But a
+window from `0..8` to `0..7` and moved 1,054 shows into a second request.
+NEU-1512 then halved it to `0..3`: each season also appends `season/N/credits`,
+its regular cast, so eight slots hold four seasons and catalog-wide overflow
+rises from ~52k to ~90k standalone season requests (~35 minutes on a full
+pass) — the price of the one list upstream keeps regulars in. But a
 show's season *numbers* are only knowable from a response we have not made
 yet, so the first request guesses a window and reconciles afterwards against
 `seasons[]`, fetching whatever it missed with `get_tv_season`.
@@ -86,6 +90,7 @@ import logging
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from uuid import UUID
 
 import httpx
@@ -93,11 +98,13 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
-from tvbf.catalog.runs import finalize_run, record_progress, warn_if_all_gone
+from tvbf.catalog.runs import finalize_run, get_run_kind, record_progress, warn_if_all_gone
 from tvbf.tmdb.api_payloads import TMDBSeasonDetail, TMDBSeries
+from tvbf.tmdb.change_events import detect_transitions, record_transitions, snapshot_tracked_show
 from tvbf.tmdb.client import (
     APPEND_TO_RESPONSE_LIMIT,
     DEFAULT_APPEND,
+    ENTRIES_PER_SEASON,
     TMDBClient,
     is_gone_upstream,
     plan_append,
@@ -120,8 +127,11 @@ def speculative_seasons(namespaces: Sequence[str] = DEFAULT_APPEND) -> tuple[int
     at 0 covers 97.5% of sampled shows against 94.0% for one starting at 1. See
     the module docstring, including what NEU-1052's twelfth namespace cost by
     narrowing the top of it.
+
+    Each season costs `ENTRIES_PER_SEASON` slots — its episodes and its regular
+    cast (NEU-1512) — so the window is half the free slots, not all of them.
     """
-    return tuple(range(0, APPEND_TO_RESPONSE_LIMIT - len(namespaces)))
+    return tuple(range(0, (APPEND_TO_RESPONSE_LIMIT - len(namespaces)) // ENTRIES_PER_SEASON))
 
 
 SPECULATIVE_SEASONS: tuple[int, ...] = speculative_seasons()
@@ -210,9 +220,15 @@ async def fetch_series_with_seasons(
 
     `namespaces` exists for the one caller that needs the episodes and nothing
     else — NEU-1045's episode mapping, which passes `()` and thereby trades the
-    twelve namespaces for twelve more speculative seasons. The ingest
+    twelve namespaces for six more speculative seasons. The ingest
     itself never passes it: a narrower payload here would mean a show mirrored
     without its credits and then stamped as complete.
+
+    Every season comes back carrying its regular cast whatever `namespaces`
+    says (NEU-1512): an appended one under `season/N/credits`, an overflow one
+    through `append=("credits",)`. A season's episodes and its regulars are
+    one fetch, so no caller can hold a season whose credits were never asked
+    for.
     """
     append, _ = plan_append(speculative_seasons(namespaces), namespaces)
     series = TMDBSeries.model_validate(await client.get_tv_series(series_id, append=append))
@@ -220,7 +236,9 @@ async def fetch_series_with_seasons(
     arrived = {detail.season_number for detail in series.appended_seasons}
     missing = sorted({summary.season_number for summary in series.seasons} - arrived)
     overflow = [
-        TMDBSeasonDetail.model_validate(await client.get_tv_season(series_id, number))
+        TMDBSeasonDetail.model_validate(
+            await client.get_tv_season(series_id, number, append=("credits",))
+        )
         for number in missing
     ]
     if overflow:
@@ -251,7 +269,16 @@ async def mirror_series(
     Finalizes the run itself **only** on the abort path, and reports that with
     `aborted`. The success finalization belongs to the caller, because only the
     caller knows whether a cursor goes with it.
+
+    On a `catalog_update` run a tracked show's transitions — premiere set or
+    moved, ended, revived — are recorded as `catalog.show_event` rows in the
+    show's own transaction (NEU-1481, `tmdb/change_events.py`). The kind is read
+    off the run row once, so the full pass records nothing without having to say
+    so.
     """
+    async with _owned_session(session_factory) as s:
+        detect_changes = await get_run_kind(s, run_id) == "catalog_update"
+
     processed = 0
     failed = 0
     gone = 0
@@ -262,6 +289,12 @@ async def mirror_series(
         try:
             series, overflow = await fetch_series_with_seasons(client, series_id)
             async with _owned_session(session_factory) as s:
+                # Read before the upsert overwrites what it compares against.
+                before = (
+                    await snapshot_tracked_show(s, tmdb_id=series.tmdb_id)
+                    if detect_changes
+                    else None
+                )
                 show_id = await upsert_series_payload(
                     s,
                     series,
@@ -271,6 +304,15 @@ async def mirror_series(
                     # to name the show's whole season set (ADR-0004).
                     prune_seasons=True,
                 )
+                if before is not None:
+                    await record_transitions(
+                        s,
+                        show_id=show_id,
+                        run_id=run_id,
+                        transitions=detect_transitions(
+                            before, series, today=datetime.now(UTC).date()
+                        ),
+                    )
                 await mark_series_synced(s, show_id=show_id)
                 await record_progress(s, run_id, processed_delta=1)
                 await s.commit()

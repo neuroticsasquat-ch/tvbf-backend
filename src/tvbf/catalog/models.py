@@ -247,6 +247,26 @@ class Show(Base):
             "first_air_date",
             postgresql_where=text("deleted_upstream_at IS NULL"),
         ),
+        # Browse's "Last Aired" sort (NEU-1502): unfiltered browse walks this
+        # instead of computing a per-row aggregate over 6.6M episodes. The
+        # trailing `id` is `list_shows`'s tiebreak, so the whole ORDER BY is the
+        # index order. Same partial predicate as above, for the same reason.
+        Index(
+            "ix_show_last_aired_live",
+            text("last_aired DESC NULLS LAST"),
+            "id",
+            postgresql_where=text("deleted_upstream_at IS NULL"),
+        ),
+        # Browse's "Popularity" sort (NEU-1513), on the same shape as the one
+        # above: `ORDER BY popularity DESC NULLS LAST, id` over live shows is
+        # the index order, so the unsearched route is an index walk. A searched
+        # page is bounded by the title semi-join whatever the sort.
+        Index(
+            "ix_show_popularity_live",
+            text("popularity DESC NULLS LAST"),
+            "id",
+            postgresql_where=text("deleted_upstream_at IS NULL"),
+        ),
         {"schema": SCHEMA},
     )
 
@@ -336,6 +356,13 @@ class Show(Base):
     # correction idempotent; the reasoning is written out there.
     tmdb_first_air_date: Mapped[date | None] = mapped_column(Date)
     tmdb_last_air_date: Mapped[date | None] = mapped_column(Date)
+    # **Last aired** (CONTEXT.md, NEU-1502): the latest *regular* episode's air
+    # date on or before the server's UTC today, NULL when there is none. Derived
+    # from the episode rows and stored so browse can sort on it — not
+    # `last_air_date` above, which is TMDB's frozen field and counts specials.
+    # `catalog/last_aired.py` owns the recompute and lists its callers; the
+    # daily delta's roll-forward is what moves it as episodes cross into aired.
+    last_aired: Mapped[date | None] = mapped_column(Date)
 
     # The browse `language` filter reads this (audit D3): it is the only one of
     # TMDB's three language concepts with exactly one value per show, which the
@@ -464,6 +491,17 @@ class Show(Base):
     # NULL therefore means *no pass has written recommendations onto this row*.
     # It does **not** mean the show has none.
     recommendations_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # When this show's **season regular cast** was last written from a payload
+    # that carried every season's `credits` — the season credits backfill's
+    # resumability watermark (NEU-1512), stamped with the other three by
+    # `mark_series_synced` because `fetch_series_with_seasons` asks for every
+    # season's credits alongside its episodes.
+    #
+    # A fourth column by the rule the third made one: the backlog is every show
+    # mirrored before season credits were fetched, and "has no `season_cast`
+    # row" cannot tell *upstream lists no regulars* — common on small shows —
+    # from *nobody has asked*.
+    season_credits_synced_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # Set when the show stops appearing in the daily id export, i.e. TMDB has
     # deleted it. The row is never removed: `app.user_show_watch` and
     # `app.user_show_rating` cascade from here, so a delete would destroy user
@@ -1041,6 +1079,71 @@ class TrendingShow(Base):
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False)
 
 
+class ShowEvent(Base):
+    """A change the daily delta saw on a tracked show — a *catalog event*
+    (`CONTEXT.md` § Notifications; project spec §4.1).
+
+    **Append-only, and a sidecar rather than columns on `show` / `season`.** The
+    upsert overwrites the row it compares against, so the only place "what it
+    was" survives is a row written at the moment of the overwrite. The delta
+    writes here in the show's own transaction; the push delivery job reads it.
+    Nothing updates a row. Rows leave by the delivery job's 90-day purge, or
+    with their show or season through the CASCADEs below.
+
+    **Tracked shows only, and the delta only** (ADR-0014 §2). The full pass has
+    nothing to compare against and records nothing, so an empty history for a
+    show means nobody was tracking it when it changed, not that it never did.
+
+    **No uniqueness.** A premiere date that moves twice is two rows, and
+    delivery keys on the row's `id`, so there is no natural key to protect.
+
+    `old_value` / `new_value` hold the raw upstream value as text — an ISO date
+    for the premiere kinds, a status string for `ended` / `revived` — because
+    the four kinds do not share a type and the delivery job only compares
+    `new_value` against the row as it now stands.
+    """
+
+    __tablename__ = "show_event"
+    __table_args__ = (
+        CheckConstraint(
+            "kind IN ('premiere_set', 'premiere_moved', 'ended', 'revived')",
+            name="ck_show_event_kind",
+        ),
+        # The delivery job's 48-hour window and the 90-day purge both range on it.
+        Index("ix_show_event_observed_at", "observed_at"),
+        # Leads on `show_id`, so it also carries the CASCADE from `show` below.
+        Index("ix_show_event_show_id_kind", "show_id", "kind"),
+        # Not for reading. The delta prunes seasons upstream no longer lists, and
+        # the CASCADE from `season` would otherwise scan this table on each one.
+        Index(
+            "ix_show_event_season_id",
+            "season_id",
+            postgresql_where=text("season_id IS NOT NULL"),
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
+    kind: Mapped[str] = mapped_column(Text, nullable=False)
+    show_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.show.id", ondelete="CASCADE"), nullable=False
+    )
+    # Set for the two premiere kinds, null for `ended` / `revived`.
+    season_id: Mapped[int | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.season.id", ondelete="CASCADE")
+    )
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    observed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), nullable=False
+    )
+    # The delta run that saw the change. `SET NULL` rather than `CASCADE`: an
+    # event outlives any tidy-up of the run log, which nothing performs today.
+    run_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey(f"{SCHEMA}.ingest_run.id", ondelete="SET NULL")
+    )
+
+
 class ContentRating(Base):
     """Per-country certification — `TV-MA`, `TV-14`, … . No TV Maze equivalent
     exists, which is why skipping it would be a backfill rather than a gap."""
@@ -1368,6 +1471,12 @@ class CrewRole(Base):
 class ShowCast(Base):
     """A person playing a character across a show, from `aggregate_credits.cast`.
 
+    **Whether that is a regular or a guest is not this row's to say.** Upstream's
+    show-level list carries both, and a guest's entry is their guest appearances
+    counted again rather than a second credit. A (person, character) is a
+    regular exactly when `SeasonCast` holds it on one of the show's seasons
+    (NEU-1512); everything else here is a guest.
+
     One row per *role*, not per person: `aggregate_credits` nests
     `roles: [{credit_id, character, episode_count}]` under one cast entry, so an
     actor who played two characters on one show is two rows here sharing a
@@ -1451,6 +1560,59 @@ class ShowCrew(Base):
     credit_id: Mapped[str | None] = mapped_column(Text)
     episode_count: Mapped[int | None] = mapped_column(Integer)
     total_episode_count: Mapped[int | None] = mapped_column(Integer)
+
+
+class SeasonCast(Base):
+    """A person playing a character as one of a season's regular cast, from
+    `season/{n}/credits.cast` (NEU-1512).
+
+    **The only place a regular is tied to a season.** `ShowCast` carries
+    regulars and guests alike with no season attached, and `EpisodeGuestCast`
+    carries guests only — the appended season block has no `cast` key. Upstream
+    records regulars per season, and every season stands alone: someone can
+    guest in seasons one and two and be a regular from season three. A regular
+    is credited on the whole season whether or not they appear in a given
+    episode, which is why this is a season row and never an episode row.
+
+    **Three-part uniqueness, `NULLS NOT DISTINCT`**, for
+    `uq_egc_episode_person_character`'s reasons: one person can hold two
+    characters in a season, `character_id` is nullable, and under Postgres's
+    default two null-character rows for one person would never conflict, so
+    every re-ingest would add another. Refresh is delete-then-insert per
+    season, so the key is a guard against upstream duplicates rather than a
+    conflict target.
+
+    **Characters intern per show** — the season's show — so a regular's
+    character is the same `catalog.character` row the show cast and any guest
+    credit for it resolve to (ADR-0007).
+    """
+
+    __tablename__ = "season_cast"
+    __table_args__ = (
+        UniqueConstraint(
+            "season_id",
+            "person_id",
+            "character_id",
+            name="uq_season_cast_season_person_character",
+            postgresql_nulls_not_distinct=True,
+        ),
+        # No index on `season_id` alone: it leads the unique constraint's index.
+        # Show-grain reads reach this table through `season.show_id`
+        # (`ix_season_show_id_number`); the person page reads it by person.
+        Index("ix_season_cast_person_id", "person_id"),
+        {"schema": SCHEMA},
+    )
+
+    id: Mapped[int] = mapped_column(BigInteger, _surrogate(), primary_key=True)
+    season_id: Mapped[int] = mapped_column(
+        ForeignKey(f"{SCHEMA}.season.id", ondelete="CASCADE"), nullable=False
+    )
+    person_id: Mapped[int] = mapped_column(ForeignKey(f"{SCHEMA}.person.id"), nullable=False)
+    # Nullable for `ShowCast.character_id`'s reason.
+    character_id: Mapped[int | None] = mapped_column(ForeignKey(f"{SCHEMA}.character.id"))
+    credit_id: Mapped[str | None] = mapped_column(Text)
+    # Upstream's `order` — the season's billing order (`CONTEXT.md`).
+    billing_order: Mapped[int | None] = mapped_column(Integer)
 
 
 class EpisodeGuestCast(Base):
@@ -1567,12 +1729,13 @@ class IngestRun(Base):
             # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034),
             # `catalog_update` its daily delta (NEU-1035), `airdate_reconcile`
             # the nightly airdate pass (NEU-1145) and `trending_snapshot` the
-            # daily `/trending/tv/week` capture (NEU-1055) — the only four kinds
-            # any live code still writes.
+            # daily `/trending/tv/week` capture (NEU-1055). `push_deliver` is the
+            # daily push delivery job's (NEU-1480; the job itself lands in the
+            # Push Notifications project's milestone 3).
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
             "'show_refresh', 'person_update', 'episode_credits_backfill', "
             "'catalog_initial', 'catalog_update', 'airdate_reconcile', "
-            "'trending_snapshot')",
+            "'trending_snapshot', 'push_deliver')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

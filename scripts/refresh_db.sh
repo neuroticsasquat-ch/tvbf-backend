@@ -348,6 +348,18 @@ TRUNCATE app.handle_release;
 -- reason not to keep it.
 TRUNCATE app.session, app.login_attempt, app.auth_attempt, app.invite,
          app.auth_token, app.user_recommendation_set CASCADE;
+-- `push_subscription.endpoint` is a capability URL onto a real person's device
+-- (NEU-1485). A local copy has no use for it -- the local VAPID key cannot sign
+-- for it -- and nothing should be left able to reach one; `push_delivery`
+-- only describes those subscriptions. Guarded because this runs before
+-- `task migrate`, against a prod schema that may predate the tables.
+DO $$
+BEGIN
+  IF to_regclass('app.push_subscription') IS NOT NULL THEN
+    TRUNCATE app.push_delivery, app.push_subscription;
+  END IF;
+END
+$$;
 SQL
 
   # ON_ERROR_STOP above catches a statement that raised. It cannot catch a CASE

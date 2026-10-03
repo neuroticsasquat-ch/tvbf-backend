@@ -232,7 +232,7 @@ class TestTheSeam:
         ).scalar_one() == 0
 
     async def test_a_full_pass_stamps_the_recommendations_watermark(self, session):
-        """`mark_series_synced` stamps all three, because every caller of it
+        """`mark_series_synced` stamps all four, because every caller of it
         reaches it through `mirror_series`, which now appends the namespace by
         construction. That is what stops the backfill re-fetching shows the
         nightly delta has already covered."""
@@ -251,3 +251,5 @@ class TestTheSeam:
         assert row.tmdb_synced_at is not None
         assert row.credits_synced_at is not None
         assert row.recommendations_synced_at is not None
+        # NEU-1512's fourth: the fetch carries every season's regular cast.
+        assert row.season_credits_synced_at is not None

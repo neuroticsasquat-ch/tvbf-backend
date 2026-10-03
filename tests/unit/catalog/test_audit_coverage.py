@@ -74,6 +74,11 @@ SEASON: dict[str, Target] = {
     "season_number": ("season", "season_number"),
     "vote_average": ("season", "vote_average"),
     "episodes": "episode",
+    # Not a key of the season body: `season/N/credits` appended beside it, or
+    # `credits` on a standalone season. NEU-1512 took its `cast[]` — the
+    # season's regulars, which nothing else carries. Show-grain `credits`
+    # stays in `SKIPPED`.
+    "credits": "season_cast",
 }
 
 # --- episode level (audit §4) -----------------------------------------------

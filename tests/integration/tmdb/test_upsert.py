@@ -19,7 +19,9 @@ from tests.fixtures.tmdb.series_factory import (
     make_guest_star,
     make_job,
     make_role,
+    make_season_credits,
     make_season_detail,
+    make_season_regular,
     make_season_summary,
     make_series,
 )
@@ -1495,3 +1497,183 @@ async def _seasons(session, show_id: int) -> list[m.Season]:
         .scalars()
         .all()
     )
+
+
+class TestSeasonRegulars:
+    """A season's `credits.cast[]` into `catalog.season_cast` (NEU-1512).
+
+    Upstream's only record of who was a regular in which season. The rules are
+    the episode grain's, one level up: absent leaves alone, `[]` clears, a list
+    whose entries were all unusable is held back, characters intern per show.
+    """
+
+    async def test_regulars_land_per_season_with_the_billing_order(self, session):
+        show_id = await _write(
+            session,
+            _series_with_regulars(
+                {
+                    1: [
+                        make_season_regular(1, "Lead", "Walter", order=0),
+                        make_season_regular(2, "Second", "Skyler", order=1),
+                    ],
+                    2: [make_season_regular(1, "Lead", "Walter", order=0)],
+                }
+            ),
+        )
+
+        assert await _season_cast(session, show_id) == [
+            (1, "Lead", "Walter", 0, "regular-1-Walter"),
+            (1, "Second", "Skyler", 1, "regular-2-Skyler"),
+            (2, "Lead", "Walter", 0, "regular-1-Walter"),
+        ]
+
+    async def test_a_regular_shares_the_character_the_show_cast_and_a_guest_interned(self, session):
+        """Per-show interning (ADR-0007): the regular, the show-level role and a
+        guest turn by the same character are one `catalog.character` row."""
+        payload = _series_with_regulars(
+            {1: [make_season_regular(9, "Lead", "Tuco")]},
+            aggregate_credits=make_aggregate_credits(
+                cast=[make_cast_member(9, "Lead", [make_role("Tuco", 4)])]
+            ),
+        )
+        payload["season/1"]["episodes"] = [
+            make_episode(1, 1, 1, guest_stars=[make_guest_star(9, "Lead", "Tuco")])
+        ]
+
+        await _write(session, payload)
+
+        assert await _count(session, m.Character) == 1
+        assert await _count(session, m.Person) == 1
+        character_ids = {
+            *(await session.execute(select(m.SeasonCast.character_id))).scalars(),
+            *(await session.execute(select(m.ShowCast.character_id))).scalars(),
+            *(await session.execute(select(m.EpisodeGuestCast.character_id))).scalars(),
+        }
+        assert len(character_ids) == 1
+
+    async def test_a_regular_dropped_upstream_is_removed_on_the_next_pass(self, session):
+        await _write(
+            session,
+            _series_with_regulars(
+                {1: [make_season_regular(1, "Stays", "A"), make_season_regular(2, "Goes", "B")]}
+            ),
+        )
+        show_id = await _write(
+            session, _series_with_regulars({1: [make_season_regular(1, "Stays", "A")]})
+        )
+
+        assert [row[1] for row in await _season_cast(session, show_id)] == ["Stays"]
+
+    async def test_a_season_that_arrived_without_credits_keeps_its_regulars(self, session):
+        """Absent is not empty: a narrower fetch has said nothing about them."""
+        await _write(session, _series_with_regulars({1: [make_season_regular(1, "Lead", "A")]}))
+        show_id = await _write(session, make_series(1396, seasons=1))
+
+        assert [row[1] for row in await _season_cast(session, show_id)] == ["Lead"]
+
+    async def test_an_empty_cast_clears_them(self, session):
+        await _write(session, _series_with_regulars({1: [make_season_regular(1, "Lead", "A")]}))
+        show_id = await _write(session, _series_with_regulars({1: []}))
+
+        assert await _season_cast(session, show_id) == []
+
+    async def test_a_season_whose_every_entry_lacks_a_person_keeps_its_regulars(
+        self, session, caplog
+    ):
+        """A list we failed to read is not upstream stating a zero."""
+        await _write(session, _series_with_regulars({1: [make_season_regular(1, "Lead", "A")]}))
+        nameless = make_season_regular(2, "Ignored", "B")
+        del nameless["id"]
+        del nameless["name"]
+
+        with caplog.at_level(logging.WARNING, logger="tvbf.tmdb.upsert"):
+            show_id = await _write(session, _series_with_regulars({1: [nameless]}))
+
+        assert [row[1] for row in await _season_cast(session, show_id)] == ["Lead"]
+        assert "skipped season regular credit with no person" in caplog.text
+
+    async def test_one_regular_sent_twice_is_one_row(self, session):
+        show_id = await _write(
+            session,
+            _series_with_regulars(
+                {
+                    1: [
+                        make_season_regular(1, "Lead", "A", order=0),
+                        make_season_regular(1, "Lead", "A", order=5, credit_id="later"),
+                    ]
+                }
+            ),
+        )
+
+        assert await _season_cast(session, show_id) == [(1, "Lead", "A", 0, "regular-1-A")]
+
+    async def test_a_blank_character_is_null_and_two_of_them_do_not_conflict(self, session):
+        """`NULLS NOT DISTINCT` is what stops a re-ingest duplicating the row."""
+        payload = _series_with_regulars(
+            {
+                1: [
+                    make_season_regular(1, "Host", "", credit_id="one"),
+                    make_season_regular(1, "Host", "  ", credit_id="two"),
+                ]
+            }
+        )
+        await _write(session, payload)
+        show_id = await _write(session, payload)
+
+        assert await _season_cast(session, show_id) == [(1, "Host", None, 0, "one")]
+        assert await _count(session, m.Character) == 0
+
+    async def test_re_fetching_one_season_leaves_the_others_alone(self, session):
+        """The scope is the seasons the payload carried credits for, not the show."""
+        await _write(
+            session,
+            _series_with_regulars(
+                {1: [make_season_regular(1, "One", "A")], 2: [make_season_regular(2, "Two", "B")]}
+            ),
+        )
+        refetched = TMDBSeasonDetail.model_validate(
+            make_season_detail(2, [], credits=make_season_credits([]))
+        )
+        payload = make_series(1396, seasons=2, append_seasons=False)
+
+        show_id = await _write(session, payload, seasons=[refetched])
+
+        assert [row[1] for row in await _season_cast(session, show_id)] == ["One"]
+
+    async def test_an_overflow_season_brings_its_own_credits(self, session):
+        """The standalone fetch answers `credits` inline, not under a compound key."""
+        overflow = TMDBSeasonDetail.model_validate(
+            make_season_detail(
+                2, [], id=139_602, credits=make_season_credits([make_season_regular(3, "C", "X")])
+            )
+        )
+        show_id = await _write(session, make_series(1396, seasons=2), seasons=[overflow])
+
+        assert [(row[0], row[1]) for row in await _season_cast(session, show_id)] == [(2, "C")]
+
+
+def _series_with_regulars(regulars: dict[int, list[dict]], **overrides) -> dict:
+    """A show whose seasons each carry `season/N/credits` with these regulars."""
+    payload = make_series(1396, seasons=max(regulars), **overrides)
+    for number, cast in regulars.items():
+        payload[f"season/{number}/credits"] = make_season_credits(cast)
+    return payload
+
+
+async def _season_cast(session, show_id: int) -> list[tuple]:
+    rows = await session.execute(
+        select(
+            m.Season.season_number,
+            m.Person.name,
+            m.Character.name,
+            m.SeasonCast.billing_order,
+            m.SeasonCast.credit_id,
+        )
+        .select_from(m.SeasonCast)
+        .join(m.Season, m.Season.id == m.SeasonCast.season_id)
+        .join(m.Person, m.Person.id == m.SeasonCast.person_id)
+        .outerjoin(m.Character, m.Character.id == m.SeasonCast.character_id)
+        .where(m.Season.show_id == show_id)
+        .order_by(m.Season.season_number, m.SeasonCast.billing_order, m.Person.name)
+    )
+    return [tuple(row) for row in rows.all()]

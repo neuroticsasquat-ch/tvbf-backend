@@ -31,6 +31,7 @@ from tvbf.app.schemas import (
     RecommendationsOut,
     SeasonProgress,
     SessionSummary,
+    ShowMuteUpdate,
     ShowRatingIn,
     ShowRatingOut,
     UpcomingEntry,
@@ -69,17 +70,7 @@ async def me(
     settings: Settings = Depends(get_settings),
 ) -> AuthedUserOut:
     csrf = request.cookies.get(settings.csrf_cookie_name, "")
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)
 
 
 @router.patch(
@@ -97,17 +88,7 @@ async def update_me(
     user.display_name = payload.display_name
     await db.commit()
     csrf = request.cookies.get(settings.csrf_cookie_name, "")
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)
 
 
 @router.patch(
@@ -149,17 +130,7 @@ async def update_my_handle(
             status_code=status.HTTP_409_CONFLICT, detail="handle_unavailable"
         ) from err
     csrf = request.cookies.get(settings.csrf_cookie_name, "")
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)
 
 
 @router.get("/me/sessions", response_model=list[SessionSummary])
@@ -678,21 +649,11 @@ async def update_me_preferences(
     db: AsyncSession = Depends(get_session),
     settings: Settings = Depends(get_settings),
 ) -> AuthedUserOut:
-    if payload.activity_feed_enabled is not None:
-        user.activity_feed_enabled = payload.activity_feed_enabled
+    for field, value in payload.model_dump(exclude_none=True).items():
+        setattr(user, field, value)
     await db.commit()
     csrf = request.cookies.get(settings.csrf_cookie_name, "")
-    return AuthedUserOut(
-        id=user.id,
-        email=user.email,
-        display_name=user.display_name,
-        handle=user.handle,
-        created_at=user.created_at,
-        email_verified_at=user.email_verified_at,
-        csrf_token=csrf,
-        activity_feed_enabled=user.activity_feed_enabled,
-        is_admin=user.is_admin,
-    )
+    return AuthedUserOut.from_user(user, csrf_token=csrf)
 
 
 @router.patch(
@@ -708,6 +669,27 @@ async def set_hide_from_activity(
 ) -> Response:
     updated = await my_shows_service.set_hide_from_activity(
         db, user_id=user.id, show_id=show_id, value=payload.hide_from_activity
+    )
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_in_my_shows")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@router.patch(
+    "/me/shows/{show_id}/mute",
+    status_code=status.HTTP_204_NO_CONTENT,
+    dependencies=[Depends(require_csrf)],
+)
+async def set_show_muted(
+    show_id: Annotated[int, Path()],
+    payload: ShowMuteUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+) -> Response:
+    """Silence every push kind for one My Shows row (NEU-1490). Not a
+    never-recommend source, so recommendations are unaffected."""
+    updated = await my_shows_service.set_muted(
+        db, user_id=user.id, show_id=show_id, value=payload.muted
     )
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="not_in_my_shows")

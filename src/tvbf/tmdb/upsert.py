@@ -48,6 +48,7 @@ guest credit resolves to the character the show cast already named. See
 import logging
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Any
 
@@ -56,6 +57,7 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
+from tvbf.catalog.last_aired import recompute_last_aired
 from tvbf.catalog.offsets import (
     EMPTY,
     FIRST_SEASON,
@@ -77,6 +79,7 @@ from tvbf.tmdb.api_payloads import (
     TMDBRecommendation,
     TMDBResults,
     TMDBSeasonDetail,
+    TMDBSeasonRegular,
     TMDBSeries,
     TMDBWatchProviders,
 )
@@ -168,6 +171,12 @@ async def mark_series_synced(session: AsyncSession, *, show_id: int) -> None:
     too. It is a third column rather than a third meaning for the first because
     the three disagree on history again — the 229,418 shows the full ingest
     mirrored predate the namespace entirely.
+
+    **`season_credits_synced_at` is the fourth** (NEU-1512), because
+    `fetch_series_with_seasons` asks for every season's regular cast alongside
+    its episodes, so a complete pass wrote `season_cast` too — and the delta
+    stamping it is what keeps the season credits backfill from re-fetching a
+    show the delta already covered.
     """
     await session.execute(
         update(m.Show)
@@ -176,6 +185,7 @@ async def mark_series_synced(session: AsyncSession, *, show_id: int) -> None:
             tmdb_synced_at=func.now(),
             credits_synced_at=func.now(),
             recommendations_synced_at=func.now(),
+            season_credits_synced_at=func.now(),
         )
     )
 
@@ -191,6 +201,18 @@ async def mark_credits_synced(session: AsyncSession, *, show_id: int) -> None:
     """
     await session.execute(
         update(m.Show).where(m.Show.id == show_id).values(credits_synced_at=func.now())
+    )
+
+
+async def mark_season_credits_synced(session: AsyncSession, *, show_id: int) -> None:
+    """Stamp the show's season regulars as written — the season credits backfill's watermark.
+
+    Split from `mark_series_synced` on `mark_credits_synced`'s reasoning: the
+    backfill writes `season_cast` and nothing else, so it can claim nothing
+    about the spine or the other credits (NEU-1512).
+    """
+    await session.execute(
+        update(m.Show).where(m.Show.id == show_id).values(season_credits_synced_at=func.now())
     )
 
 
@@ -1696,6 +1718,170 @@ async def write_series_recommendations(
     )
 
 
+def _has_regular_person(regular: TMDBSeasonRegular, *, show_id: int, season_number: int) -> bool:
+    """Whether a season regular names a person we can store — `_has_person` at season grain.
+
+    A sibling rather than a widening of `_has_person`, because the one thing
+    that differs is the log line: an operator needs the season to find the
+    entry in the payload, and there is no episode to name.
+    """
+    if regular.tmdb_person_id is not None and regular.name:
+        return True
+    log.warning(
+        "show %d, season %d: skipped season regular credit with no person — id=%r name=%r",
+        show_id,
+        season_number,
+        regular.tmdb_person_id,
+        regular.name,
+    )
+    return False
+
+
+async def _write_season_credits(
+    session: AsyncSession,
+    *,
+    show_id: int,
+    details: Sequence[TMDBSeasonDetail],
+    season_ids: dict[int, int],
+    number_to_tmdb: dict[int, int],
+) -> int:
+    """A season's regular cast, from its `credits.cast[]` (NEU-1512). Returns the seasons written.
+
+    The season-grain twin of `_write_episode_credits`, and the same three rules:
+
+    - **Scope is the seasons whose detail carried `credits`.** A detail without
+      the key leaves the season's rows alone; `cast: []` clears them; a
+      non-empty list whose entries were *all* skipped for lacking a person is
+      held back rather than emptied — `_refresh_scope`'s three cases, which are
+      the reason this is not simply "seasons that carried the key".
+    - **Characters intern against the show**, so a regular's character is the
+      row the show cast and any guest credit for it already resolve to.
+    - **Rows deduplicate on the three-part key** the table enforces, keeping the
+      first entry's `credit_id` and `billing_order`, because upstream sending
+      one regular twice would otherwise be an integrity error that costs the
+      whole show.
+
+    Seasons resolve `season_number → tmdb_id → surrogate id`, exactly as
+    `_write_season_networks` resolves them: the appended block carries no `id`.
+    A season the lookups cannot resolve is skipped rather than guessed at.
+    """
+    scoped: dict[int, tuple[int, list[TMDBSeasonRegular]]] = {}
+    for detail in details:
+        tmdb_id = number_to_tmdb.get(detail.season_number)
+        if detail.credits is None or tmdb_id is None or tmdb_id not in season_ids:
+            continue
+        scoped.setdefault(season_ids[tmdb_id], (detail.season_number, detail.credits.cast))
+
+    regulars = [
+        (season_id, regular)
+        for season_id, (number, cast) in scoped.items()
+        for regular in cast
+        if _has_regular_person(regular, show_id=show_id, season_number=number)
+    ]
+    scope = _refresh_scope(
+        [(season_id, cast) for season_id, (_, cast) in scoped.items()],
+        {season_id for season_id, _ in regulars},
+    )
+    if not scope:
+        return 0
+
+    person_ids = await _upsert_by_tmdb_id(
+        session, m.Person, [_person_row(regular) for _, regular in regulars]
+    )
+    character_ids = await _intern_characters(
+        session,
+        show_id=show_id,
+        names=[
+            name
+            for _, regular in regulars
+            if (name := _character_name(regular.character)) is not None
+        ],
+    )
+
+    rows: dict[tuple[int, int, int | None], dict[str, Any]] = {}
+    for season_id, regular in regulars:
+        name = _character_name(regular.character)
+        character_id = None if name is None else character_ids[name]
+        person_id = person_ids[regular.tmdb_person_id]
+        rows.setdefault(
+            (season_id, person_id, character_id),
+            {
+                "season_id": season_id,
+                "person_id": person_id,
+                "character_id": character_id,
+                "credit_id": regular.credit_id,
+                "billing_order": regular.billing_order,
+            },
+        )
+    # One delete for the scope: a show's seasons number in the tens, far from
+    # the parameter cap or a lock worth chunking. The insert is batched for the
+    # reason every other one here is.
+    await session.execute(delete(m.SeasonCast).where(m.SeasonCast.season_id.in_(scope)))
+    values = list(rows.values())
+    for start in range(0, len(values), _BATCH_SIZE):
+        await session.execute(insert(m.SeasonCast).values(values[start : start + _BATCH_SIZE]))
+    return len(scope)
+
+
+async def _mirrored_season_ids(session: AsyncSession, *, show_id: int) -> dict[int, int]:
+    """`{tmdb_id: surrogate id}` for the show's already-mirrored seasons.
+
+    `_mirrored_episode_ids` one grain up, for the same reason: what
+    `upsert_seasons` returns, read back instead for a caller that must not write
+    a season to learn it.
+    """
+    rows = await session.execute(
+        select(m.Season.tmdb_id, m.Season.id).where(
+            m.Season.show_id == show_id, m.Season.tmdb_id.is_not(None)
+        )
+    )
+    return {row.tmdb_id: row.id for row in rows if row.tmdb_id is not None}
+
+
+@dataclass(frozen=True)
+class SeasonCreditsWritten:
+    # Seasons whose regular cast was replaced (including cleared by `cast: []`).
+    seasons_written: int
+    # Season details that arrived with no `credits` at all. Non-zero means the
+    # payload cannot vouch for those seasons, so the caller must not stamp.
+    seasons_without_credits: int
+
+
+async def write_season_credits(
+    session: AsyncSession,
+    series: TMDBSeries,
+    *,
+    show_id: int,
+    seasons: Sequence[TMDBSeasonDetail] | None = None,
+) -> SeasonCreditsWritten:
+    """Write **only** a payload's season regulars onto an already-mirrored show (NEU-1512).
+
+    `write_series_credits`' seam, one table wide: the season credits backfill
+    needs `season_cast` filled over shows whose spine and other credits are
+    already correct, so the guarantee is that this writes *no other* table
+    beyond the `person` and `character` lookups it interns into. Seasons
+    resolve through a query rather than a write, and a season the payload names
+    but the mirror lacks is skipped — the next delta mirrors it and brings its
+    regulars along.
+
+    The caller owns the transaction and the stamp. `seasons_without_credits`
+    is returned rather than raised because it is the caller's call whether that
+    fails the show.
+    """
+    details = _merged_season_details(series, seasons)
+    written = await _write_season_credits(
+        session,
+        show_id=show_id,
+        details=details,
+        season_ids=await _mirrored_season_ids(session, show_id=show_id),
+        number_to_tmdb={summary.season_number: summary.tmdb_id for summary in series.seasons},
+    )
+    return SeasonCreditsWritten(
+        seasons_written=written,
+        seasons_without_credits=sum(detail.credits is None for detail in details),
+    )
+
+
 async def _write_season_networks(
     session: AsyncSession,
     *,
@@ -1823,6 +2009,13 @@ async def upsert_series_payload(
         number_to_tmdb=number_to_tmdb,
         network_ids=network_ids,
     )
+    await _write_season_credits(
+        session,
+        show_id=show_id,
+        details=details,
+        season_ids=season_ids,
+        number_to_tmdb=number_to_tmdb,
+    )
 
     screened: set[int] | None = None
     if series.screened_theatrically is not None:
@@ -1839,4 +2032,6 @@ async def upsert_series_payload(
     )
     await _set_air_pointers(session, show_id=show_id, series=series)
     await refresh_runtime(session, show_id=show_id)
+    # Same derive-after-write as the runtime, one per-show UPDATE (NEU-1502).
+    await recompute_last_aired(session, today=datetime.now(UTC).date(), show_ids=[show_id])
     return show_id

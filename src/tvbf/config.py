@@ -167,6 +167,31 @@ class Settings(BaseSettings):
     # best: a stopped snapshot does not error, it ages, and NEU-1056's seven-day
     # cutoff turns the section off a week later with nothing anywhere saying why.
     healthcheck_trending_url: str | None = Field(default=None, alias="HEALTHCHECK_TRENDING_URL")
+    # The daily push delivery's own deadman (NEU-1484, project spec §5.5). Fifth
+    # scheduled task, fifth check, for the rule above.
+    healthcheck_push_url: str | None = Field(default=None, alias="HEALTHCHECK_PUSH_URL")
+
+    # Web Push (VAPID) — project spec §5.5. Base64url **raw** keys, the format
+    # `py_vapid` emits and `pywebpush` consumes: a 32-byte private scalar and a
+    # 65-byte uncompressed public point. `task vapid:generate` prints a fresh
+    # set. `VAPID_SUBJECT` is a `mailto:` or the app URL — push services use it
+    # to reach whoever is sending.
+    #
+    # All three optional, and **nothing defaults them**: an app that sends no
+    # pushes needs no keys, and `vapid_configured` is what the delivery job and
+    # the push endpoints consult to refuse rather than guess. The private key is
+    # server-only; the SPA fetches the public one from
+    # `GET /push/vapid-public-key` and never hard-codes it (§7), so a rotation
+    # is an env change.
+    vapid_private_key: str | None = Field(default=None, alias="VAPID_PRIVATE_KEY")
+    vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
+    vapid_subject: str | None = Field(default=None, alias="VAPID_SUBJECT")
+    # How many notifications one user gets from one delivery run before the rest
+    # collapse into a single summary, and how far back a change event stays
+    # deliverable (§5.2). Events older than the window are never sent; nothing
+    # marks them, the window is the rule.
+    push_daily_cap: int = Field(default=5, alias="PUSH_DAILY_CAP")
+    push_event_window_hours: int = Field(default=48, alias="PUSH_EVENT_WINDOW_HOURS")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")
 
@@ -244,6 +269,16 @@ class Settings(BaseSettings):
     report_throttle_max: int = Field(default=5, alias="REPORT_THROTTLE_MAX")
     report_throttle_window_minutes: int = Field(
         default=1440, alias="REPORT_THROTTLE_WINDOW_MINUTES"
+    )
+
+    # The per-user budget on `POST /me/push/test` (NEU-1486, project spec §5.4).
+    # Each one is a real push to a real device, sent in the request, so this is
+    # a ceiling on outbound calls to a push service rather than on spam: five an
+    # hour is far above a user checking that notifications work, and caps a
+    # scripted loop at a handful of pushes per device per hour.
+    push_test_throttle_max: int = Field(default=5, alias="PUSH_TEST_THROTTLE_MAX")
+    push_test_throttle_window_minutes: int = Field(
+        default=60, alias="PUSH_TEST_THROTTLE_WINDOW_MINUTES"
     )
 
     # The per-account budget on `PATCH /me/handle` (NEU-1163 §6.2). The ticket's
@@ -355,6 +390,13 @@ class Settings(BaseSettings):
         return [o.strip() for o in self.cors_allowed_origins_raw.split(",") if o.strip()]
 
     @property
+    def vapid_configured(self) -> bool:
+        """True only when all three VAPID values are set (§5.5). Two of three is
+        not a partial configuration — a key pair without a subject, or a subject
+        without the private key, cannot sign a single push."""
+        return bool(self.vapid_private_key and self.vapid_public_key and self.vapid_subject)
+
+    @property
     def signup_ip_throttle(self) -> Throttle:
         return Throttle(
             max_attempts=self.signup_ip_throttle_max,
@@ -380,6 +422,13 @@ class Settings(BaseSettings):
         return Throttle(
             max_attempts=self.report_throttle_max,
             window_minutes=self.report_throttle_window_minutes,
+        )
+
+    @property
+    def push_test_throttle(self) -> Throttle:
+        return Throttle(
+            max_attempts=self.push_test_throttle_max,
+            window_minutes=self.push_test_throttle_window_minutes,
         )
 
     @property

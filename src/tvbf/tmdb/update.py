@@ -66,6 +66,16 @@ the same hand, is what keeps `catalog.show.popularity` from freezing for the 97%
 of the catalog a delta never re-fetches. It is guarded separately from the
 tombstone pass — one download, two failures worth telling apart.
 
+## Last aired rolls forward here, because nothing else moves it
+
+`catalog.show.last_aired` (NEU-1502) is recomputed per show whenever a show is
+written, but an episode crosses `air_date <= today` without any row changing —
+so yesterday's premiere would never reach the top of browse's "Last Aired" sort.
+Once a day, after the export passes, the whole catalog is recomputed (~1 s over
+6.6M episodes). Best-effort like the two export passes: the recompute is
+idempotent and total, so a failed night is healed by the next one, and holding
+the cursor back over it would cost far more than a day-stale sort.
+
 ## What this delta deliberately does not do
 
 **It does not filter `adult`.** The full pass mirrors whatever the export lists
@@ -80,6 +90,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.catalog.last_aired import recompute_last_aired
 from tvbf.catalog.runs import (
     CATALOG_CURSOR_KINDS,
     finalize_run,
@@ -282,6 +293,20 @@ async def _refresh_popularity(
         log.exception("catalog popularity refresh failed — the delta itself is unaffected")
 
 
+async def roll_forward_last_aired(session_factory: SessionFactory, *, today: date) -> None:
+    """The daily whole-catalog `last_aired` recompute — see the module docstring.
+
+    Swallows its own failure, as `reconcile_against_export` does.
+    """
+    try:
+        async with _owned_session(session_factory) as s:
+            changed = await recompute_last_aired(s, today=today)
+            await s.commit()
+        log.info("catalog last-aired roll-forward: %d show(s) moved", changed)
+    except Exception:
+        log.exception("catalog last-aired roll-forward failed — the delta itself is unaffected")
+
+
 async def reconcile_against_export(
     session_factory: SessionFactory, *, export_entries: Sequence[ExportEntry] | None = None
 ) -> None:
@@ -362,6 +387,7 @@ async def run_catalog_update(
     # early, so a run that gave up partway never reconciles against a catalog it
     # only half saw (ADR-0005).
     await reconcile_against_export(session_factory, export_entries=export_entries)
+    await roll_forward_last_aired(session_factory, today=today)
 
     async with _owned_session(session_factory) as s:
         await finalize_run(s, run_id, status="succeeded", last_update_cursor=date_to_cursor(today))

@@ -12,6 +12,7 @@ from tvbf.tmdb.client import (
     TMDBClient,
     _budget,
     plan_append,
+    season_credits_key,
     season_key,
 )
 
@@ -137,12 +138,25 @@ async def test_series_request_accepts_exactly_the_cap():
 
 @respx.mock
 async def test_season_request_fetches_one_season():
-    respx.get(f"{BASE}/tv/1396/season/3").mock(
+    route = respx.get(f"{BASE}/tv/1396/season/3").mock(
         return_value=httpx.Response(200, json={"season_number": 3, "episodes": []})
     )
     async with _client() as c:
         season = await c.get_tv_season(1396, 3)
     assert season["season_number"] == 3
+    assert "append_to_response" not in route.calls.last.request.url.params
+
+
+@respx.mock
+async def test_season_request_appends_what_it_is_asked_to():
+    """The overflow path's half of NEU-1512: a standalone season carries its
+    regular cast when asked, as the probe measured."""
+    route = respx.get(f"{BASE}/tv/1396/season/3").mock(
+        return_value=httpx.Response(200, json={"season_number": 3, "episodes": []})
+    )
+    async with _client() as c:
+        await c.get_tv_season(1396, 3, append=("credits",))
+    assert route.calls.last.request.url.params["append_to_response"] == "credits"
 
 
 # --- /tv/changes ------------------------------------------------------------
@@ -266,19 +280,38 @@ async def test_search_tv_sends_the_title_and_nothing_else():
 
 def test_plan_append_rides_every_season_when_they_fit():
     append, overflow = plan_append([1, 2, 3])
-    assert append == [*DEFAULT_APPEND, "season/1", "season/2", "season/3"]
+    assert append == [
+        *DEFAULT_APPEND,
+        "season/1",
+        "season/1/credits",
+        "season/2",
+        "season/2/credits",
+        "season/3",
+        "season/3/credits",
+    ]
     assert overflow == []
 
 
 def test_plan_append_splits_a_show_that_exceeds_the_cap():
     """The Simpsons' 36 seasons against the decided namespaces: whatever they
-    leave rides along, and the rest overflows."""
-    room = APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND)
+    leave rides along, two entries a season, and the rest overflows."""
+    room = (APPEND_TO_RESPONSE_LIMIT - len(DEFAULT_APPEND)) // 2
     append, overflow = plan_append(range(1, 37))
     assert len(append) == APPEND_TO_RESPONSE_LIMIT
     assert append[: len(DEFAULT_APPEND)] == list(DEFAULT_APPEND)
-    assert append[len(DEFAULT_APPEND) :] == [season_key(n) for n in range(1, 1 + room)]
+    assert append[len(DEFAULT_APPEND) :] == [
+        key for n in range(1, 1 + room) for key in (season_key(n), season_credits_key(n))
+    ]
     assert overflow == list(range(1 + room, 37))
+
+
+def test_plan_append_never_splits_a_season_from_its_credits():
+    """An odd number of free slots places one season fewer rather than a season
+    without its regular cast (NEU-1512)."""
+    namespaces = [f"ns{i}" for i in range(APPEND_TO_RESPONSE_LIMIT - 3)]
+    append, overflow = plan_append([1, 2, 3], namespaces=namespaces)
+    assert append[len(namespaces) :] == ["season/1", "season/1/credits"]
+    assert overflow == [2, 3]
 
 
 def test_the_decided_namespace_list_leaves_room_for_seasons():

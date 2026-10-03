@@ -63,6 +63,8 @@ ALLOWED_SORT_KEYS = {
     "-tvmaze_updated",
     "last_aired",
     "-last_aired",
+    "popularity",
+    "-popularity",
 }
 
 # TMDB's integer gender enum, in the vocabulary TV Maze used and the SPA renders.
@@ -285,6 +287,42 @@ class TrendingOut(BaseModel):
     shows: list[TrendingShowOut] = []
 
 
+class PopularShowOut(MarkedShowOut):
+    """One entry of `GET /me/friends/popular` (NEU-1499, project spec §5.2): a
+    `ShowSummary` **flattened**, marked, plus how many of the viewer's friends
+    were visibly active on it in the window.
+
+    Flattened on `TrendingShowOut`'s reasoning — `ShowGrid` and `ShowCard` take
+    a `ShowSummary`, and a wrapper would cost the SPA something for two scalars.
+
+    `friend_count` is the only ranking fact exposed, and it is ≥ 1 by
+    construction. The activity count and last-activity time order the list but
+    are not fields: a number the client can render is a number it will, and
+    neither means anything to a user.
+    """
+
+    friend_count: int
+
+
+class PopularWithFriendsOut(BaseModel):
+    """The `GET /me/friends/popular` body.
+
+    `connection_count` is the size of the viewer's accepted, enabled
+    connections, present on every response. It is what lets the SPA tell its
+    two empty states apart ("connect with someone" versus "a quiet fortnight")
+    without a second request or a rule of its own. A friend whose every activity
+    is hidden by a sharing switch still counts: the number is "who could
+    contribute", and reporting it lower would leak that someone hid something.
+
+    `window_days` is copy fuel only; the SPA never computes with it. `shows` is
+    in server rank order and is never re-sorted.
+    """
+
+    window_days: int
+    connection_count: int
+    shows: list[PopularShowOut]
+
+
 class AnticipatedShowOut(MarkedShowOut):
     """One entry of the most-anticipated list: a `ShowSummary` **flattened**,
     plus the same mark trending carries (NEU-1059).
@@ -335,17 +373,38 @@ class CharacterRef(BaseModel):
 
 
 class CastMemberOut(BaseModel):
+    """One cast credit, at whichever grain the route serves (NEU-1512 §4.1).
+
+    `episode_count` is the aggregate count on the show routes, the in-season
+    appearance count for a season's guests, and null for a season's regulars —
+    TMDB credits a regular on every episode of the season, which is a claim, not
+    a count — and for an episode's guests, one appearance by definition.
+    """
+
     person: PersonRef
     character: CharacterRef
     # `self` is a Python keyword, so the attribute is `self_credit` and only the
     # serialized key matches upstream's naming.
     self_credit: bool = Field(False, serialization_alias="self")
     voice: bool = False
+    episode_count: int | None = None
 
 
 class CrewMemberOut(BaseModel):
+    """One crew credit. `episode_count` is the aggregate on the show routes, the
+    in-season count on the season route, and null on the episode route."""
+
     person: PersonRef
     role: str
+    episode_count: int | None = None
+
+
+class SeasonCastOut(BaseModel):
+    """A season's cast as the season page renders it: the regulars upstream lists
+    for the season, then everyone else who guested in its episodes (NEU-1512)."""
+
+    regulars: list[CastMemberOut]
+    guests: list[CastMemberOut]
 
 
 class PersonOut(BaseModel):
@@ -403,15 +462,26 @@ class EpisodeRef(BaseModel):
 
 
 class PersonCastCreditOut(BaseModel):
+    """A regular credit: one (show, character) the person is a season regular as
+    (NEU-1512). `episode_count` is the aggregate, null when upstream's aggregate
+    lists no such role; `seasons` are the season numbers, ascending;
+    `last_credited` is the latest air date across those seasons' episodes."""
+
     show: ShowRef
     character: CharacterRef
     self_credit: bool = Field(False, serialization_alias="self")
     voice: bool = False
+    episode_count: int | None = None
+    seasons: list[int] = []
+    last_credited: date | None = None
 
 
 class PersonCrewCreditOut(BaseModel):
+    """A series crew credit (NEU-1512 §2.2), with its aggregate episode count."""
+
     show: ShowRef
     role: str
+    episode_count: int | None = None
 
 
 class PersonGuestCreditOut(BaseModel):
@@ -651,7 +721,9 @@ def build_character_ref(character: m.Character) -> CharacterRef:
     return CharacterRef(id=character.id, name=character.name, image_medium=None)
 
 
-def build_cast_member(person: m.Person, character: m.Character) -> CastMemberOut:
+def build_cast_member(
+    person: m.Person, character: m.Character, episode_count: int | None = None
+) -> CastMemberOut:
     """`self` and `voice` are permanently false — TMDB flags neither on a credit,
     where TV Maze carried both booleans."""
     return CastMemberOut(
@@ -659,13 +731,18 @@ def build_cast_member(person: m.Person, character: m.Character) -> CastMemberOut
         character=build_character_ref(character),
         self_credit=False,
         voice=False,
+        episode_count=episode_count,
     )
 
 
-def build_crew_member(person: m.Person, role: m.CrewRole) -> CrewMemberOut:
+def build_crew_member(
+    person: m.Person, role: m.CrewRole, episode_count: int | None = None
+) -> CrewMemberOut:
     """`role` is the job. `catalog.crew_role` splits TV Maze's single role name
     into `(department, job)`; the job is the half that reads as a credit."""
-    return CrewMemberOut(person=build_person_ref(person), role=role.job)
+    return CrewMemberOut(
+        person=build_person_ref(person), role=role.job, episode_count=episode_count
+    )
 
 
 def build_person_credits(cast_rows, crew_rows, guest_rows, episode_crew_rows) -> PersonCreditsOut:
@@ -676,12 +753,17 @@ def build_person_credits(cast_rows, crew_rows, guest_rows, episode_crew_rows) ->
                 character=build_character_ref(character),
                 self_credit=False,
                 voice=False,
+                episode_count=episode_count,
+                seasons=seasons,
+                last_credited=last_credited,
             )
-            for show, character in cast_rows
+            for show, character, episode_count, seasons, last_credited in cast_rows
         ],
         crew=[
-            PersonCrewCreditOut(show=build_show_ref(show), role=role.job)
-            for show, role in crew_rows
+            PersonCrewCreditOut(
+                show=build_show_ref(show), role=role.job, episode_count=episode_count
+            )
+            for show, role, episode_count in crew_rows
         ],
         guest_cast=[
             PersonGuestCreditOut(

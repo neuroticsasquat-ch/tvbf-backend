@@ -82,11 +82,11 @@ _Avoid_: role, part
 The umbrella term for a link between a person and something they worked on. Never used bare where the kind matters — say cast credit, crew credit, guest credit or episode crew credit.
 
 **Cast credit**:
-A person portraying a character on a show. Person-as-character.
+A person portraying a character on a show. Person-as-character. Comes in two grains: a **regular credit** across a show and a **guest credit** in one episode. Upstream's show-level list carries both without saying which is which — a guest's show-level entry is the same appearances counted, not a second credit — so the grain is derived (see *Regular credit*), never read off the row.
 _Avoid_: role, appearance, starring
 
 **Crew credit**:
-A person performing a named function on a show, such as Executive Producer or Editor. Person-in-function.
+A person performing a named function on a show, such as Executive Producer or Editor. Person-in-function. Like a cast credit it comes in two grains, a **series crew credit** and an **episode crew credit**, and upstream's show-level list mixes them the same way.
 
 **Crew role**:
 The named function someone performs, as a **department and a job together** — Directing/Director, Writing/Writer, Sound/Original Music Composer. Upstream sends both as free text; we intern the pair into a local lookup. One lookup covers show crew and episode crew alike.
@@ -95,15 +95,27 @@ The scope widened with the source (ADR-0007). TV Maze had two disjoint vocabular
 _Avoid_: crew type, job title, episode crew role, guest crew type
 
 **Guest credit**:
-A person portraying a character in a single episode rather than across a show. Arrives on the season payload alongside the episode crew credits for the same episodes — which under TMDB is the show request itself, so both cost no request of their own (NEU-1040).
+A person portraying a character in a single episode rather than across a show. Arrives on the season payload alongside the episode crew credits for the same episodes — which under TMDB is the show request itself, so both cost no request of their own (NEU-1040). Someone who was a regular in one season and a guest in another holds both kinds on the same show; neither cancels the other.
 _Avoid_: guest star, one-off
+
+**Regular credit**:
+A person portraying a character as one of a **season's** regular cast — upstream's own list for that season, ingested per season (NEU-1512). Upstream credits a regular on every episode of the season whether or not they appear, so a regular credit says "on this season", never "in this episode"; that is why an episode page lists guests and links to the season for its regulars. At show grain a regular is anyone with a regular credit on any of the show's seasons, and everyone else in upstream's show-level list is a guest — a set difference, not an inference. "Regular" qualifies the credit here; a *regular episode* is an unrelated term meaning a non-special one (see *Last aired*).
+_Avoid_: main cast, series regular, lead, starring
+
+**Series crew credit**:
+A crew credit held at show level rather than assembled from episodes: Executive Producer, Creator, Composer. Unlike a regular credit it is **derived**, because upstream's season-level crew list is not worth a third grain: a job is series crew when its show-level episode count exceeds the person's episode crew credits in it. A director of forty episodes holds forty episode crew credits and **no** series crew credit; upstream's show-level row for them is a sum, and the show page's Crew tab lists only series crew.
+_Avoid_: show crew, regular crew, staff
+
+**Season cast**:
+What a season page lists as its cast: the season's regular cast in billing order, then its guest stars — everyone with a guest credit on one of the season's episodes, counted by appearances within the season. Someone on both lists for one season is upstream inconsistency and is shown as a regular only. An episode page has no cast of its own beyond its guest credits; it points at the season cast.
+_Avoid_: full cast, complete cast, episode cast
 
 **Episode crew credit**:
 A person performing a named function on a single episode. Distinct from a crew credit by **grain, not by vocabulary** — the same crew role can be held at either, and one lookup serves both. TV Maze called this "guest crew" for symmetry with guest cast, but an episode's director is not a guest.
 _Avoid_: guest crew, episode guest crew
 
 **Billing order**:
-The order upstream returns a show's cast in. Preserved rather than re-sorted. A property of show cast only — **crew has no order at all** under TMDB, at either grain.
+The order upstream returns a show's cast in, and — per season — a season's regular cast in. Preserved rather than re-sorted. A property of cast only — **crew has no order at all** under TMDB, at any grain.
 
 It stopped being the proxy for how much someone appears when the source changed (ADR-0007): TMDB gives a credit its own **episode count**, which is the real measure and the one credits are sorted by. Billing order still says who is top-billed, which an episode count does not.
 _Avoid_: cast order, importance, prominence
@@ -113,11 +125,11 @@ The sequence upstream lists a single episode's guest cast in. Preserved rather t
 _Avoid_: billing order, sort order
 
 **Filmography**:
-The complete itemized set of a person's credits — cast, crew, guest and episode crew — as presented on their page.
+The complete itemized set of a person's credits — regular, guest, series crew and episode crew — as presented on their page along two axes, cast and crew, one entry per show, newest credited date first.
 _Avoid_: credits list, appearances
 
 **Credit group**:
-All of one person's credits of a single kind on a single show, presented as one filmography entry — "Director · 12 episodes of *Severance*" rather than twelve rows. A presentation concept only: the API returns credits individually and grouping happens client-side. Grouping never merges across kinds, so a person who both acted in and directed a show has a cast entry and an episode-crew entry for it.
+All of one person's credits along one axis — cast or crew — on a single show, presented as one filmography entry — "*Severance* · 12 episodes" with the directed episodes beneath, or "*Breaking Bad* · 62 episodes" with the regular seasons and a later guest episode beneath. A presentation concept only: the API returns credits individually and grouping happens client-side. Grouping merges **grains** (a regular credit and guest credits on the same show share one entry, since NEU-1512) but never **axes**: a person who both acted in and directed a show has a cast entry and a crew entry for it.
 _Avoid_: credit cluster, merged credit
 
 ### Shows and episodes
@@ -137,6 +149,18 @@ Specials are **excluded from completion math, aired counts and Watch Next**, whi
 The definition changed with the source (ADR-0007). TV Maze marked a special with a *null episode number* inside its real season and returned it outside the episode embed, so it needed its own fetch; TMDB parks specials in season 0 and returns them in that season's payload like anything else.
 _Avoid_: extra, bonus episode
 
+**Last aired**:
+The air date of a show's most recent **regular** episode on or before today — specials excluded, future-dated episodes excluded, and `NULL` for a show with no dated regular episode. One definition everywhere it is sorted or shown: browse and search's "Last Aired" sort, My Shows' recent-activity order, Watch Next and Watched. "Today" is whichever day the reading surface is working in: a viewer's own device date on the My Shows surfaces, the server's UTC date on the catalog-wide ones. A show moves in this order without any row changing, because episodes cross into "aired" as days pass.
+_Avoid_: last air date (TMDB's own frozen field on the show, which counts specials and goes stale between deltas), latest episode
+
+**Short query**:
+A title search none of whose tokens has three or more characters once folded — `v`, `24`, `er`, `24 h`. Too short to be looked up as a substring, so it matches the **start** of a title or AKA instead (`er` finds *ER*, `24 h` finds *24 H*). A query with at least one longer token is an ordinary substring search, and its short tokens narrow it.
+_Avoid_: stopword, minimum length
+
+**Popularity**:
+TMDB's interest score for one show or one person, mirrored as a property of that row. A number about one entity, not a list: it is what search ranks shows and people by when the viewer has not chosen another order, and what breaks ties when two titles resolve equally. It says how much attention the show or person gets world-wide, nothing about the viewer or their connections — the reserved word "popular" belongs to the friend-scoped list, and **trending** is TMDB's separate weekly ranking, which is demonstrably not this score in order. A show's score is refreshed nightly; a person's only when a show crediting them is re-mirrored, so person scores are of mixed vintage.
+_Avoid_: popular, most popular (reserved for the friend-scoped list), trending (a different TMDB list), relevance (this sort is not query-aware)
+
 ### The app
 
 **My Shows**:
@@ -147,8 +171,8 @@ _Avoid_: watchlist, favorites, following
 The computed next unwatched episode for each show in a user's My Shows.
 
 **Connection**:
-A link between two users, in one of three states: requested, accepted, or blocked. Friend-scoped features read only accepted connections.
-_Avoid_: friend, follow, relationship
+A link between two users, in one of three states: pending, accepted, or blocked. Friend-scoped features read only accepted connections.
+_Avoid_: friend, follow, relationship, requested (the state is `pending`)
 
 **Invite code**:
 A single-use code that may optionally be supplied at signup. Never expires; consumed on use. An admin creates one; the invitee supplies it — an invited signup gets three things an open signup does not: pre-verification (skipping the email gate), an auto-connection to the inviter, and a consumed invite row. Since NEU-1165 supplying one is optional — `INVITE_REQUIRED` can re-close registration without a deploy.
@@ -160,6 +184,22 @@ _Avoid_: confirmed, activated, validated
 **Outreach** / **consumption**:
 The two halves of the social layer, and the line the verification gate is drawn on (NEU-1152, NEU-1161). **Outreach** is reaching a user who has not consented — sending a connection request, being discoverable in `/users/search` — and requires a verified email. **Consumption** is reading what an accepted connection already agreed to share — a friend's library, friend engagement on a show — and requires only the connection. Defensive acts (blocking) and withdrawal (declining, cancelling, disconnecting) are neither, and are never gated: an unverified user must always be able to protect themselves and to say yes to someone who asked.
 _Avoid_: social actions (it collapses the distinction the gate rests on)
+
+**Activity**:
+One user action on one target, as the friend-scoped surfaces see it: adding a show to My Shows, marking an episode, a season or a whole show watched, or rating a show or an episode. An activity is a single record per (user, kind, target) — a bulk mark is one activity, not one per episode — and undoing the action removes it rather than adding a second. Every friend-scoped aggregate (the feed, popular with friends) reads activities, never the underlying watch or rating rows, because activities are the layer the sharing switches apply to.
+_Avoid_: event (the storage term), watch (one of six kinds)
+
+**Sharing switches**:
+The two controls a user has over what connections see of their activity: a global switch that hides all of it, and a per-show switch that hides activity on one show. Both apply to every friend-scoped aggregate. They do not apply to a friend's library or to the names on a show page's engagement strip.
+_Avoid_: privacy settings (broader), opt-out
+
+**Trending**:
+The world-wide list — TMDB's weekly ranking, snapshotted daily and served unchanged. A claim about the world, not about the viewer or their connections; the same for every user.
+_Avoid_: popular (that word is reserved for the friend-scoped list below), hot
+
+**Popular with friends**:
+The shows the viewer's accepted connections have had activity on recently, ranked by how many distinct connections were active on each, and per-viewer by construction. It is the social counterpart of trending: trending says what the world is watching, popular with friends says what your people are. It honours the sharing switches and counts nothing of the viewer's own.
+_Avoid_: trending with friends (trending is TMDB's), friends trending, friend activity (that is the feed)
 
 ### Recommendations
 
@@ -200,3 +240,41 @@ A resolution failure is an outcome, not a defect: an unresolved title is either 
 
 That contrast is why this is **not** called matching: in this codebase matching means NEU-1043's `match_method`, a different problem with the opposite cost asymmetry.
 _Avoid_: matching, lookup
+
+### Notifications
+
+**Catalog event**:
+A recorded transition on a tracked show, observed by the daily delta comparing the row it is about to overwrite with the payload it just fetched: a season premiere date set, a premiere date moved, a show's status flipping to ended or cancelled, or a show **revived** — its status leaving ended or cancelled again. Append-only, kept in a `catalog` sidecar, and recorded **only for shows someone tracks** (ADR-0014). A new episode row appearing is deliberately not one.
+_Avoid_: change, diff, notification (an event is the fact; a notification is what may be sent about it)
+
+**Airs-today set**:
+The episodes of a user's My Shows whose corrected air date is today, excluding specials and episodes already watched. Derived from the schedule each morning, not from any catalog event — so a whole season appearing at once, or a catch-up run, never produces one alert per row.
+_Avoid_: new-episode event, release
+
+**Notification**:
+One push about one show for one user, of exactly one kind — *airs today*, *premiere set*, *premiere moved*, *ended* or *revived*. Never a digest across shows: the per-user daily cap folds overflow into a single summary rather than merging kinds.
+_Avoid_: alert, message, ping
+
+**Notification key**:
+What makes a notification the same notification on a re-run: its kind plus the show and the episode, season or event it is about. The delivery log is unique on the key and the subscription, which is what lets a crashed or repeated delivery run be safe.
+_Avoid_: dedupe id, tag (the Web Push tag *carries* the key; it is not the key)
+
+**Push subscription**:
+One browser install's address for receiving pushes — endpoint plus its two keys — belonging to one user. A user has many; a device may rotate its endpoint without warning. Retired the moment the push service answers gone, or after repeated failures; never tied to a session.
+_Avoid_: device, registration, token
+
+**Delivery**:
+One attempt to send one notification to one subscription, recorded before the send and stamped with the outcome. The unit of idempotency, the audit trail, and the evidence a stale subscription is retired on.
+_Avoid_: send, message
+
+**Freshness window**:
+The age past which a catalog event is skipped rather than delivered, and the check that the fact it records is still current. The guard that stops a multi-week catch-up delta from replaying weeks of transitions as tonight's news.
+_Avoid_: backfill guard, throttle
+
+**Mute**:
+A per-show, per-user switch on a My Shows entry: the show stays tracked, appears in Watch Next and Upcoming, and never produces a notification of any kind. Distinct from the per-kind preferences, which apply across every show.
+_Avoid_: unfollow, snooze, silence
+
+**Revived**:
+A tracked show whose status leaves ended or cancelled — a renewal, an un-cancellation, a network pickup. A catalog event of its own, and **not** a resurrection: resurrection is a tombstoned row reappearing upstream, which says nothing about whether the show is making more episodes.
+_Avoid_: resurrected, renewed (TMDB's vocabulary has no such status; the event is the transition), un-cancelled

@@ -26,6 +26,15 @@ async def get_by_id(db: AsyncSession, show_id: int) -> Show | None:
     return await db.get(Show, show_id)
 
 
+async def get_many_by_ids(db: AsyncSession, show_ids: list[int]) -> dict[int, Show]:
+    """The `catalog.show` rows for `show_ids`, keyed by id, in one query. A
+    requested id with no row is simply absent."""
+    if not show_ids:
+        return {}
+    rows = (await db.execute(select(Show).where(Show.id.in_(show_ids)))).scalars().all()
+    return {row.id: row for row in rows}
+
+
 async def titles_for_ids(db: AsyncSession, show_ids: list[int]) -> dict[int, ShowTitle]:
     """Name, folded name and premiere year for each of `show_ids`.
 
