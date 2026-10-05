@@ -352,11 +352,15 @@ class Settings(BaseSettings):
 
     # Email transport. `smtp` is the default for local dev (Mailpit on the
     # shared `proxy` network). Set `EMAIL_PROVIDER=resend` + `RESEND_API_KEY`
-    # in production.
+    # in production. `EMAIL_REPLY_TO_ADDRESS` is the mailbox a user reaches by
+    # replying (the from address is a no-reply that cannot receive); the clients
+    # apply it to every send that names no `reply_to` of its own, and unset
+    # means no Reply-To header at all (NEU-1537).
     email_provider: str = Field(default="smtp", alias="EMAIL_PROVIDER")
     email_from_address: str = Field(
         default="TV BingeFriend <no-reply@tvbf.localhost>", alias="EMAIL_FROM_ADDRESS"
     )
+    email_reply_to_address: str | None = Field(default=None, alias="EMAIL_REPLY_TO_ADDRESS")
     resend_api_key: str | None = Field(default=None, alias="RESEND_API_KEY")
     smtp_host: str = Field(default="mailpit", alias="SMTP_HOST")
     smtp_port: int = Field(default=1025, alias="SMTP_PORT")
