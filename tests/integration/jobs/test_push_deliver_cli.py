@@ -41,8 +41,8 @@ def _today():
     return datetime.now(UTC).date()
 
 
-def _key() -> str:
-    return f"airs_today:{EPISODE}:{_today().isoformat()}"
+def _key(show_id: int = SHOW) -> str:
+    return f"airs_today:{show_id}:{_today().isoformat()}"
 
 
 async def _airs_today(session) -> None:
@@ -65,9 +65,12 @@ async def _airs_today(session) -> None:
     await session.commit()
 
 
-async def _subscriber(make_user, session, *devices: str, failure_count: int = 0):
+async def _subscriber(
+    make_user, session, *devices: str, failure_count: int = 0, shows: tuple[int, ...] = (SHOW,)
+):
     user = await make_user(email="a@example.com")
-    session.add(UserShowWatch(user_id=user.id, show_id=SHOW))
+    for show_id in shows:
+        session.add(UserShowWatch(user_id=user.id, show_id=show_id))
     for device in devices or ("phone",):
         session.add(
             PushSubscription(
@@ -252,8 +255,8 @@ async def test_a_retired_subscription_gets_no_further_candidates(session, make_u
     """Two candidates, one device answering 410 to the first: the second is
     never attempted against a subscription that no longer exists."""
     await _airs_today(session)
-    await _second_episode(session)
-    await _subscriber(make_user, session)
+    await _second_show(session)
+    await _subscriber(make_user, session, shows=(SHOW, SHOW + 1))
     calls = _stub_send(monkeypatch, sender.Gone(status=410))
 
     # And a day whose only sends hit dead devices is not an outage.
@@ -262,19 +265,70 @@ async def test_a_retired_subscription_gets_no_further_candidates(session, make_u
     assert len(calls) == 1
 
 
-async def _second_episode(session) -> None:
+async def _second_show(session, *, status: str = "Returning Series") -> None:
+    """A second tracked show with its own episode today — a second *candidate*.
+    A second episode of the first show would fold into its one push (NEU-1539)."""
+    session.add(m.Show(id=SHOW + 1, tmdb_id=SHOW + 1, name="Andor", status=status))
+    await session.flush()
+    session.add(m.Season(id=SEASON + 1, tmdb_id=SEASON + 1, show_id=SHOW + 1, season_number=1))
+    await session.flush()
     session.add(
         m.Episode(
             id=EPISODE + 1,
             tmdb_id=EPISODE + 1,
-            show_id=SHOW,
-            season_id=SEASON,
-            season_number=2,
-            episode_number=5,
+            show_id=SHOW + 1,
+            season_id=SEASON + 1,
+            season_number=1,
+            episode_number=1,
             air_date=_today(),
         )
     )
     await session.commit()
+
+
+async def _season_dump(session, count: int) -> None:
+    """`count` more episodes of the first show, all airing today."""
+    for n in range(1, count + 1):
+        session.add(
+            m.Episode(
+                id=EPISODE + 10 + n,
+                tmdb_id=EPISODE + 10 + n,
+                show_id=SHOW,
+                season_id=SEASON,
+                season_number=2,
+                episode_number=4 + n,
+                air_date=_today(),
+            )
+        )
+    await session.commit()
+
+
+async def test_a_season_dump_is_one_push_and_spends_one_cap_slot(session, make_user, monkeypatch):
+    """The ticket's case (NEU-1539): eight episodes of one show today and an
+    `ended` event on another — two pushes, no summary, and the drop's push
+    names the range."""
+    await _airs_today(session)
+    await _season_dump(session, 7)
+    await _second_show(session, status="Ended")
+    event = m.ShowEvent(kind="ended", show_id=SHOW + 1, new_value="Ended")
+    session.add(event)
+    await session.commit()
+    ended = f"ended:{event.id}"
+    await _subscriber(make_user, session, shows=(SHOW, SHOW + 1))
+    calls = _stub_send(monkeypatch)
+
+    assert await push_deliver.run_push_daily(_settings(push_daily_cap=5)) is True
+
+    payloads = {payload["key"]: payload for _, payload in calls}
+    assert set(payloads) == {_key(), _key(SHOW + 1), ended}
+    assert payloads[_key()]["body"] == "8 episodes air today (S2E4–E11)"
+    assert payloads[_key()]["url"] == f"/shows/{SHOW}/episodes?season=2"
+    # Andor's one episode, Severance's eight, then the event — three rows, no summary.
+    assert [(row.notification_key, row.kind, row.status) for row in await _deliveries(session)] == [
+        (_key(SHOW + 1), "airs_today", "sent"),
+        (_key(), "airs_today", "sent"),
+        (ended, "ended", "sent"),
+    ]
 
 
 def _stub_send_deleting(monkeypatch, outcome: sender.SendOutcome) -> list[str]:
@@ -299,8 +353,8 @@ async def test_a_subscription_deleted_mid_run_does_not_abort_it(session, make_us
     claim against it would violate the delivery log's FK. That device is
     dropped; the run goes on."""
     await _airs_today(session)
-    await _second_episode(session)
-    await _subscriber(make_user, session)
+    await _second_show(session)
+    await _subscriber(make_user, session, shows=(SHOW, SHOW + 1))
     calls = _stub_send_deleting(monkeypatch, sender.Sent(status=201))
 
     assert await push_deliver.run_push_daily(_settings()) is True
@@ -313,8 +367,8 @@ async def test_a_failure_against_a_deleted_subscription_does_not_abort_the_run(
     session, make_user, monkeypatch
 ):
     await _airs_today(session)
-    await _second_episode(session)
-    await _subscriber(make_user, session)
+    await _second_show(session)
+    await _subscriber(make_user, session, shows=(SHOW, SHOW + 1))
     calls = _stub_send_deleting(monkeypatch, sender.Failed(status=500, error="boom"))
 
     assert await push_deliver.run_push_daily(_settings()) is False  # its only send failed

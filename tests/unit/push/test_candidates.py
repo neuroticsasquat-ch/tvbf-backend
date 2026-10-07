@@ -108,25 +108,27 @@ def test_revived_is_current_while_the_show_is_not_ended(is_ended, expected):
 # --- apply_cap ----------------------------------------------------------------
 
 
-def _airs(user: UUID, show_name: str, episode_id: int, episode_number: int = 1) -> Candidate:
+def _airs(user: UUID, show_name: str, show_id: int) -> Candidate:
+    """One show's airs-today candidate — one per show since NEU-1539."""
     return Candidate(
         user_id=user,
         kind="airs_today",
-        key=f"airs_today:{episode_id}:{TODAY}",
-        episode_id=episode_id,
+        key=f"airs_today:{show_id}:{TODAY}",
+        show_id=show_id,
+        episode_id=show_id * 100,
         show_name=show_name,
         season_number=1,
-        episode_number=episode_number,
+        episode_number=1,
     )
 
 
-def _ev(user: UUID, event_id: int, hour: int) -> Candidate:
+def _ev(user: UUID, event_id: int, hour: int, show_name: str = "Zed") -> Candidate:
     return Candidate(
         user_id=user,
         kind="ended",
         key=f"ended:{event_id}",
         event_id=event_id,
-        show_name="Zed",
+        show_name=show_name,
         observed_at=datetime(2026, 9, 26, hour, tzinfo=UTC),
     )
 
@@ -136,13 +138,13 @@ def test_airs_today_come_first_by_show_name_then_events_oldest_first():
         _ev(ALICE, 2, hour=9),
         _airs(ALICE, "The Wire", 10),
         _ev(ALICE, 1, hour=3),
-        _airs(ALICE, "Andor", 11),
-        _airs(ALICE, "Andor", 12, episode_number=0),
+        _airs(ALICE, "Severance", 11),
+        _airs(ALICE, "Andor", 12),
     ]
 
     capped = apply_cap({ALICE: candidates}, today=TODAY)
 
-    # "The Wire" sorts under W; Andor's two episodes by number.
+    # "The Wire" sorts under W.
     assert [c.key for c in capped[ALICE]] == [
         f"airs_today:12:{TODAY}",
         f"airs_today:11:{TODAY}",
@@ -190,15 +192,27 @@ def test_a_summary_names_each_overflowing_show_once_in_delivery_order():
     candidates = [
         _airs(ALICE, "Andor", 1),
         _airs(ALICE, "Severance", 2),
-        _airs(ALICE, "Severance", 3, episode_number=2),
         _airs(ALICE, "The Wire", 4),
-        _ev(ALICE, 1, hour=3),
+        _ev(ALICE, 1, hour=3, show_name="Severance"),
+        _ev(ALICE, 2, hour=4),
     ]
 
     summary = apply_cap({ALICE: candidates}, 1, today=TODAY)[ALICE][-1]
 
     assert summary.count == 4
     assert summary.show_names == ("Severance", "The Wire", "Zed")
+
+
+def test_a_season_dump_is_one_candidate_against_the_cap():
+    """The ticket's case (NEU-1539): the fold happens in `airs_today_candidates`,
+    so the cap sees one candidate per show however many episodes it carries."""
+    dump = _airs(ALICE, "Severance", 1)
+    others = [_airs(ALICE, f"Show {i}", i) for i in range(2, 6)]
+
+    capped = apply_cap({ALICE: [dump, *others]}, 5, today=TODAY)
+
+    assert len(capped[ALICE]) == 5
+    assert all(c.kind == "airs_today" for c in capped[ALICE])
 
 
 def test_the_cap_is_per_user():

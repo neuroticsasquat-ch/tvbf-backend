@@ -14,6 +14,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from itertools import groupby
 from typing import Literal
 from uuid import UUID
 
@@ -44,6 +45,16 @@ _EPOCH = datetime.min.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True)
+class AiredEpisode:
+    """One episode of an airs-today group, in the order the body lists them."""
+
+    id: int
+    season_number: int
+    episode_number: int
+    name: str | None
+
+
+@dataclass(frozen=True)
 class Candidate:
     """One notification for one user, before it meets a subscription.
 
@@ -52,6 +63,12 @@ class Candidate:
     renders from; each kind sets the ones its body needs and leaves the rest
     `None`. `air_date` is the **corrected** date: the episode's for airs-today,
     the season's for the two premiere kinds (what the app shows, NEU-1145).
+
+    An airs-today candidate is **one per show** (Q8, NEU-1539): `episodes` holds
+    every episode of that show airing today, lowest first, and the single
+    `episode_*` fields are the first one's — what the one-episode body and the
+    `/episodes/{id}` link read, and what keeps a single episode's rendering
+    identical whether or not it came through a group.
     """
 
     user_id: UUID
@@ -74,6 +91,8 @@ class Candidate:
     # they are about, in delivery order — the body lists these (§5.3).
     count: int | None = None
     show_names: tuple[str, ...] = ()
+    # Every episode an airs-today candidate is about, (season, episode) order.
+    episodes: tuple[AiredEpisode, ...] = ()
 
 
 def _has_subscription():
@@ -81,13 +100,18 @@ def _has_subscription():
 
 
 async def airs_today_candidates(session: AsyncSession, *, today: date) -> list[Candidate]:
-    """The airs-today set for every user who would receive it (Q16).
+    """The airs-today set for every user who would receive it (Q16), one
+    candidate per show.
 
     Corrected `air_date = today`, specials (season 0) excluded, show in My
     Shows and not muted, episode not watched, account not disabled, the
-    `notify_airs_today` flag set. No email-verified gate. Key
-    `airs_today:{episode_id}:{air_date}`, so a date moving onto today again
-    later is a new notification rather than a suppressed one.
+    `notify_airs_today` flag set. No email-verified gate. Every episode of one
+    show airing today folds into one candidate (Q8, NEU-1539): a season dump
+    is one push and costs one cap slot, not the whole cap. Key
+    `airs_today:{show_id}:{air_date}` — the show and the day, whatever the
+    episode set — so a date moving onto today again later is a new
+    notification rather than a suppressed one, while a same-day re-run with a
+    changed set is a skip.
     """
     watched = exists().where(
         UserEpisodeWatch.user_id == User.id, UserEpisodeWatch.episode_id == m.Episode.id
@@ -115,33 +139,45 @@ async def airs_today_candidates(session: AsyncSession, *, today: date) -> list[C
             m.Episode.season_number > 0,
             ~watched,
         )
-        .order_by(User.id, m.Episode.id)
-    )
-    return [
-        Candidate(
-            user_id=user_id,
-            kind="airs_today",
-            key=f"airs_today:{episode_id}:{today.isoformat()}",
-            show_id=show_id,
-            episode_id=episode_id,
-            show_name=show_name,
-            poster_path=poster_path,
-            season_number=season_number,
-            episode_number=episode_number,
-            episode_name=episode_name,
-            air_date=today,
+        .order_by(
+            User.id,
+            m.Show.id,
+            m.Episode.season_number,
+            m.Episode.episode_number,
+            m.Episode.id,
         )
-        for (
-            user_id,
-            show_id,
-            show_name,
-            poster_path,
-            episode_id,
-            season_number,
-            episode_number,
-            episode_name,
-        ) in rows
-    ]
+    )
+    candidates: list[Candidate] = []
+    for (user_id, show_id), group in groupby(rows, key=lambda row: (row[0], row[1])):
+        show_rows = list(group)
+        show_name, poster_path = show_rows[0][2], show_rows[0][3]
+        episodes = tuple(
+            AiredEpisode(
+                id=episode_id,
+                season_number=season_number,
+                episode_number=episode_number,
+                name=episode_name,
+            )
+            for (_, _, _, _, episode_id, season_number, episode_number, episode_name) in show_rows
+        )
+        first = episodes[0]
+        candidates.append(
+            Candidate(
+                user_id=user_id,
+                kind="airs_today",
+                key=f"airs_today:{show_id}:{today.isoformat()}",
+                show_id=show_id,
+                episode_id=first.id,
+                show_name=show_name,
+                poster_path=poster_path,
+                season_number=first.season_number,
+                episode_number=first.episode_number,
+                episode_name=first.name,
+                air_date=today,
+                episodes=episodes,
+            )
+        )
+    return candidates
 
 
 def is_still_current(
@@ -276,10 +312,12 @@ def apply_cap(
 ) -> dict[UUID, list[Candidate]]:
     """Each user's notifications in delivery order, capped (§5.2 step 3).
 
-    Airs-today first, by show name (article-stripped, as My Shows sorts), then
-    events oldest first. Past `cap`, the remainder is replaced by one `summary`
-    candidate keyed `summary:{user_id}:{today}` — so a user can receive
-    `cap + 1` pushes, the last one standing in for the rest.
+    Airs-today first — one per show, by show name (article-stripped, as My
+    Shows sorts) — then events oldest first. Past `cap`, the remainder is
+    replaced by one `summary` candidate keyed `summary:{user_id}:{today}` — so
+    a user can receive `cap + 1` pushes, the last one standing in for the rest.
+    The summary's `count` is therefore in notifications, and a show's whole
+    season dump counts once.
     """
     capped: dict[UUID, list[Candidate]] = {}
     for user_id, candidates in candidates_by_user.items():
