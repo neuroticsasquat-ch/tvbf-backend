@@ -39,7 +39,9 @@ would want the diff to move from Python into the database. Until then the extra 
 ## Consequences
 
 - The airs-today notification has no event row and no `observed_at`; its notification key
-  is the episode and the air date, and the delivery log is the only record it was sent.
+  is the show and the air date — one push per show per day, every episode airing that day
+  folded into it (NEU-1539; keying it per episode let a season dump spend a user's whole
+  daily cap) — and the delivery log is the only record it was sent.
 - The full catalog pass records no events at all — it has nothing to compare against.
 - A premiere date that arrives for an untracked show and is tracked the next day produces no
   "premiere set" alert; the airs-today alert on the day still fires.

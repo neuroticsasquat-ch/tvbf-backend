@@ -57,7 +57,7 @@ an in-app notification centre; a digest across shows.
 | Q12 | Preferences | **Per user, per kind** — five booleans on `app.user`, default on. Via `PATCH /me/preferences`. |
 | Q13 | PWA shell | **Hand-written `public/sw.js` + `public/manifest.webmanifest`**; no `vite-plugin-pwa`, no precache. |
 | Q14 | Permission | **Explicit button in Settings + one-time post-add nudge card.** Never on load; never from the Add click itself. iOS-not-installed shows install instructions. |
-| Q15 | Payload | **Show name as title, one specific line as body, deep link** to the episode (`/episodes/{id}`) or show (`/shows/{id}`); poster as icon; `tag` = key. |
+| Q15 | Payload | **Show name as title, one specific line as body, deep link** to the episode (`/episodes/{id}`), the season's episode list when several air today (`/shows/{id}/episodes?season={n}`, NEU-1539) or show (`/shows/{id}`); poster as icon; `tag` = key. |
 | Q16 | Airs-today rule | Corrected `air_date = today`, `season_number > 0`, show in My Shows, episode not watched, account not disabled, no email-verified gate. |
 | Q17 | Retention | Delivery job's last step purges `show_event` + `push_delivery` older than 90 days. No separate task. |
 | Q18 | Scope edges | In: test-push button, Android/desktop install prompt, admin stats endpoint, per-show mute. |
@@ -194,7 +194,11 @@ Steps, in order:
 1. **Airs-today candidates.** For every user with ≥1 subscription and `notify_airs_today`, and
    `disabled_at IS NULL`: episodes where `episode.air_date = today`, `season_number > 0`,
    the show is in the user's My Shows with `muted = false`, and no `user_episode_watch` row.
-   Notification key `airs_today:{episode_id}:{air_date}`.
+   **One candidate per show** (Q8): every episode of one show airing today folds into it, in
+   (season, episode) order, so a season dump is one push and one cap slot. Notification key
+   `airs_today:{show_id}:{air_date}` — the show and the day, whatever the episode set, so a
+   same-day re-run with a changed set is a skip (NEU-1539; it was per episode before, which is
+   what let a drop spend the whole cap).
 2. **Event candidates.** `catalog.show_event` rows with `observed_at >= now() - 48h` **and still
    current** — `premiere_set`/`premiere_moved`: the season's **raw** date
    (`coalesce(tmdb_air_date, air_date)`, the same value §5.1 compared and stored in `new_value`;
@@ -227,7 +231,7 @@ JSON, encrypted by `pywebpush`, decoded in `sw.js`:
 
 ```json
 {
-  "key": "airs_today:12345:2026-09-26",
+  "key": "airs_today:7:2026-09-26",
   "kind": "airs_today",
   "title": "Severance",
   "body": "S2E4 “Woe’s Hollow” airs today",
@@ -237,7 +241,10 @@ JSON, encrypted by `pywebpush`, decoded in `sw.js`:
 ```
 
 - `title` is always the show name; `body` per kind: airs-today `S{s}E{e} “{title}” airs today`
-  (`S{s}E{e} airs today` when the episode has no title); `premiere_set` `Season {n} premieres
+  (`S{s}E{e} airs today` when the episode has no title) for one episode, and for two or more
+  of one show (NEU-1539) `{N} episodes air today (S2E1–E8)` — the range when they are one
+  season's unbroken run, else `(S2E1, S2E3 and 4 more)`, as many whole codes as fit, no titles —
+  with `url` `/shows/{id}/episodes?season={first season}`; `premiere_set` `Season {n} premieres
   {Mon D}`; `premiere_moved` `Season {n} moved to {Mon D}` (`…date removed` when `new_value` is
   null is **not** a kind — a date going null is not an event); `ended` `Marked as ended` or
   `Marked as cancelled` from the raw status; `revived` `Renewed — more episodes are coming`; `summary` title

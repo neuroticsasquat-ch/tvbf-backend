@@ -4,7 +4,7 @@ from sqlalchemy import update
 
 from tvbf.app.models import PushSubscription, User, UserEpisodeWatch, UserShowWatch
 from tvbf.catalog import models as m
-from tvbf.push.candidates import airs_today_candidates, event_candidates
+from tvbf.push.candidates import AiredEpisode, airs_today_candidates, event_candidates
 
 TODAY = date(2026, 9, 26)
 NOW = datetime(2026, 9, 26, 13, 0, tzinfo=UTC)
@@ -29,16 +29,26 @@ async def _catalog(session, *, status: str | None = "Returning Series") -> None:
     await session.flush()
 
 
-async def _episode(session, *, episode_id=EPISODE, season_number=2, air_date=TODAY) -> None:
+async def _episode(
+    session,
+    *,
+    episode_id=EPISODE,
+    show_id=SHOW,
+    season_id=SEASON,
+    season_number=2,
+    episode_number=4,
+    name: str | None = "Woe’s Hollow",
+    air_date=TODAY,
+) -> None:
     session.add(
         m.Episode(
             id=episode_id,
             tmdb_id=episode_id,
-            show_id=SHOW,
-            season_id=SEASON,
+            show_id=show_id,
+            season_id=season_id,
             season_number=season_number,
-            episode_number=4,
-            name="Woe’s Hollow",
+            episode_number=episode_number,
+            name=name,
             air_date=air_date,
         )
     )
@@ -75,11 +85,84 @@ async def test_an_unwatched_episode_airing_today_is_a_candidate(session, make_us
 
     assert candidate.user_id == user.id
     assert candidate.kind == "airs_today"
-    assert candidate.key == f"airs_today:{EPISODE}:2026-09-26"
+    assert candidate.key == f"airs_today:{SHOW}:2026-09-26"
     assert (candidate.show_id, candidate.episode_id) == (SHOW, EPISODE)
     assert (candidate.season_number, candidate.episode_number) == (2, 4)
     assert (candidate.show_name, candidate.episode_name) == ("Severance", "Woe’s Hollow")
     assert candidate.poster_path == "/p.jpg"
+    assert candidate.episodes == (AiredEpisode(EPISODE, 2, 4, "Woe’s Hollow"),)
+
+
+# --- one candidate per show (Q8, NEU-1539) ------------------------------------
+
+
+async def test_every_episode_of_a_show_airing_today_folds_into_one_candidate(session, make_user):
+    await _catalog(session)
+    # Inserted out of order, and with a season-1 straggler, to pin the sort.
+    await _episode(session, episode_id=EPISODE + 2, episode_number=6, name=None)
+    await _episode(session, episode_id=EPISODE, episode_number=5)
+    await _episode(session, episode_id=EPISODE + 1, season_number=1, episode_number=9, name="Nine")
+    await _subscriber(make_user, session)
+
+    [candidate] = await airs_today_candidates(session, today=TODAY)
+
+    assert candidate.key == f"airs_today:{SHOW}:2026-09-26"
+    assert candidate.episodes == (
+        AiredEpisode(EPISODE + 1, 1, 9, "Nine"),
+        AiredEpisode(EPISODE, 2, 5, "Woe’s Hollow"),
+        AiredEpisode(EPISODE + 2, 2, 6, None),
+    )
+    # The single fields are the first episode's.
+    assert (candidate.episode_id, candidate.season_number, candidate.episode_number) == (
+        EPISODE + 1,
+        1,
+        9,
+    )
+    assert candidate.episode_name == "Nine"
+
+
+async def test_a_watched_episode_leaves_the_rest_of_the_drop(session, make_user):
+    await _catalog(session)
+    await _episode(session, episode_id=EPISODE, episode_number=1)
+    await _episode(session, episode_id=EPISODE + 1, episode_number=2)
+    await _episode(session, episode_id=EPISODE + 2, episode_number=3)
+    user = await _subscriber(make_user, session)
+    session.add(UserEpisodeWatch(user_id=user.id, episode_id=EPISODE + 1))
+    await session.commit()
+
+    [candidate] = await airs_today_candidates(session, today=TODAY)
+
+    assert [e.episode_number for e in candidate.episodes] == [1, 3]
+
+
+async def test_each_show_airing_today_is_its_own_candidate(session, make_user):
+    await _catalog(session)
+    await _episode(session)
+    other_show, other_season = SHOW + 1, SEASON + 1
+    session.add(m.Show(id=other_show, tmdb_id=other_show, name="Andor", status="Returning Series"))
+    await session.flush()
+    session.add(
+        m.Season(id=other_season, tmdb_id=other_season, show_id=other_show, season_number=1)
+    )
+    await session.flush()
+    await _episode(
+        session,
+        episode_id=EPISODE + 1,
+        show_id=other_show,
+        season_id=other_season,
+        season_number=1,
+        episode_number=1,
+    )
+    user = await _subscriber(make_user, session)
+    session.add(UserShowWatch(user_id=user.id, show_id=other_show))
+    await session.commit()
+
+    found = await airs_today_candidates(session, today=TODAY)
+
+    assert [(c.show_id, c.key, len(c.episodes)) for c in found] == [
+        (SHOW, f"airs_today:{SHOW}:2026-09-26", 1),
+        (other_show, f"airs_today:{other_show}:2026-09-26", 1),
+    ]
 
 
 async def test_airs_today_reads_the_corrected_air_date(session, make_user):
@@ -170,7 +253,7 @@ async def test_each_tracking_user_gets_their_own_candidate(session, make_user):
     found = await airs_today_candidates(session, today=TODAY)
 
     assert {c.user_id for c in found} == {alice.id, bob.id}
-    assert {c.key for c in found} == {f"airs_today:{EPISODE}:2026-09-26"}
+    assert {c.key for c in found} == {f"airs_today:{SHOW}:2026-09-26"}
 
 
 # --- events -------------------------------------------------------------------
