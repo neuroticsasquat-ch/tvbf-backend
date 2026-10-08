@@ -167,9 +167,15 @@ class Settings(BaseSettings):
     # best: a stopped snapshot does not error, it ages, and NEU-1056's seven-day
     # cutoff turns the section off a week later with nothing anywhere saying why.
     healthcheck_trending_url: str | None = Field(default=None, alias="HEALTHCHECK_TRENDING_URL")
-    # The daily push delivery's own deadman (NEU-1484, project spec §5.5). Fifth
-    # scheduled task, fifth check, for the rule above.
-    healthcheck_push_url: str | None = Field(default=None, alias="HEALTHCHECK_PUSH_URL")
+    # The two push delivery tasks' own deadmen (NEU-1540, superseding NEU-1484's
+    # one). Fifth and sixth scheduled tasks, fifth and sixth checks, for the rule
+    # above.
+    healthcheck_push_airs_today_url: str | None = Field(
+        default=None, alias="HEALTHCHECK_PUSH_AIRS_TODAY_URL"
+    )
+    healthcheck_push_events_url: str | None = Field(
+        default=None, alias="HEALTHCHECK_PUSH_EVENTS_URL"
+    )
 
     # Web Push (VAPID) — project spec §5.5. Base64url **raw** keys, the format
     # `py_vapid` emits and `pywebpush` consumes: a 32-byte private scalar and a
@@ -186,11 +192,13 @@ class Settings(BaseSettings):
     vapid_private_key: str | None = Field(default=None, alias="VAPID_PRIVATE_KEY")
     vapid_public_key: str | None = Field(default=None, alias="VAPID_PUBLIC_KEY")
     vapid_subject: str | None = Field(default=None, alias="VAPID_SUBJECT")
-    # How many notifications one user gets from one delivery run before the rest
-    # collapse into a single summary, and how far back a change event stays
-    # deliverable (§5.2). Events older than the window are never sent; nothing
-    # marks them, the window is the rule.
-    push_daily_cap: int = Field(default=5, alias="PUSH_DAILY_CAP")
+    # How many notifications one user gets from each delivery task's run before
+    # the rest collapse into a single summary for that task — `0`, the default,
+    # is no cap (NEU-1540) — and how far back a change event stays deliverable
+    # (§5.2). Events older than the window are never sent; nothing marks them,
+    # the window is the rule.
+    push_airs_today_daily_cap: int = Field(default=0, ge=0, alias="PUSH_AIRS_TODAY_DAILY_CAP")
+    push_events_daily_cap: int = Field(default=0, ge=0, alias="PUSH_EVENTS_DAILY_CAP")
     push_event_window_hours: int = Field(default=48, alias="PUSH_EVENT_WINDOW_HOURS")
 
     activity_rollup_window_min: int = Field(default=30, alias="ACTIVITY_ROLLUP_WINDOW_MIN")

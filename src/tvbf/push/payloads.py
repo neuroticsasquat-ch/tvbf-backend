@@ -133,11 +133,21 @@ def _url(candidate: Candidate) -> str:
     return f"/shows/{candidate.show_id}"
 
 
+def _summary_title(candidate: Candidate) -> str:
+    """By delivery task (NEU-1540): `2 more shows air today` for the airs-today
+    task's overflow, `2 more updates today` for the events task's."""
+    count = candidate.count or 0
+    if candidate.task == "airs_today":
+        verb = "airs" if count == 1 else "air"
+        return f"{_plural(count, 'more show')} {verb} today"
+    return f"{_plural(count, 'more update')} today"
+
+
 def build_payload(candidate: Candidate) -> dict[str, str]:
     """The §5.3 JSON for one notification. `icon` is omitted when there is no poster."""
     if candidate.kind == "summary":
         # Not the app name: iOS already prints "from TV BingeFriend" under the title.
-        title = f"{_plural(candidate.count or 0, 'more update')} today"
+        title = _summary_title(candidate)
     else:
         title = candidate.show_name or APP_NAME
     payload = {

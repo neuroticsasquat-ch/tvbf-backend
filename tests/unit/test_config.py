@@ -181,8 +181,10 @@ _PUSH_ENV = (
     "VAPID_PRIVATE_KEY",
     "VAPID_PUBLIC_KEY",
     "VAPID_SUBJECT",
-    "HEALTHCHECK_PUSH_URL",
-    "PUSH_DAILY_CAP",
+    "HEALTHCHECK_PUSH_AIRS_TODAY_URL",
+    "HEALTHCHECK_PUSH_EVENTS_URL",
+    "PUSH_AIRS_TODAY_DAILY_CAP",
+    "PUSH_EVENTS_DAILY_CAP",
     "PUSH_EVENT_WINDOW_HOURS",
 )
 
@@ -197,8 +199,10 @@ def test_push_settings_defaults(monkeypatch):
     assert s.vapid_private_key is None
     assert s.vapid_public_key is None
     assert s.vapid_subject is None
-    assert s.healthcheck_push_url is None
-    assert s.push_daily_cap == 5
+    assert s.healthcheck_push_airs_today_url is None
+    assert s.healthcheck_push_events_url is None
+    # No cap on either delivery task by default (NEU-1540).
+    assert (s.push_airs_today_daily_cap, s.push_events_daily_cap) == (0, 0)
     assert s.push_event_window_hours == 48
     assert s.vapid_configured is False
 
@@ -209,15 +213,28 @@ def test_push_settings_from_env(monkeypatch):
     monkeypatch.setenv("VAPID_PRIVATE_KEY", "priv")
     monkeypatch.setenv("VAPID_PUBLIC_KEY", "pub")
     monkeypatch.setenv("VAPID_SUBJECT", "mailto:ops@example.com")
-    monkeypatch.setenv("HEALTHCHECK_PUSH_URL", "https://hc-ping.com/x")
-    monkeypatch.setenv("PUSH_DAILY_CAP", "3")
+    monkeypatch.setenv("HEALTHCHECK_PUSH_AIRS_TODAY_URL", "https://hc-ping.com/a")
+    monkeypatch.setenv("HEALTHCHECK_PUSH_EVENTS_URL", "https://hc-ping.com/e")
+    monkeypatch.setenv("PUSH_AIRS_TODAY_DAILY_CAP", "3")
+    monkeypatch.setenv("PUSH_EVENTS_DAILY_CAP", "2")
     monkeypatch.setenv("PUSH_EVENT_WINDOW_HOURS", "24")
     s = Settings()  # type: ignore[call-arg]
     assert (s.vapid_private_key, s.vapid_public_key) == ("priv", "pub")
     assert s.vapid_subject == "mailto:ops@example.com"
-    assert s.healthcheck_push_url == "https://hc-ping.com/x"
-    assert (s.push_daily_cap, s.push_event_window_hours) == (3, 24)
+    assert s.healthcheck_push_airs_today_url == "https://hc-ping.com/a"
+    assert s.healthcheck_push_events_url == "https://hc-ping.com/e"
+    assert (s.push_airs_today_daily_cap, s.push_events_daily_cap) == (3, 2)
+    assert s.push_event_window_hours == 24
     assert s.vapid_configured is True
+
+
+@pytest.mark.parametrize("key", ["PUSH_AIRS_TODAY_DAILY_CAP", "PUSH_EVENTS_DAILY_CAP"])
+def test_a_negative_push_cap_is_rejected(monkeypatch, key):
+    monkeypatch.setenv("DATABASE_URL", "postgresql+asyncpg://a:b@c:5432/d")
+    monkeypatch.setenv("ADMIN_TOKEN", "xxx")
+    monkeypatch.setenv(key, "-1")
+    with pytest.raises(ValidationError):
+        Settings()  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize("missing", ["VAPID_PRIVATE_KEY", "VAPID_PUBLIC_KEY", "VAPID_SUBJECT"])

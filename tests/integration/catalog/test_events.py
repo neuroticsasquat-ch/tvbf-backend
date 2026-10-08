@@ -128,8 +128,11 @@ async def test_pruning_a_season_takes_its_events_with_it(session):
     assert kinds == ["ended"]
 
 
-async def test_push_deliver_is_an_accepted_run_kind(session):
-    run_id = await create_run(session, kind="push_deliver")
+@pytest.mark.parametrize("kind", ["push_airs_today", "push_events", "push_deliver"])
+async def test_the_push_run_kinds_are_accepted(session, kind):
+    """The two delivery tasks' kinds (NEU-1540), and the retired `push_deliver`
+    kept for its historical rows."""
+    run_id = await create_run(session, kind=kind)
 
     row = (await session.execute(select(m.IngestRun).where(m.IngestRun.id == run_id))).scalar_one()
-    assert row.kind == "push_deliver"
+    assert row.kind == kind
