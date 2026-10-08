@@ -4,7 +4,7 @@ from uuid import UUID
 
 import pytest
 
-from tvbf.push.candidates import AiredEpisode, Candidate
+from tvbf.push.candidates import AiredEpisode, Candidate, DeliveryTaskLabel
 from tvbf.push.payloads import MAX_TEXT_CHARS, build_payload
 
 USER = UUID("00000000-0000-0000-0000-000000000001")
@@ -177,21 +177,22 @@ def test_revived():
     )
 
 
-def _summary(count: int, *names: str) -> Candidate:
+def _summary(count: int, *names: str, task: DeliveryTaskLabel = "events") -> Candidate:
     return Candidate(
         user_id=USER,
         kind="summary",
-        key=f"summary:{USER}:2026-09-26",
+        key=f"summary:{task}:{USER}:2026-09-26",
         count=count,
         show_names=names,
+        task=task,
     )
 
 
-def test_summary():
+def test_the_events_summary():
     payload = build_payload(_summary(3, "Andor", "Severance"))
 
     assert payload == {
-        "key": f"summary:{USER}:2026-09-26",
+        "key": f"summary:events:{USER}:2026-09-26",
         "kind": "summary",
         "title": "3 more updates today",
         "body": "Andor, Severance",
@@ -199,8 +200,27 @@ def test_summary():
     }
 
 
-def test_a_summary_of_one_update_is_singular():
+def test_an_events_summary_of_one_update_is_singular():
     assert build_payload(_summary(1, "Andor"))["title"] == "1 more update today"
+
+
+def test_the_airs_today_summary():
+    """Titled by task (NEU-1540): the airs-today overflow is shows, not updates."""
+    payload = build_payload(_summary(2, "Andor", "Severance", task="airs_today"))
+
+    assert payload == {
+        "key": f"summary:airs_today:{USER}:2026-09-26",
+        "kind": "summary",
+        "title": "2 more shows air today",
+        "body": "Andor, Severance",
+        "url": "/upcoming",
+    }
+
+
+def test_an_airs_today_summary_of_one_show_is_singular():
+    payload = build_payload(_summary(1, "Andor", task="airs_today"))
+
+    assert payload["title"] == "1 more show airs today"
 
 
 def test_a_summary_lists_as_many_whole_names_as_fit():

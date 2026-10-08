@@ -48,8 +48,8 @@ an in-app notification centre; a digest across shows.
 | Q3 | Detection mechanism | **Compare-on-upsert in Python**, in the per-show path the delta runs, before the show/season upsert. Not a trigger, not a snapshot. The full pass records nothing. |
 | Q4 | Durability | Append-only **`catalog.show_event`** sidecar. The delta writes; the delivery job reads. |
 | Q5 | Which shows are diffed | **Tracked shows only** — any row in `app.user_show_watch` (ADR-0014 §2). |
-| Q6 | Burst guard | **Freshness window (48 h) + still-current check + per-user daily cap (5)**, overflow folded into one summary push. No run-level breaker. |
-| Q7 | Delivery job | **Fifth Coolify scheduled task**, `python -m tvbf.jobs.push_deliver`, once daily after the catalog delta and airdate reconcile, own deadman `HEALTHCHECK_PUSH_URL`, `kind='push_deliver'` run row on `jobs/scheduled.py`. |
+| Q6 | Burst guard | **Freshness window (48 h) + still-current check + an optional per-user daily cap per delivery task**, default `0` = no cap (NEU-1540, was one cap of 5 across both; `docs/specs/NEU-1540-split-push-delivery-into-two-tasks.md`); overflow folded into one summary push per task. No run-level breaker. |
+| Q7 | Delivery job | **Two Coolify scheduled tasks** (NEU-1540, was one `push_deliver`; `docs/specs/NEU-1540-split-push-delivery-into-two-tasks.md`): `python -m tvbf.jobs.push_airs_today` at 13:00 UTC and `python -m tvbf.jobs.push_events` at 17:00 UTC, both after the catalog delta and airdate reconcile, each with its own deadman (`HEALTHCHECK_PUSH_AIRS_TODAY_URL` / `HEALTHCHECK_PUSH_EVENTS_URL`) and run kind (`push_airs_today` / `push_events`) on `jobs/scheduled.py`. |
 | Q8 | Grouping | **One push per show per kind.** Web Push `tag` = notification key so a re-send replaces. |
 | Q9 | Idempotency | **`app.push_delivery`** row per (notification key, subscription), inserted before the send, unique. |
 | Q10 | Sender + keys | **`pywebpush`**; `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY`, `VAPID_SUBJECT` env; `task vapid:generate`; `GET /push/vapid-public-key`. |
@@ -59,7 +59,7 @@ an in-app notification centre; a digest across shows.
 | Q14 | Permission | **Explicit button in Settings + one-time post-add nudge card.** Never on load; never from the Add click itself. iOS-not-installed shows install instructions. |
 | Q15 | Payload | **Show name as title, one specific line as body, deep link** to the episode (`/episodes/{id}`), the season's episode list when several air today (`/shows/{id}/episodes?season={n}`, NEU-1539) or show (`/shows/{id}`); poster as icon; `tag` = key. |
 | Q16 | Airs-today rule | Corrected `air_date = today`, `season_number > 0`, show in My Shows, episode not watched, account not disabled, no email-verified gate. |
-| Q17 | Retention | Delivery job's last step purges `show_event` + `push_delivery` older than 90 days. No separate task. |
+| Q17 | Retention | The events task's last step purges `show_event` + `push_delivery` older than 90 days (NEU-1540). No separate task. |
 | Q18 | Scope edges | In: test-push button, Android/desktop install prompt, admin stats endpoint, per-show mute. |
 
 Assumption stated at the gate: a **mute silences every kind for that show**.
@@ -179,6 +179,11 @@ run_id)` and caches it for the loop; `upsert.py` itself is not touched.
 
 ### 5.2 The delivery job (milestone 3)
 
+**(NEU-1540)** Since NEU-1540 this is two tasks, split along the data source: steps 1, 3 and 4–6
+run as `python -m tvbf.jobs.push_airs_today` (kind `push_airs_today`, 13:00 UTC), and steps 2–6
+as `python -m tvbf.jobs.push_events` (kind `push_events`, 17:00 UTC); only the events task runs
+step 5. `docs/specs/NEU-1540-split-push-delivery-into-two-tasks.md` is the account; what follows describes the single job as first built.
+
 `python -m tvbf.jobs.push_deliver`, `jobs/scheduled.py` shape (run row `kind='push_deliver'`,
 `HEALTHCHECK_PUSH_URL` deadman, exit code is the result, work awaited never spawned). Schedule in
 Coolify **daily at 13:00 UTC** (09:00 US Eastern), after the catalog delta and the airdate
@@ -211,7 +216,9 @@ Steps, in order:
 3. **Per-user cap.** Order a user's candidates airs-today first (by show name), then events by
    `observed_at`. Take the first 5; if more remain, replace the remainder with one `summary`
    notification ("N more updates today", listing their shows → `/upcoming`), key
-   `summary:{user_id}:{today}`.
+   `summary:{user_id}:{today}`. **(NEU-1540)** Now per task and optional: each task orders only its
+   own kind, its cap is `PUSH_AIRS_TODAY_DAILY_CAP` / `PUSH_EVENTS_DAILY_CAP` (default `0`, no
+   cap), and its summary is keyed `summary:{task}:{user_id}:{today}`.
 4. **Deliver.** For each (candidate, subscription of that user): insert `push_delivery`
    `pending` (skip the candidate if the unique constraint says it was already `sent`), build
    the payload (§5.3), `webpush()` with `TTL=86400` and `urgency=normal`. On 2xx → `sent`,
@@ -221,6 +228,7 @@ Steps, in order:
    `'failure_limit'`). The delivery rows survive the delete (§4.3). Sequential per subscription; a bounded semaphore is
    the fix at scale, not a rewrite.
 5. **Purge.** Delete `show_event` and `push_delivery` rows with `created_at < now() - 90 days`.
+   **(NEU-1540)** The events task's step only; the airs-today task purges nothing.
 6. Finalize the run row `succeeded` with counts logged (candidates, sent, failed, retired,
    purged). **Exit 1 only if every send failed** — a push service outage — never for individual
    failures, which are the log's business.
@@ -248,7 +256,8 @@ JSON, encrypted by `pywebpush`, decoded in `sw.js`:
   {Mon D}`; `premiere_moved` `Season {n} moved to {Mon D}` (`…date removed` when `new_value` is
   null is **not** a kind — a date going null is not an event); `ended` `Marked as ended` or
   `Marked as cancelled` from the raw status; `revived` `Renewed — more episodes are coming`; `summary` title
-  `{N} more updates today` (`1 more update today`), body the remainder's distinct show names in
+  `{N} more updates today` (`1 more update today`) — **(NEU-1540)** the events task's; the
+  airs-today task's is `{N} more shows air today` (`1 more show airs today`) — body the remainder's distinct show names in
   delivery order, as many whole names as fit and then `and {k} more shows` — not the app name as
   title, which iOS already prints under it as "from TV BingeFriend"; `test` title `TV BingeFriend`, body `Notifications are working`.
 - `{Mon D}` in the two premiere bodies is the season's **corrected** `air_date` as of delivery —
@@ -279,10 +288,14 @@ All under the cookie session; mutating ones require CSRF. Documented in
 
 - `VAPID_PRIVATE_KEY`, `VAPID_PUBLIC_KEY` (base64url raw keys as `py-vapid` emits), `VAPID_SUBJECT`
   (`mailto:` or the app URL), `HEALTHCHECK_PUSH_URL`, `PUSH_DAILY_CAP` (default 5),
-  `PUSH_EVENT_WINDOW_HOURS` (default 48). All optional in `Settings`; the job and the endpoints
+  `PUSH_EVENT_WINDOW_HOURS` (default 48). **(NEU-1540)** `HEALTHCHECK_PUSH_URL` and
+  `PUSH_DAILY_CAP` are replaced by `HEALTHCHECK_PUSH_AIRS_TODAY_URL`,
+  `HEALTHCHECK_PUSH_EVENTS_URL`, `PUSH_AIRS_TODAY_DAILY_CAP` and `PUSH_EVENTS_DAILY_CAP` (both
+  default `0`, no cap). All optional in `Settings`; the job and the endpoints
   refuse rather than default.
 - `task vapid:generate` runs `vapid --gen` equivalent via `py_vapid` and prints the three values.
-- `task push:deliver` is the manual trigger, mirroring `task update:catalog`.
+- `task push:deliver` is the manual trigger, mirroring `task update:catalog`. **(NEU-1540)**
+  Replaced by `task push:airs-today` and `task push:events`.
 - `docs/migration/README.md` is **not** touched — this is not a migration pass. The runbook for
   first deploy (generate keys, set env, add the Coolify task, add the healthcheck) goes in the
   delivery ticket's PR description and in `README.md`'s env table.
