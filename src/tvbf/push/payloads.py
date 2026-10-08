@@ -110,11 +110,13 @@ def _body(candidate: Candidate) -> str:
         case "premiere_set":
             return f"Season {candidate.season_number} premieres {_mon_d(candidate.air_date)}"
         case "premiere_moved":
-            return f"Season {candidate.season_number} moved to {_mon_d(candidate.air_date)}"
+            return (
+                f"Season {candidate.season_number} premiere moved to {_mon_d(candidate.air_date)}"
+            )
         case "ended":
             if candidate.status == "Canceled":
-                return "Marked as cancelled"
-            return "Marked as ended"
+                return "The series has been cancelled"
+            return "The series has ended"
         case "revived":
             return "Renewed — more episodes are coming"
         case "summary":

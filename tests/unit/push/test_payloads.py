@@ -156,7 +156,7 @@ def test_premiere_moved_renders_the_corrected_date():
         _event("premiere_moved", season_id=5, season_number=3, air_date=date(2026, 11, 12))
     )
 
-    assert payload["body"] == "Season 3 moved to Nov 12"
+    assert payload["body"] == "Season 3 premiere moved to Nov 12"
 
 
 def test_a_premiere_without_a_date_is_a_caller_bug():
@@ -165,7 +165,11 @@ def test_a_premiere_without_a_date_is_a_caller_bug():
 
 
 @pytest.mark.parametrize(
-    ("status", "body"), [("Ended", "Marked as ended"), ("Canceled", "Marked as cancelled")]
+    ("status", "body"),
+    [
+        ("Ended", "The series has ended"),
+        ("Canceled", "The series has been cancelled"),
+    ],
 )
 def test_ended_reads_the_raw_status(status, body):
     assert build_payload(_event("ended", status=status))["body"] == body

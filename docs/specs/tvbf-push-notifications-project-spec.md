@@ -253,9 +253,11 @@ JSON, encrypted by `pywebpush`, decoded in `sw.js`:
   of one show (NEU-1539) `{N} episodes air today (S2E1–E8)` — the range when they are one
   season's unbroken run, else `(S2E1, S2E3 and 4 more)`, as many whole codes as fit, no titles —
   with `url` `/shows/{id}/episodes?season={first season}`; `premiere_set` `Season {n} premieres
-  {Mon D}`; `premiere_moved` `Season {n} moved to {Mon D}` (`…date removed` when `new_value` is
-  null is **not** a kind — a date going null is not an event); `ended` `Marked as ended` or
-  `Marked as cancelled` from the raw status; `revived` `Renewed — more episodes are coming`; `summary` title
+  {Mon D}`; `premiere_moved` `Season {n} premiere moved to {Mon D}` (`…date removed` when
+  `new_value` is null is **not** a kind — a date going null is not an event); `ended` `The series
+  has ended` or `The series has been cancelled` from the raw status (NEU-1541: plain wording, not
+  "Marked as …", and not the show name, which the title already carries); `revived` `Renewed —
+  more episodes are coming`; `summary` title
   `{N} more updates today` (`1 more update today`) — **(NEU-1540)** the events task's; the
   airs-today task's is `{N} more shows air today` (`1 more show airs today`) — body the remainder's distinct show names in
   delivery order, as many whole names as fit and then `and {k} more shows` — not the app name as

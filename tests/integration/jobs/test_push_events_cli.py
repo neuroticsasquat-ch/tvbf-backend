@@ -51,7 +51,7 @@ async def test_an_event_is_sent_to_every_device_and_logged(session, make_user, m
     assert await _run_task() is True
 
     assert [payload["key"] for _, payload in calls] == [key, key]
-    assert calls[0][1]["body"] == "Marked as ended"
+    assert calls[0][1]["body"] == "The series has ended"
     run = await the_run(session)
     assert (run.kind, run.status, run.shows_processed) == ("push_events", "succeeded", 2)
     rows = await deliveries(session)
