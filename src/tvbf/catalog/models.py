@@ -1729,13 +1729,14 @@ class IngestRun(Base):
             # `catalog_initial` is the TMDB full-catalog ingest (NEU-1034),
             # `catalog_update` its daily delta (NEU-1035), `airdate_reconcile`
             # the nightly airdate pass (NEU-1145) and `trending_snapshot` the
-            # daily `/trending/tv/week` capture (NEU-1055). `push_deliver` is the
-            # daily push delivery job's (NEU-1480; the job itself lands in the
-            # Push Notifications project's milestone 3).
+            # daily `/trending/tv/week` capture (NEU-1055). `push_deliver` was the
+            # single daily push delivery job's (NEU-1480), retired by NEU-1540
+            # and kept for its historical rows; `push_airs_today` and
+            # `push_events` are the two delivery tasks that replaced it.
             "kind IN ('initial', 'update', 'akas_backfill', 'ratings_backfill', "
             "'show_refresh', 'person_update', 'episode_credits_backfill', "
             "'catalog_initial', 'catalog_update', 'airdate_reconcile', "
-            "'trending_snapshot', 'push_deliver')",
+            "'trending_snapshot', 'push_deliver', 'push_airs_today', 'push_events')",
             name="ck_ingest_run_kind",
         ),
         CheckConstraint(

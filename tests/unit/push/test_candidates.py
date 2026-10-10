@@ -108,97 +108,142 @@ def test_revived_is_current_while_the_show_is_not_ended(is_ended, expected):
 # --- apply_cap ----------------------------------------------------------------
 
 
-def _airs(user: UUID, show_name: str, episode_id: int, episode_number: int = 1) -> Candidate:
+def _airs(user: UUID, show_name: str, show_id: int) -> Candidate:
+    """One show's airs-today candidate — one per show since NEU-1539."""
     return Candidate(
         user_id=user,
         kind="airs_today",
-        key=f"airs_today:{episode_id}:{TODAY}",
-        episode_id=episode_id,
+        key=f"airs_today:{show_id}:{TODAY}",
+        show_id=show_id,
+        episode_id=show_id * 100,
         show_name=show_name,
         season_number=1,
-        episode_number=episode_number,
+        episode_number=1,
     )
 
 
-def _ev(user: UUID, event_id: int, hour: int) -> Candidate:
+def _ev(user: UUID, event_id: int, hour: int, show_name: str = "Zed") -> Candidate:
     return Candidate(
         user_id=user,
         kind="ended",
         key=f"ended:{event_id}",
         event_id=event_id,
-        show_name="Zed",
+        show_name=show_name,
         observed_at=datetime(2026, 9, 26, hour, tzinfo=UTC),
     )
 
 
-def test_airs_today_come_first_by_show_name_then_events_oldest_first():
+def test_airs_today_order_by_show_name():
     candidates = [
-        _ev(ALICE, 2, hour=9),
         _airs(ALICE, "The Wire", 10),
-        _ev(ALICE, 1, hour=3),
-        _airs(ALICE, "Andor", 11),
-        _airs(ALICE, "Andor", 12, episode_number=0),
+        _airs(ALICE, "Severance", 11),
+        _airs(ALICE, "Andor", 12),
     ]
 
-    capped = apply_cap({ALICE: candidates}, today=TODAY)
+    capped = apply_cap({ALICE: candidates}, 0, task="airs_today", today=TODAY)
 
-    # "The Wire" sorts under W; Andor's two episodes by number.
+    # "The Wire" sorts under W.
     assert [c.key for c in capped[ALICE]] == [
         f"airs_today:12:{TODAY}",
         f"airs_today:11:{TODAY}",
         f"airs_today:10:{TODAY}",
-        "ended:1",
-        "ended:2",
     ]
 
 
+def test_events_order_oldest_first():
+    candidates = [_ev(ALICE, 2, hour=9), _ev(ALICE, 1, hour=3), _ev(ALICE, 3, hour=5)]
+
+    capped = apply_cap({ALICE: candidates}, 0, task="events", today=TODAY)
+
+    assert [c.event_id for c in capped[ALICE]] == [1, 3, 2]
+
+
 def test_events_sharing_observed_at_order_by_event_id():
-    capped = apply_cap({ALICE: [_ev(ALICE, 8, hour=1), _ev(ALICE, 7, hour=1)]}, today=TODAY)
+    capped = apply_cap(
+        {ALICE: [_ev(ALICE, 8, hour=1), _ev(ALICE, 7, hour=1)]}, 0, task="events", today=TODAY
+    )
 
     assert [c.event_id for c in capped[ALICE]] == [7, 8]
+
+
+@pytest.mark.parametrize("task", ["airs_today", "events"])
+def test_a_cap_of_zero_keeps_everything_and_builds_no_summary(task):
+    """The default for both tasks (NEU-1540): no cap at all."""
+    candidates = [_airs(ALICE, f"Show {i}", i) for i in range(12)]
+    if task == "events":
+        candidates = [_ev(ALICE, i, hour=i) for i in range(12)]
+
+    capped = apply_cap({ALICE: candidates}, 0, task=task, today=TODAY)
+
+    assert len(capped[ALICE]) == 12
+    assert all(c.kind != "summary" for c in capped[ALICE])
 
 
 def test_at_the_cap_nothing_is_summarised():
     candidates = [_airs(ALICE, f"Show {i}", i) for i in range(5)]
 
-    capped = apply_cap({ALICE: candidates}, 5, today=TODAY)
+    capped = apply_cap({ALICE: candidates}, 5, task="airs_today", today=TODAY)
 
     assert len(capped[ALICE]) == 5
     assert all(c.kind == "airs_today" for c in capped[ALICE])
 
 
-def test_past_the_cap_the_remainder_becomes_one_summary():
-    candidates = [_airs(ALICE, f"Show {i}", i) for i in range(4)] + [
-        _ev(ALICE, i, hour=i) for i in range(1, 5)
-    ]
+def test_past_the_cap_the_remainder_becomes_one_summary_keyed_by_task():
+    candidates = [_airs(ALICE, f"Show {i}", i) for i in range(7)]
 
-    capped = apply_cap({ALICE: candidates}, 5, today=TODAY)
+    capped = apply_cap({ALICE: candidates}, 5, task="airs_today", today=TODAY)
 
     kept, summary = capped[ALICE][:5], capped[ALICE][5]
-    assert [c.kind for c in kept] == ["airs_today"] * 4 + ["ended"]
-    assert kept[-1].event_id == 1
+    assert [c.show_name for c in kept] == [f"Show {i}" for i in range(5)]
     assert summary == Candidate(
         user_id=ALICE,
         kind="summary",
-        key=f"summary:{ALICE}:2026-09-26",
-        count=3,
-        show_names=("Zed",),
+        key=f"summary:airs_today:{ALICE}:2026-09-26",
+        count=2,
+        show_names=("Show 5", "Show 6"),
+        task="airs_today",
+    )
+
+
+def test_the_events_summary_carries_its_own_task_label():
+    """Two tasks on one day are two summary keys, so neither is a `skipped`
+    claim against the other's `sent` row."""
+    candidates = [_ev(ALICE, i, hour=i) for i in range(1, 4)]
+
+    summary = apply_cap({ALICE: candidates}, 1, task="events", today=TODAY)[ALICE][-1]
+
+    assert (summary.key, summary.task, summary.count) == (
+        f"summary:events:{ALICE}:2026-09-26",
+        "events",
+        2,
     )
 
 
 def test_a_summary_names_each_overflowing_show_once_in_delivery_order():
     candidates = [
-        _airs(ALICE, "Andor", 1),
-        _airs(ALICE, "Severance", 2),
-        _airs(ALICE, "Severance", 3, episode_number=2),
-        _airs(ALICE, "The Wire", 4),
-        _ev(ALICE, 1, hour=3),
+        _ev(ALICE, 1, hour=1, show_name="Andor"),
+        _ev(ALICE, 2, hour=2, show_name="Severance"),
+        _ev(ALICE, 3, hour=3, show_name="The Wire"),
+        _ev(ALICE, 4, hour=4, show_name="Severance"),
+        _ev(ALICE, 5, hour=5),
     ]
 
-    summary = apply_cap({ALICE: candidates}, 1, today=TODAY)[ALICE][-1]
+    summary = apply_cap({ALICE: candidates}, 1, task="events", today=TODAY)[ALICE][-1]
 
     assert summary.count == 4
     assert summary.show_names == ("Severance", "The Wire", "Zed")
+
+
+def test_a_season_dump_is_one_candidate_against_the_cap():
+    """The ticket's case (NEU-1539): the fold happens in `airs_today_candidates`,
+    so the cap sees one candidate per show however many episodes it carries."""
+    dump = _airs(ALICE, "Severance", 1)
+    others = [_airs(ALICE, f"Show {i}", i) for i in range(2, 6)]
+
+    capped = apply_cap({ALICE: [dump, *others]}, 5, task="airs_today", today=TODAY)
+
+    assert len(capped[ALICE]) == 5
+    assert all(c.kind == "airs_today" for c in capped[ALICE])
 
 
 def test_the_cap_is_per_user():
@@ -208,11 +253,12 @@ def test_the_cap_is_per_user():
             BOB: [_airs(BOB, f"Show {i}", 10 + i) for i in range(3)],
         },
         2,
+        task="airs_today",
         today=TODAY,
     )
 
     assert [c.kind for c in capped[ALICE]] == ["airs_today", "airs_today", "summary"]
-    assert capped[BOB][-1].key == f"summary:{BOB}:2026-09-26"
+    assert capped[BOB][-1].key == f"summary:airs_today:{BOB}:2026-09-26"
     assert capped[BOB][-1].count == 1
 
 

@@ -1,10 +1,10 @@
 """The shape every run-row-backed Coolify-scheduled job shares (NEU-1008, NEU-1035).
 
-Five jobs run on a Coolify schedule today and they do not all fit this shape.
-Four do — the TMDB catalog delta, the airdate reconciliation (NEU-1145), the
-daily trending snapshot (NEU-1055) and the push delivery (NEU-1489) — differing
-only in which run kind they take, which body they await and which deadman they
-feed; the TV Maze daily was
+Six jobs run on a Coolify schedule today and they do not all fit this shape.
+Five do — the TMDB catalog delta, the airdate reconciliation (NEU-1145), the
+daily trending snapshot (NEU-1055) and the two push delivery tasks (NEU-1540) —
+differing only in which run kind they take, which body they await and which
+deadman they feed; the TV Maze daily was
 the first and NEU-1050 retired it. The weekly recommendations pass (NEU-1109,
 NEU-1111) is the exception and calls `ping` alone: it deliberately writes no
 run row (`user_recommendation_set` is already its per-user run record), so the

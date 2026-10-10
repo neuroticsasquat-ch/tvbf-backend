@@ -16,9 +16,17 @@ _RESEND_API_URL = "https://api.resend.com/emails"
 class ResendEmailClient(EmailClient):
     """Thin async wrapper around Resend's /emails endpoint."""
 
-    def __init__(self, *, api_key: str, from_address: str, timeout_seconds: float = 10.0) -> None:
+    def __init__(
+        self,
+        *,
+        api_key: str,
+        from_address: str,
+        default_reply_to: str | None = None,
+        timeout_seconds: float = 10.0,
+    ) -> None:
         self._api_key = api_key
         self._from = from_address
+        self._default_reply_to = default_reply_to
         self._timeout = timeout_seconds
 
     async def send(
@@ -37,8 +45,10 @@ class ResendEmailClient(EmailClient):
             "html": html,
             "text": text,
         }
-        if reply_to is not None:
-            payload["reply_to"] = reply_to
+        # A caller's value wins outright; the default only fills its absence.
+        effective_reply_to = reply_to if reply_to is not None else self._default_reply_to
+        if effective_reply_to is not None:
+            payload["reply_to"] = effective_reply_to
         try:
             async with httpx.AsyncClient(timeout=self._timeout) as client:
                 resp = await client.post(

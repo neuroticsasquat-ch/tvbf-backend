@@ -248,15 +248,19 @@ A recorded transition on a tracked show, observed by the daily delta comparing t
 _Avoid_: change, diff, notification (an event is the fact; a notification is what may be sent about it)
 
 **Airs-today set**:
-The episodes of a user's My Shows whose corrected air date is today, excluding specials and episodes already watched. Derived from the schedule each morning, not from any catalog event — so a whole season appearing at once, or a catch-up run, never produces one alert per row.
+The episodes of a user's My Shows whose corrected air date is today, excluding specials and episodes already watched. Derived from the schedule each morning, not from any catalog event — so a whole season appearing at once, or a catch-up run, never produces one alert per row — and delivered as **one notification per show**, every episode of that show airing today folded into it, so a season dump is one push rather than one per episode.
 _Avoid_: new-episode event, release
 
 **Notification**:
-One push about one show for one user, of exactly one kind — *airs today*, *premiere set*, *premiere moved*, *ended* or *revived*. Never a digest across shows: the per-user daily cap folds overflow into a single summary rather than merging kinds.
+One push about one show for one user, of exactly one kind — *airs today*, *premiere set*, *premiere moved*, *ended* or *revived*. Never a digest across shows: when a **delivery task** has a per-user daily cap set (none does by default), the overflow folds into a single summary for that task rather than merging kinds.
 _Avoid_: alert, message, ping
 
+**Delivery task**:
+One of the two daily passes that turn what is due into notifications: the *airs-today task*, which reads the schedule, and the *events task*, which reads catalog events. Each has its own run, its own deadman and its own optional per-user daily cap; neither waits on or caps the other.
+_Avoid_: the push job (there are two), delivery run (a run is one execution of a task)
+
 **Notification key**:
-What makes a notification the same notification on a re-run: its kind plus the show and the episode, season or event it is about. The delivery log is unique on the key and the subscription, which is what lets a crashed or repeated delivery run be safe.
+What makes a notification the same notification on a re-run: its kind plus the show and the day, season or event it is about — for *airs today*, the show and the air date, never the episode, so a show's whole drop is one key. The delivery log is unique on the key and the subscription, which is what lets a crashed or repeated delivery run be safe.
 _Avoid_: dedupe id, tag (the Web Push tag *carries* the key; it is not the key)
 
 **Push subscription**:

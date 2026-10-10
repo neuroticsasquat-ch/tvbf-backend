@@ -21,11 +21,13 @@ class SmtpEmailClient(EmailClient):
         host: str,
         port: int,
         from_address: str,
+        default_reply_to: str | None = None,
         timeout_seconds: float = 10.0,
     ) -> None:
         self._host = host
         self._port = port
         self._from = from_address
+        self._default_reply_to = default_reply_to
         self._timeout = timeout_seconds
 
     async def send(
@@ -41,8 +43,10 @@ class SmtpEmailClient(EmailClient):
         msg["From"] = self._from
         msg["To"] = to
         msg["Subject"] = subject
-        if reply_to is not None:
-            msg["Reply-To"] = reply_to
+        # A caller's value wins outright; the default only fills its absence.
+        effective_reply_to = reply_to if reply_to is not None else self._default_reply_to
+        if effective_reply_to is not None:
+            msg["Reply-To"] = effective_reply_to
         msg.set_content(text)
         msg.add_alternative(html, subtype="html")
 

@@ -1,9 +1,10 @@
-"""What the delivery job would send today, and to whom (project spec §5.2 steps 1–3).
+"""What the delivery tasks would send today, and to whom (project spec §5.2 steps 1–3).
 
 Selection only — nothing here sends, writes, or reads a subscription beyond
 "has at least one". Kept apart from the job so every rule below is testable
 without a push service: the airs-today set (Q16), the event freshness window
-and its still-current check, and the per-user daily cap with its summary.
+and its still-current check, and each delivery task's optional per-user daily
+cap with its summary (NEU-1540).
 
 Both queries require at least one `app.push_subscription` for the user. A
 candidate for a user with no device is one the job could only drop, and
@@ -14,6 +15,7 @@ from collections import defaultdict
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from itertools import groupby
 from typing import Literal
 from uuid import UUID
 
@@ -26,12 +28,13 @@ from tvbf.catalog.events import ShowEventKind
 from tvbf.sorting import show_name_sort_key
 
 type CandidateKind = Literal["airs_today", "summary"] | ShowEventKind
+# Which delivery task a summary stands in for — the airs-today task or the
+# events task (NEU-1540). Its key and title carry it.
+type DeliveryTaskLabel = Literal["airs_today", "events"]
 
 # The spec's burst guard (Q6): events older than this are never delivered, and
 # nothing marks them — the window is the rule.
 FRESHNESS_WINDOW_HOURS = 48
-# Notifications per user per day before the rest fold into one summary.
-DAILY_CAP = 5
 
 # Which `app.user` flag opts a user into each event kind (§4.4).
 _EVENT_FLAGS = {
@@ -44,6 +47,16 @@ _EPOCH = datetime.min.replace(tzinfo=UTC)
 
 
 @dataclass(frozen=True)
+class AiredEpisode:
+    """One episode of an airs-today group, in the order the body lists them."""
+
+    id: int
+    season_number: int
+    episode_number: int
+    name: str | None
+
+
+@dataclass(frozen=True)
 class Candidate:
     """One notification for one user, before it meets a subscription.
 
@@ -52,6 +65,12 @@ class Candidate:
     renders from; each kind sets the ones its body needs and leaves the rest
     `None`. `air_date` is the **corrected** date: the episode's for airs-today,
     the season's for the two premiere kinds (what the app shows, NEU-1145).
+
+    An airs-today candidate is **one per show** (Q8, NEU-1539): `episodes` holds
+    every episode of that show airing today, lowest first, and the single
+    `episode_*` fields are the first one's — what the one-episode body and the
+    `/episodes/{id}` link read, and what keeps a single episode's rendering
+    identical whether or not it came through a group.
     """
 
     user_id: UUID
@@ -71,9 +90,13 @@ class Candidate:
     status: str | None = None
     observed_at: datetime | None = None
     # How many notifications a `summary` stands in for, and the distinct shows
-    # they are about, in delivery order — the body lists these (§5.3).
+    # they are about, in delivery order — the body lists these (§5.3). `task`
+    # is the delivery task whose overflow it is, which its title reads.
     count: int | None = None
     show_names: tuple[str, ...] = ()
+    task: DeliveryTaskLabel | None = None
+    # Every episode an airs-today candidate is about, (season, episode) order.
+    episodes: tuple[AiredEpisode, ...] = ()
 
 
 def _has_subscription():
@@ -81,13 +104,18 @@ def _has_subscription():
 
 
 async def airs_today_candidates(session: AsyncSession, *, today: date) -> list[Candidate]:
-    """The airs-today set for every user who would receive it (Q16).
+    """The airs-today set for every user who would receive it (Q16), one
+    candidate per show.
 
     Corrected `air_date = today`, specials (season 0) excluded, show in My
     Shows and not muted, episode not watched, account not disabled, the
-    `notify_airs_today` flag set. No email-verified gate. Key
-    `airs_today:{episode_id}:{air_date}`, so a date moving onto today again
-    later is a new notification rather than a suppressed one.
+    `notify_airs_today` flag set. No email-verified gate. Every episode of one
+    show airing today folds into one candidate (Q8, NEU-1539): a season dump
+    is one push and costs one cap slot, not the whole cap. Key
+    `airs_today:{show_id}:{air_date}` — the show and the day, whatever the
+    episode set — so a date moving onto today again later is a new
+    notification rather than a suppressed one, while a same-day re-run with a
+    changed set is a skip.
     """
     watched = exists().where(
         UserEpisodeWatch.user_id == User.id, UserEpisodeWatch.episode_id == m.Episode.id
@@ -115,33 +143,45 @@ async def airs_today_candidates(session: AsyncSession, *, today: date) -> list[C
             m.Episode.season_number > 0,
             ~watched,
         )
-        .order_by(User.id, m.Episode.id)
-    )
-    return [
-        Candidate(
-            user_id=user_id,
-            kind="airs_today",
-            key=f"airs_today:{episode_id}:{today.isoformat()}",
-            show_id=show_id,
-            episode_id=episode_id,
-            show_name=show_name,
-            poster_path=poster_path,
-            season_number=season_number,
-            episode_number=episode_number,
-            episode_name=episode_name,
-            air_date=today,
+        .order_by(
+            User.id,
+            m.Show.id,
+            m.Episode.season_number,
+            m.Episode.episode_number,
+            m.Episode.id,
         )
-        for (
-            user_id,
-            show_id,
-            show_name,
-            poster_path,
-            episode_id,
-            season_number,
-            episode_number,
-            episode_name,
-        ) in rows
-    ]
+    )
+    candidates: list[Candidate] = []
+    for (user_id, show_id), group in groupby(rows, key=lambda row: (row[0], row[1])):
+        show_rows = list(group)
+        show_name, poster_path = show_rows[0][2], show_rows[0][3]
+        episodes = tuple(
+            AiredEpisode(
+                id=episode_id,
+                season_number=season_number,
+                episode_number=episode_number,
+                name=episode_name,
+            )
+            for (_, _, _, _, episode_id, season_number, episode_number, episode_name) in show_rows
+        )
+        first = episodes[0]
+        candidates.append(
+            Candidate(
+                user_id=user_id,
+                kind="airs_today",
+                key=f"airs_today:{show_id}:{today.isoformat()}",
+                show_id=show_id,
+                episode_id=first.id,
+                show_name=show_name,
+                poster_path=poster_path,
+                season_number=first.season_number,
+                episode_number=first.episode_number,
+                episode_name=first.name,
+                air_date=today,
+                episodes=episodes,
+            )
+        )
+    return candidates
 
 
 def is_still_current(
@@ -271,42 +311,52 @@ def group_by_user(candidates: Iterable[Candidate]) -> dict[UUID, list[Candidate]
     return dict(grouped)
 
 
-def apply_cap(
-    candidates_by_user: Mapping[UUID, Sequence[Candidate]], cap: int = DAILY_CAP, *, today: date
-) -> dict[UUID, list[Candidate]]:
-    """Each user's notifications in delivery order, capped (§5.2 step 3).
+def _delivery_order(task: DeliveryTaskLabel, candidate: Candidate) -> tuple[object, ...]:
+    """Airs-today by show name (article-stripped, as My Shows sorts); events
+    oldest first."""
+    if task == "airs_today":
+        return (
+            show_name_sort_key(candidate.show_name or ""),
+            candidate.season_number or 0,
+            candidate.episode_number or 0,
+        )
+    return (candidate.observed_at or _EPOCH, candidate.event_id or 0)
 
-    Airs-today first, by show name (article-stripped, as My Shows sorts), then
-    events oldest first. Past `cap`, the remainder is replaced by one `summary`
-    candidate keyed `summary:{user_id}:{today}` — so a user can receive
-    `cap + 1` pushes, the last one standing in for the rest.
+
+def apply_cap(
+    candidates_by_user: Mapping[UUID, Sequence[Candidate]],
+    cap: int,
+    *,
+    task: DeliveryTaskLabel,
+    today: date,
+) -> dict[UUID, list[Candidate]]:
+    """Each user's notifications from one delivery task in delivery order,
+    capped (§5.2 step 3, NEU-1540).
+
+    `cap` 0 is no cap — every candidate kept, no summary — and the default for
+    both tasks. Past a positive `cap`, the remainder is replaced by one
+    `summary` candidate keyed `summary:{task}:{user_id}:{today}` — per task, so
+    the two tasks' summaries on one day are two notifications — and a user can
+    receive `cap + 1` pushes from the task, the last one standing in for the
+    rest. The summary's `count` is therefore in notifications, and a show's
+    whole season dump counts once.
     """
     capped: dict[UUID, list[Candidate]] = {}
     for user_id, candidates in candidates_by_user.items():
-        airs = sorted(
-            (c for c in candidates if c.kind == "airs_today"),
-            key=lambda c: (
-                show_name_sort_key(c.show_name or ""),
-                c.season_number or 0,
-                c.episode_number or 0,
-            ),
-        )
-        events = sorted(
-            (c for c in candidates if c.kind != "airs_today"),
-            key=lambda c: (c.observed_at or _EPOCH, c.event_id or 0),
-        )
-        ordered = airs + events
-        kept = ordered[:cap]
-        rest = ordered[cap:]
-        if rest:
-            kept.append(
-                Candidate(
-                    user_id=user_id,
-                    kind="summary",
-                    key=f"summary:{user_id}:{today.isoformat()}",
-                    count=len(rest),
-                    show_names=tuple(dict.fromkeys(c.show_name for c in rest if c.show_name)),
-                )
+        ordered = sorted(candidates, key=lambda c: _delivery_order(task, c))
+        if not cap or len(ordered) <= cap:
+            capped[user_id] = ordered
+            continue
+        kept, rest = ordered[:cap], ordered[cap:]
+        kept.append(
+            Candidate(
+                user_id=user_id,
+                kind="summary",
+                key=f"summary:{task}:{user_id}:{today.isoformat()}",
+                count=len(rest),
+                show_names=tuple(dict.fromkeys(c.show_name for c in rest if c.show_name)),
+                task=task,
             )
+        )
         capped[user_id] = kept
     return capped
