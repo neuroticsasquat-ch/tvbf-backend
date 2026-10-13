@@ -140,11 +140,14 @@ class Settings(BaseSettings):
     )
     ingest_stale_run_minutes: int = Field(default=15, alias="INGEST_STALE_RUN_MINUTES")
 
-    # healthchecks.io deadman for the TMDB catalog delta (NEU-1035), which runs
+    # Uptime Kuma push-monitor URL (NEU-1581; healthchecks.io before it) — the
+    # deadman for the TMDB catalog delta (NEU-1035), which runs
     # as a Coolify scheduled task. Coolify notifies when a task *fails*; it
     # cannot notify that one never ran — suspended and forgotten, container
     # down, scheduler broken. That gap is the whole reason for this. Unset makes
-    # every ping a no-op, so local runs and tests never call out.
+    # every ping a no-op, so local runs and tests never call out. Every
+    # `HEALTHCHECK_*_URL` below is the same kind of Kuma push URL; the names
+    # outlived the service so Coolify only needed new values.
     #
     # One check per scheduled task, never one shared between them: either task
     # feeding a shared deadman keeps it alive on its own, so the day one stops

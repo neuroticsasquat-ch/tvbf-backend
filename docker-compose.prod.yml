@@ -8,7 +8,7 @@ services:
       ADMIN_TOKEN: "${ADMIN_TOKEN}"
       INGEST_CONSECUTIVE_FAILURE_THRESHOLD: "10"
       INGEST_STALE_RUN_MINUTES: "15"
-      # healthchecks.io deadman for the TMDB catalog delta scheduled task.
+      # Uptime Kuma push URL, the deadman for the TMDB catalog delta scheduled task.
       # Coolify notifies when the task fails; only this catches it never running.
       HEALTHCHECK_CATALOG_URL: "${HEALTHCHECK_CATALOG_URL:-}"
       # The airdate reconciliation's own, never a shared one: a single check fed

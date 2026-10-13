@@ -16,7 +16,7 @@ premiere-set, premiere-moved, ended and revived event, capped per user by
 `PUSH_EVENTS_DAILY_CAP` (default `0`, no cap), then purges `catalog.show_event`
 and `app.push_delivery` rows older than 90 days.
 
-**Refuses to start without VAPID keys** (exit 1, `/fail`, no run row) and
+**Refuses to start without VAPID keys** (exit 1, `status=down`, no run row) and
 **exits 1 only when every send failed** — both `push.delivery.run_delivery_task`'s
 rules, shared with `jobs/push_airs_today.py`.
 """

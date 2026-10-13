@@ -181,7 +181,7 @@ class TestHowItRefuses:
 
 
 class TestTheDeadman:
-    """The healthchecks.io pings the schedule feeds (NEU-1111).
+    """The Uptime Kuma pings the schedule feeds (NEU-1111, NEU-1581).
 
     Coolify notifies when the task *fails*; only the deadman catches the task
     never running at all, and at a weekly cadence that failure is invisible for
@@ -243,59 +243,60 @@ class TestTheDeadman:
         return _install
 
     @respx.mock
-    async def test_a_successful_pass_pings_start_then_success(self, configured, pass_result):
+    async def test_a_successful_pass_pings_up_once(self, configured, pass_result):
         pass_result(PassResult(succeeded=3))
-        start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-        success = respx.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
+        up = respx.get(HEALTHCHECK, params={"status": "up"}).mock(return_value=httpx.Response(200))
 
         assert await run(_parse_args([])) == 0
-        assert start.called
-        assert success.called
+        assert up.call_count == 1
+        assert len(respx.calls) == 1
 
     @respx.mock
-    async def test_a_pass_with_a_failed_user_pings_fail(self, configured, pass_result):
-        """Exit 1 and /fail are the same claim told to two systems: Coolify sees
-        the exit code, healthchecks.io sees the ping."""
+    async def test_a_pass_with_a_failed_user_pings_down(self, configured, pass_result):
+        """Exit 1 and `status=down` are the same claim told to two systems:
+        Coolify sees the exit code, Kuma sees the ping."""
         pass_result(PassResult(succeeded=1, failed=1))
-        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-        fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+        down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(
+            return_value=httpx.Response(200)
+        )
 
         assert await run(_parse_args([])) == 1
-        assert fail.called
+        assert down.call_count == 1
 
     @respx.mock
-    async def test_a_crash_outside_a_users_turn_pings_fail(self, configured, pass_result, caplog):
+    async def test_a_crash_outside_a_users_turn_pings_down(self, configured, pass_result, caplog):
         """Per-user failures leave a `failed` set behind; a crash outside one
         leaves nothing in the database to speak for it."""
         pass_result(RuntimeError("the lock query blew up"))
-        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-        fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+        down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(
+            return_value=httpx.Response(200)
+        )
 
         with caplog.at_level("ERROR"):
             assert await run(_parse_args([])) == 1
 
-        assert fail.called
+        assert down.call_count == 1
         assert "crashed" in caplog.text
 
     @respx.mock
-    async def test_the_lock_being_held_pings_nothing_beyond_start(self, configured, pass_result):
-        """The pass that *does* hold the lock pings nothing itself, so a success
-        ping here would report an outcome this process never learns. Silence
-        leaves the check started, the grace period expires, and someone looks."""
+    async def test_the_lock_being_held_pings_nothing(self, configured, pass_result):
+        """The pass that *does* hold the lock pings nothing itself, so an up ping
+        here would report an outcome this process never learns. Silence lets the
+        monitor's interval expire, and someone looks."""
         pass_result(None)
-        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
 
         assert await run(_parse_args([])) == 0
-        assert len(respx.calls) == 1, "the skip path pinged something beyond /start"
+        assert not respx.calls, "the skip path pinged the deadman"
 
     @respx.mock
-    async def test_an_unconfigured_deployment_pings_fail(self, deadman, no_model):
+    async def test_an_unconfigured_deployment_pings_down(self, deadman, no_model):
         """A typo'd env var is a broken deployment, not a quiet week."""
-        respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-        fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+        down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(
+            return_value=httpx.Response(200)
+        )
 
         assert await run(_parse_args([])) == 1
-        assert fail.called
+        assert down.call_count == 1
 
     @respx.mock
     async def test_a_run_narrowed_to_one_user_pings_nothing(self, configured, pass_result):

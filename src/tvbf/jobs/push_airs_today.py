@@ -16,7 +16,7 @@ late. It sends the schedule-derived set only — one push per show airing today 
 capped per user by `PUSH_AIRS_TODAY_DAILY_CAP` (default `0`, no cap), and purges
 nothing; the events task does that.
 
-**Refuses to start without VAPID keys** (exit 1, `/fail`, no run row) and
+**Refuses to start without VAPID keys** (exit 1, `status=down`, no run row) and
 **exits 1 only when every send failed** — both `push.delivery.run_delivery_task`'s
 rules, shared with `jobs/push_events.py`.
 """

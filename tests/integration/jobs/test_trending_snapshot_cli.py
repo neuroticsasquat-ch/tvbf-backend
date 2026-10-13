@@ -2,7 +2,7 @@
 
 Its own deadman, not the catalog delta's, and its own run kind. What the pass
 itself does is covered in `tests/integration/tmdb/test_trending.py`; what is
-here is the contract Coolify and healthchecks.io read — the exit code, the
+here is the contract Coolify and Uptime Kuma read — the exit code, the
 pings, and the per-kind in-flight guard.
 """
 
@@ -39,9 +39,8 @@ async def test_a_successful_run_exits_zero_and_pings_its_own_check(session, monk
     tasks is kept alive by either of them, so the day one stops running the
     other goes on covering for it silently."""
     _install(monkeypatch, "succeeded")
-    start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    success = respx.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
-    catalog = respx.post(CATALOG_HEALTHCHECK).mock(return_value=httpx.Response(200))
+    up = respx.get(HEALTHCHECK, params={"status": "up"}).mock(return_value=httpx.Response(200))
+    catalog = respx.get(CATALOG_HEALTHCHECK).mock(return_value=httpx.Response(200))
 
     assert (
         await trending_snapshot.run_trending_daily(
@@ -52,24 +51,24 @@ async def test_a_successful_run_exits_zero_and_pings_its_own_check(session, monk
         )
         is True
     )
-    assert start.called and success.called
+    assert up.call_count == 1
+    assert len(respx.calls) == 1
     assert not catalog.called
 
 
 @respx.mock
-async def test_a_failed_run_reports_false_and_pings_fail(session, monkeypatch):
+async def test_a_failed_run_reports_false_and_pings_down(session, monkeypatch):
     """A snapshot that resolved nothing finalizes `failed`, which is what makes
     "the previous snapshot was kept" reach Coolify rather than pass for a quiet
     success."""
     _install(monkeypatch, "failed")
-    respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+    down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
     assert (
         await trending_snapshot.run_trending_daily(_settings(healthcheck_trending_url=HEALTHCHECK))
         is False
     )
-    assert fail.called
+    assert down.call_count == 1
 
 
 async def test_the_run_it_creates_carries_its_own_kind(session, monkeypatch):

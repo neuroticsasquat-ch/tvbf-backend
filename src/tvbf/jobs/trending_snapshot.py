@@ -3,7 +3,7 @@
     python -m tvbf.jobs.trending_snapshot
 
 Same contract as the two scheduled passes beside it: **0 = the snapshot ran and
-succeeded, 1 = it failed**, with a healthchecks.io deadman for the case Coolify
+succeeded, 1 = it failed**, with an Uptime Kuma push deadman for the case Coolify
 cannot report, which is the task never running at all. The process *is* the run,
 so there is no 202 and no status route of its own — poll it through the
 unfiltered `GET /admin/ingest/{run_id}`, which filters on nothing precisely so a
