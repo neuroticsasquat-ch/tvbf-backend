@@ -35,7 +35,7 @@ from tvbf.catalog.events import purge_events_before
 from tvbf.catalog.runs import finalize_run, record_progress
 from tvbf.config import Settings
 from tvbf.db import SessionLocal
-from tvbf.jobs.scheduled import ping, run_scheduled_delta
+from tvbf.jobs.scheduled import ping_down, run_scheduled_delta
 from tvbf.push import sender
 from tvbf.push.candidates import (
     Candidate,
@@ -298,7 +298,7 @@ async def run_delivery_task(task: DeliveryTask, settings: Settings) -> bool:
     """One scheduled run of `task`, on `jobs/scheduled.py`'s shape. True iff it
     finished `succeeded` — what both entrypoints return from.
 
-    **Refuses to start without VAPID keys**: logged, `/fail` pinged, no run row.
+    **Refuses to start without VAPID keys**: logged, `status=down` pinged, no run row.
     A task that cannot sign a single push would otherwise log every candidate
     as a failure — or, if nobody is subscribed yet, succeed silently for as long
     as the keys stay missing.
@@ -309,7 +309,7 @@ async def run_delivery_task(task: DeliveryTask, settings: Settings) -> bool:
             "%s refused: VAPID_PRIVATE_KEY, VAPID_PUBLIC_KEY and VAPID_SUBJECT must all be set",
             task.name,
         )
-        await ping(healthcheck_url, "/fail")
+        await ping_down(healthcheck_url, "VAPID keys not configured")
         return False
 
     async def worker(run_id: UUID, settings: Settings) -> None:

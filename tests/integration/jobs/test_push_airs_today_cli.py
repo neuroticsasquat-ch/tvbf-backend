@@ -425,8 +425,7 @@ async def test_a_crash_finalizes_the_run_failed(session, make_user, monkeypatch)
 async def test_a_successful_run_pings_only_its_own_check(session, monkeypatch):
     stub_send(monkeypatch)
     with respx.mock(assert_all_called=False) as router:
-        start = router.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-        success = router.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
+        up = router.get(HEALTHCHECK, params={"status": "up"}).mock(return_value=httpx.Response(200))
         other = router.route(host="hc.example.com", path__startswith="/push-events").mock(
             return_value=httpx.Response(200)
         )
@@ -437,22 +436,22 @@ async def test_a_successful_run_pings_only_its_own_check(session, monkeypatch):
         )
 
     assert ok is True
-    assert start.called and success.called
+    assert up.call_count == 1
     assert not other.called
 
 
 @respx.mock
 async def test_it_refuses_to_start_without_vapid_keys(session, monkeypatch):
-    """Exit 1, `/fail`, and no run row: a job that cannot sign a push must not
+    """Exit 1, `status=down`, and no run row: a job that cannot sign a push must not
     pass for a quiet success on a day nobody happens to be subscribed."""
     calls = stub_send(monkeypatch)
-    start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+    down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
     ok = await _run_task(vapid_private_key=None, healthcheck_push_airs_today_url=HEALTHCHECK)
 
     assert ok is False
-    assert fail.called and not start.called
+    assert down.call_count == 1
+    assert len(respx.calls) == 1
     assert calls == []
     assert (await session.execute(select(m.IngestRun))).first() is None
 

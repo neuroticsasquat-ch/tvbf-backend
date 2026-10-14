@@ -14,12 +14,13 @@ is the task never firing at all (NEU-1111). Its own, never a check shared with
 the two nightly tasks: either one feeding a shared check keeps it alive while the
 other quietly stops. **The pings ride `run()` rather than
 `jobs/scheduled.run_scheduled_delta`**, because that helper's shape is built
-around a run row this job deliberately does not have — what is shared is `ping`
-itself and, more importantly, the three rules the helper encodes: /start first,
-/fail on every exit-1 path *from that ping onward*, and *nothing at all* when the
-guard finds another pass already running. Onward, because a crash before it —
-settings that will not load — has no URL to ping with; the check simply stays in
-whatever state it was left in and its grace period does the work.
+around a run row this job deliberately does not have — what is shared is
+`ping_up` / `ping_down` themselves and, more importantly, the rules the helper
+encodes: `status=up` on success, `status=down` on every exit-1 path once
+settings have loaded, and *nothing at all* when the guard finds another pass
+already running. Once settings have loaded, because a crash before that has no
+URL to ping with; the monitor simply hears nothing and its interval does the
+work (NEU-1581).
 
 ## There is no run table, and the guard is an advisory lock
 
@@ -91,6 +92,7 @@ import asyncio
 import json
 import logging
 import sys
+import time
 from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
@@ -109,7 +111,7 @@ from tvbf.app.models import (
 from tvbf.app.repos import recommendation_repo, user_repo
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal, engine
-from tvbf.jobs.scheduled import ping
+from tvbf.jobs.scheduled import elapsed_ms, failure_message, ping_down, ping_up
 from tvbf.llm.client import OpenAICompatClient
 from tvbf.llm.registry import DEEPINFRA
 from tvbf.llm.types import (
@@ -995,7 +997,7 @@ async def run(args: argparse.Namespace) -> int:
 
     settings = get_settings()
     healthcheck = _healthcheck_url(settings, args)
-    await ping(healthcheck, "/start")
+    started = time.monotonic()
 
     if not settings.recommendation_model or not settings.deepinfra_api_key:
         # Checked before the work list — and, since NEU-1110, before the lock —
@@ -1011,35 +1013,38 @@ async def run(args: argparse.Namespace) -> int:
         # whoever else is running, and 0 there hides a typo'd env var behind
         # whatever happened to be in flight.
         log.error("RECOMMENDATION_MODEL and DEEPINFRA_API_KEY must both be set")
-        await ping(healthcheck, "/fail")
+        await ping_down(healthcheck, "RECOMMENDATION_MODEL and DEEPINFRA_API_KEY must both be set")
         return 1
 
     try:
         result = await run_pass_if_free(settings, user_id=args.user)
-    except Exception:
+    except Exception as exc:
         # Per-user failures are already isolated inside the pass and leave a
         # `failed` set behind to speak for them, so reaching this means the
         # failure was *outside* one — the lock, the work list, the engine — and
         # nothing in the database records it. Same reasoning as
         # `jobs/scheduled.scheduled_main`'s handler, and the same answer.
         log.exception("weekly recommendations pass crashed")
-        await ping(healthcheck, "/fail")
+        await ping_down(healthcheck, failure_message(exc))
         return 1
 
     if result is None:
         # Another pass holds the lock. Exit 0 — this process did nothing wrong —
-        # and deliberately **no ping of any kind beyond /start**, exactly as
+        # and deliberately **no ping of any kind**, exactly as
         # `run_scheduled_delta` treats its own in-flight guard: the run that does
-        # hold the lock pings nothing itself, so a success ping here would report
-        # an outcome we never learn. Staying silent leaves the check in its
-        # started state, so the grace period expires and someone looks.
+        # hold the lock pings nothing itself, so an up ping here would report an
+        # outcome we never learn. Staying silent lets the monitor's interval
+        # expire, so someone looks.
         return 0
 
     if not result.ok:
-        await ping(healthcheck, "/fail")
+        await ping_down(
+            healthcheck,
+            f"weekly recommendations pass: {result.failed} failed, aborted={result.aborted}",
+        )
         return 1
 
-    await ping(healthcheck)
+    await ping_up(healthcheck, duration_ms=elapsed_ms(started))
     return 0
 
 

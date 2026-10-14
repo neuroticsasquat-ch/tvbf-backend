@@ -6,7 +6,7 @@ daily trending snapshot (NEU-1055) and the two push delivery tasks (NEU-1540) �
 differing only in which run kind they take, which body they await and which
 deadman they feed; the TV Maze daily was
 the first and NEU-1050 retired it. The weekly recommendations pass (NEU-1109,
-NEU-1111) is the exception and calls `ping` alone: it deliberately writes no
+NEU-1111) is the exception and calls `ping_up` / `ping_down` alone: it deliberately writes no
 run row (`user_recommendation_set` is already its per-user run record), so the
 guard, the row and the terminal-status read here have nothing to act on. What
 it does keep is the *rules* below, which is the reason they are written down
@@ -20,11 +20,17 @@ rather than merely implemented:
   at all: suspended and forgotten, container down, scheduler broken.
 
 So the shape lives here once, a new run-row-backed job supplies the three things
-that genuinely vary, and one that has no run row takes `ping` and the rules.
+that genuinely vary, and one that has no run row takes the pings and the rules.
+
+The deadman is an Uptime Kuma push monitor (NEU-1581): one `status=up` per
+success, one `status=down` with a message per failure, and **no start ping** —
+Kuma has none. A run that never reports anything is caught the same way a run
+that never starts is, by the monitor's interval expiring.
 """
 
 import asyncio
 import logging
+import time
 from collections.abc import Callable, Coroutine
 from typing import Any
 from uuid import UUID
@@ -44,21 +50,48 @@ Worker = Callable[[UUID, Settings], Coroutine[Any, Any, None]]
 Runner = Callable[[Settings], Coroutine[Any, Any, bool]]
 
 
-async def ping(base_url: str | None, suffix: str = "") -> None:
-    """Best-effort healthchecks.io ping.
+# Kuma stores the message whole; a traceback's worth of it helps nobody in an alert.
+MAX_PING_MESSAGE = 250
+
+
+async def _push(url: str | None, params: dict[str, str]) -> None:
+    """Best-effort Uptime Kuma push.
 
     A no-op when unset, and a failure is logged and swallowed so it can never
     change the job's own outcome. A ping that cannot get out is itself what the
     deadman alerts on, so there is nothing to gain by failing the run over it.
+
+    `params` replace any query string already on `url`, so a push URL pasted
+    from Kuma with its default `?status=up&msg=OK&ping=` still works.
     """
-    if not base_url:
+    if not url:
         return
-    url = base_url.rstrip("/") + suffix
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
-            await client.post(url)
+            await client.get(httpx.URL(url).copy_with(params=params))
     except Exception:
-        log.warning("healthcheck ping to %s failed", url, exc_info=True)
+        log.warning("deadman ping to %s failed", url, exc_info=True)
+
+
+async def ping_up(url: str | None, *, duration_ms: int) -> None:
+    """Report a successful run, and how long it took, to the push monitor."""
+    await _push(url, {"status": "up", "msg": "ok", "ping": str(duration_ms)})
+
+
+async def ping_down(url: str | None, msg: str) -> None:
+    """Report a failed run to the push monitor, with `msg` saying why."""
+    await _push(url, {"status": "down", "msg": msg[:MAX_PING_MESSAGE]})
+
+
+def failure_message(exc: BaseException) -> str:
+    """`ping_down`'s message for a crash: the exception type and its first line."""
+    lines = str(exc).strip().splitlines()
+    return f"{type(exc).__name__}: {lines[0]}" if lines else type(exc).__name__
+
+
+def elapsed_ms(started: float) -> int:
+    """Milliseconds since `started`, a `time.monotonic()` reading."""
+    return round((time.monotonic() - started) * 1000)
 
 
 async def _terminal_status(run_id: UUID) -> str:
@@ -84,7 +117,7 @@ async def run_scheduled_delta(
     processes (ADR-0006), so the two simply go slower rather than doubling the
     rate against upstream.
     """
-    await ping(healthcheck_url, "/start")
+    started = time.monotonic()
 
     async with SessionLocal() as s:
         live = await find_live_run(
@@ -95,13 +128,12 @@ async def run_scheduled_delta(
         # Exit 0 — this task did nothing wrong, and failing would have Coolify
         # notify on a benign condition.
         #
-        # Deliberately no success ping. The admin trigger pings nothing, so a
-        # success ping here would report a run whose outcome we never learn: if
-        # that hand-triggered run later failed, Coolify would not see it (this
+        # Deliberately no ping. The admin trigger pings nothing, so an up ping
+        # here would report a run whose outcome we never learn: if that
+        # hand-triggered run later failed, Coolify would not see it (this
         # process exited 0) and the deadman would already be fed. Staying silent
-        # leaves the check in its started state, so the grace period expires and
-        # someone looks — a spurious alert on a rare day, in exchange for never
-        # swallowing a failed one.
+        # lets the monitor's interval expire, so someone looks — a spurious
+        # alert on a rare day, in exchange for never swallowing a failed one.
         log.info("a %s run is already in flight (%s); nothing to do", kind, live.id)
         return True
 
@@ -115,11 +147,11 @@ async def run_scheduled_delta(
     status = await _terminal_status(run_id)
     if status != "succeeded":
         log.error("%s run %s ended %s", name, run_id, status)
-        await ping(healthcheck_url, "/fail")
+        await ping_down(healthcheck_url, f"{name} run {run_id} ended {status}")
         return False
 
     log.info("%s run %s succeeded", name, run_id)
-    await ping(healthcheck_url)
+    await ping_up(healthcheck_url, duration_ms=elapsed_ms(started))
     return True
 
 
@@ -141,8 +173,8 @@ def scheduled_main(
     configure_logging(settings.log_level)
     try:
         ok = asyncio.run(runner(settings))
-    except Exception:
+    except Exception as exc:
         log.exception("%s job crashed", name)
-        asyncio.run(ping(healthcheck_url(settings), "/fail"))
+        asyncio.run(ping_down(healthcheck_url(settings), failure_message(exc)))
         return 1
     return 0 if ok else 1

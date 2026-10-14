@@ -213,8 +213,7 @@ async def test_nothing_to_send_succeeds(session, monkeypatch):
 async def test_a_successful_run_pings_only_its_own_check(session, monkeypatch):
     stub_send(monkeypatch)
     with respx.mock(assert_all_called=False) as router:
-        start = router.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-        success = router.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
+        up = router.get(HEALTHCHECK, params={"status": "up"}).mock(return_value=httpx.Response(200))
         other = router.route(host="hc.example.com", path__startswith="/push-airs-today").mock(
             return_value=httpx.Response(200)
         )
@@ -225,20 +224,20 @@ async def test_a_successful_run_pings_only_its_own_check(session, monkeypatch):
         )
 
     assert ok is True
-    assert start.called and success.called
+    assert up.call_count == 1
     assert not other.called
 
 
 @respx.mock
 async def test_it_refuses_to_start_without_vapid_keys(session, monkeypatch):
     calls = stub_send(monkeypatch)
-    start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+    down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
     ok = await _run_task(vapid_subject=None, healthcheck_push_events_url=HEALTHCHECK)
 
     assert ok is False
-    assert fail.called and not start.called
+    assert down.call_count == 1
+    assert len(respx.calls) == 1
     assert calls == []
     assert (await session.execute(select(m.IngestRun))).first() is None
 

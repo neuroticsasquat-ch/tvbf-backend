@@ -2,7 +2,7 @@
 
 `python -m tvbf.jobs.catalog_update`. Same contract as the TV Maze daily it has
 now outlived (NEU-1050): **0 = the delta ran and succeeded, 1 = it failed**,
-with a healthchecks.io deadman for the case Coolify cannot report, which is the
+with an Uptime Kuma push deadman for the case Coolify cannot report, which is the
 task never running at all.
 
 It was a second scheduled task rather than an extension of the first because the
