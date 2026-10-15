@@ -19,10 +19,16 @@ services:
       CORS_ALLOWED_ORIGINS: "https://app.tvbingefriend.com"
       COOKIE_DOMAIN: ".tvbingefriend.com"
       COOKIE_SAMESITE: "lax"
-      ENVIRONMENT: "production"
+      # Points at Bugsink, which speaks the Sentry protocol.
       SENTRY_DSN: "${SENTRY_DSN:-}"
-      # Sentry release tag. Coolify exposes the deployed commit as SOURCE_COMMIT; falls
-      # back to "unknown" so the SDK still initializes when it's absent (e.g. local prod build).
+      # The instrumentation contract: OTel's resource attributes, which Sentry's
+      # `release` and `environment` are read back from (`tvbf/telemetry.py`), so an
+      # error in Bugsink and a trace in SigNoz name the same build. Coolify exposes
+      # the deployed commit as SOURCE_COMMIT ("Include SOURCE_COMMIT in build" must
+      # be on, or it is the literal "unknown"). `deployment.environment` here is the
+      # only place prod names its environment; ENVIRONMENT is a dev-only fallback.
+      OTEL_RESOURCE_ATTRIBUTES: "service.name=tvbf-backend,deployment.environment=production,service.version=${SOURCE_COMMIT:-unknown}"
+      # Fallback release for a run without the resource attributes above.
       GIT_SHA: "${SOURCE_COMMIT:-unknown}"
     healthcheck:
       test: ["CMD", "python", "-c", "import sys, urllib.request; sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status == 200 else 1)"]

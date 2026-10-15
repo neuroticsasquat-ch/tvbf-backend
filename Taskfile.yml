@@ -129,6 +129,13 @@ tasks:
         curl -s -X POST {{.API_URL}}/admin/catalog-update
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  debug:raise-test-error:
+    desc: 'POST /admin/debug/raise-test-error — a deliberate 500 to prove the Bugsink -> Discord path (NEU-1589)'
+    cmds:
+      - >
+        curl -s -X POST {{.API_URL}}/admin/debug/raise-test-error
+        -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
+
   reconcile:airdates:
     # The *manual* trigger. In prod this runs as a second Coolify scheduled
     # task on the same shape as the catalog delta, with its own

@@ -200,7 +200,8 @@ header, per-user fields and status codes.
   `GET /me/friends/popular` (NEU-1499 — Popular with Friends, `private, no-store`).
 - **Admin** — `Authorization: Bearer $ADMIN_TOKEN`: `POST /admin/catalog-ingest`, `GET
   /admin/catalog-ingest/{run_id}`, `POST /admin/catalog-update`, `GET /admin/ingest/{run_id}` (any-kind
-  run status), `POST /admin/recommendations`, `POST /admin/invites`, `GET /admin/invites`. Every `POST`
+  run status), `POST /admin/recommendations`, `POST /admin/invites`, `GET /admin/invites`, `POST
+  /admin/debug/raise-test-error` (NEU-1589; always a 500, by design). Every other `POST`
   returns `202 + run_id` and runs in a background task, and **409s if a run of that same kind is already
   in flight** (`_reject_if_in_flight` → `runs.find_live_run`, scoped per kind, liveness qualified by
   `INGEST_STALE_RUN_MINUTES`) — `/admin/recommendations` is the one exception, guarded by an advisory
@@ -290,6 +291,7 @@ src/tvbf/
   rate_budget.py       # per-upstream token buckets in Postgres + get_rate_limiter (ADR-0006)
   sql_fold.py          # the one accent/punctuation fold, evaluated in Postgres: folded() + folded_equal()
   client_ip.py         # the one client-address resolution: right-most X-Forwarded-For entry at N trusted hops, validated as an IP (NEU-1160)
+  telemetry.py         # Sentry init + the one release/environment resolution, read back from OTEL_RESOURCE_ATTRIBUTES so Bugsink and SigNoz name the same build (NEU-1589)
   routers/
     health.py          # /healthz, /readyz
     auth.py            # /signup, /login, /logout, /password-change + NEU-1160's two gates: the IP throttle on the first two, Turnstile on signup
@@ -297,6 +299,7 @@ src/tvbf/
     browse.py          # user-gated catalog endpoints + the _set_browse_cache router dep and its _SHOW_EP_CACHE override
     admin.py           # /admin/catalog-ingest, /admin/catalog-update, /admin/ingest/{run_id} (any-kind run status)
     invites_admin.py   # /admin/invites
+    debug_admin.py     # POST /admin/debug/raise-test-error — a deliberate unhandled TelemetryTestError, the runbook's proof of the Bugsink -> Discord path (NEU-1589)
     admin_users.py     # /admin/users + the is_admin and disabled toggles (cookie-session admin, NEU-1162)
     admin_reports.py   # GET /admin/reports — the read-only report queue; filters nothing, no-store (NEU-1197)
     admin_push.py      # GET /admin/push/stats — read-only delivery stats; a retirement is its surviving `failed` row (NEU-1493)
