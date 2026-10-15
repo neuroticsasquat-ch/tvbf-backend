@@ -1,13 +1,9 @@
-import os
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
 import httpx
-import sentry_sdk
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from sentry_sdk.integrations.fastapi import FastApiIntegration
-from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog.runs import mark_stale_runs_cancelled
@@ -25,6 +21,7 @@ from tvbf.routers import (
     browse,
     connections,
     contact,
+    debug_admin,
     email_change,
     email_verification,
     feedback,
@@ -37,18 +34,7 @@ from tvbf.routers import (
     reports,
     users,
 )
-
-if dsn := os.environ.get("SENTRY_DSN"):
-    sentry_sdk.init(
-        dsn=dsn,
-        integrations=[
-            FastApiIntegration(),
-            SqlalchemyIntegration(),
-        ],
-        traces_sample_rate=0.1,  # 10% of requests get perf traces
-        environment=os.environ.get("ENVIRONMENT", "development"),
-        release=os.environ.get("GIT_SHA", "unknown"),
-    )
+from tvbf.telemetry import init_sentry
 
 
 async def run_startup_cleanup(session: AsyncSession, stale_after_minutes: int) -> int:
@@ -80,6 +66,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 def create_app() -> FastAPI:
     settings = get_settings()
     configure_logging(settings.log_level)
+    # Before the FastAPI app exists, so the integrations see it constructed.
+    init_sentry()
     if settings.turnstile_enabled and not settings.turnstile_secret_key:
         # Two knobs that can disagree, checked at boot rather than at the first
         # signup: the failure this prevents is signup protection silently absent
@@ -111,6 +99,7 @@ def create_app() -> FastAPI:
     app.include_router(users.router)
     app.include_router(connections.router)
     app.include_router(contact.router)
+    app.include_router(debug_admin.router)
     app.include_router(friend_engagement.router)
     app.include_router(push.router)
     return app
