@@ -16,13 +16,24 @@ from tvbf.catalog import models as m
 from tvbf.catalog.runs import create_run, finalize_run
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
-from tvbf.jobs import catalog_update
+from tvbf.jobs import catalog_update, scheduled
 
 HEALTHCHECK = "https://hc.example.com/catalog"
 
 
 def _settings(**overrides):
     return get_settings().model_copy(update=overrides)
+
+
+@pytest.fixture
+def reported(monkeypatch):
+    """What the run-row path hands the error tracker (NEU-1622). The SDK's own
+    wiring is pinned in `tests/unit/jobs/test_job_error_reporting.py`."""
+    messages: list[str] = []
+    monkeypatch.setattr(
+        scheduled.sentry_sdk, "capture_message", lambda msg, **kw: messages.append(msg)
+    )
+    return messages
 
 
 @pytest.fixture
@@ -58,7 +69,7 @@ async def test_a_successful_run_exits_zero_and_pings_up_once(session, worker):
 
 
 @respx.mock
-async def test_a_failed_run_exits_nonzero_and_pings_down_with_a_message(session, worker):
+async def test_a_failed_run_exits_nonzero_and_pings_down_with_a_message(session, worker, reported):
     worker("failed")
     down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
@@ -69,6 +80,8 @@ async def test_a_failed_run_exits_nonzero_and_pings_down_with_a_message(session,
     assert down.call_count == 1
     assert len(respx.calls) == 1
     assert "ended failed" in down.calls.last.request.url.params["msg"]
+    # The worker caught the crash and finalized the row, so this is where it surfaces.
+    assert reported == ["catalog delta run ended failed"]
 
 
 @respx.mock
@@ -138,7 +151,7 @@ async def test_an_unset_healthcheck_url_attempts_no_request(session, worker):
 
 
 @respx.mock
-async def test_a_cancelled_run_also_exits_nonzero(session, worker):
+async def test_a_cancelled_run_also_exits_nonzero(session, worker, reported):
     """`succeeded` is the only outcome that means the delta ran. A run the
     startup cleanup cancelled did not, and Coolify has to hear about it."""
     worker("cancelled")
@@ -149,6 +162,8 @@ async def test_a_cancelled_run_also_exits_nonzero(session, worker):
         is False
     )
     assert down.call_count == 1
+    # The startup sweep of a stalled run is not a crash: Kuma hears, Bugsink does not.
+    assert reported == []
 
 
 @respx.mock

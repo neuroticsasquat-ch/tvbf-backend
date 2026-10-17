@@ -50,6 +50,7 @@ def main() -> int:
         runner=run_trending_daily,
         healthcheck_url=lambda s: s.healthcheck_trending_url,
         name=NAME,
+        job="trending_snapshot",
     )
 
 

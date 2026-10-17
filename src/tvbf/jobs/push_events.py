@@ -37,6 +37,7 @@ def main() -> int:
         runner=run_push_events,
         healthcheck_url=EVENTS.healthcheck_url,
         name=EVENTS.name,
+        job="push_events",
     )
 
 
