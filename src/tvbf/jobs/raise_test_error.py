@@ -4,10 +4,10 @@
 
 The job-side twin of `POST /admin/debug/raise-test-error`: the ops runbook runs
 it as a Coolify task (NEU-1625) to show that a job dying with an unhandled
-exception reaches Bugsink, tagged `job=raise_test_error`, and from there Discord
-`#alerts` (NEU-1597). It goes through `scheduled_main` rather than raising at
-module level because that handler is the path real job crashes take. It has no
-deadman, so the only signals are the event and exit code 1.
+exception reaches Bugsink, tagged `pipeline_mode=raise_test_error`, and from
+there Discord `#alerts` (NEU-1597). It goes through `scheduled_main` rather
+than raising at module level because that handler is the path real job crashes
+take. It has no deadman, so the only signals are the event and exit code 1.
 """
 
 import sys

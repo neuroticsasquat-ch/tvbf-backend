@@ -77,8 +77,9 @@ def init_sentry(env: Mapping[str, str] = os.environ, *, job: str | None = None) 
     """Initialise the Sentry SDK (pointed at Bugsink) when `SENTRY_DSN` is set,
     and log the resolved release and environment either way.
 
-    `job` is a scheduled job's name (NEU-1622): it tags every event, and it
-    stops log records becoming events. Jobs `log.exception` once per failed
+    `job` is a scheduled job's name (NEU-1622): it tags every event as
+    `pipeline_mode`, the tag every backend's scheduled jobs use (NEU-1634), and
+    it stops log records becoming events. Jobs `log.exception` once per failed
     item and carry on, so the API's default of an event per error log would
     turn one bad upstream day into dozens of `#alerts` posts; a job reports
     only its own failure, explicitly (`tvbf.jobs.scheduled.report_down`).
@@ -115,5 +116,5 @@ def init_sentry(env: Mapping[str, str] = os.environ, *, job: str | None = None) 
             release=telemetry.release,
         )
         if job is not None:
-            sentry_sdk.set_tag("job", job)
+            sentry_sdk.set_tag("pipeline_mode", job)
     return telemetry
