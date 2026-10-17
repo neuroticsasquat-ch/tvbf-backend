@@ -45,30 +45,30 @@ def worker(monkeypatch):
 
 
 @respx.mock
-async def test_a_successful_run_exits_zero_and_pings_start_then_success(session, worker):
+async def test_a_successful_run_exits_zero_and_pings_up_once(session, worker):
     worker("succeeded")
-    start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    success = respx.post(HEALTHCHECK).mock(return_value=httpx.Response(200))
+    up = respx.get(HEALTHCHECK, params={"status": "up"}).mock(return_value=httpx.Response(200))
 
     assert (
         await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
         is True
     )
-    assert start.called
-    assert success.called
+    assert up.call_count == 1
+    assert len(respx.calls) == 1, "a success sent something beyond its one up ping"
 
 
 @respx.mock
-async def test_a_failed_run_exits_nonzero_and_pings_fail(session, worker):
+async def test_a_failed_run_exits_nonzero_and_pings_down_with_a_message(session, worker):
     worker("failed")
-    respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+    down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
     assert (
         await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
         is False
     )
-    assert fail.called
+    assert down.call_count == 1
+    assert len(respx.calls) == 1
+    assert "ended failed" in down.calls.last.request.url.params["msg"]
 
 
 @respx.mock
@@ -87,7 +87,7 @@ async def test_the_run_row_is_created_with_the_catalog_update_kind(session, work
 async def test_a_live_catalog_run_is_left_alone_and_reports_no_outcome(session, monkeypatch):
     """An operator triggered a delta by hand minutes before the schedule fired.
 
-    Exit 0 with no success ping: the hand-triggered run pings nothing itself, so
+    Exit 0 with no ping at all: the hand-triggered run pings nothing itself, so
     claiming success here would feed the deadman for a run whose outcome we
     never learn.
     """
@@ -99,14 +99,11 @@ async def test_a_live_catalog_run_is_left_alone_and_reports_no_outcome(session, 
     live_id = await create_run(session, kind="catalog_update")
     await session.commit()
 
-    start = respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-
     assert (
         await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
         is True
     )
-    assert start.called
-    assert len(respx.calls) == 1, "the skip path pinged something beyond /start"
+    assert not respx.calls, "the skip path pinged the deadman"
 
     runs = (await session.execute(select(m.IngestRun.id))).scalars().all()
     assert runs == [live_id]
@@ -145,14 +142,13 @@ async def test_a_cancelled_run_also_exits_nonzero(session, worker):
     """`succeeded` is the only outcome that means the delta ran. A run the
     startup cleanup cancelled did not, and Coolify has to hear about it."""
     worker("cancelled")
-    respx.post(f"{HEALTHCHECK}/start").mock(return_value=httpx.Response(200))
-    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+    down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
     assert (
         await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
         is False
     )
-    assert fail.called
+    assert down.call_count == 1
 
 
 @respx.mock
@@ -160,14 +156,13 @@ async def test_a_ping_that_fails_is_swallowed(session, worker, caplog):
     """A ping that cannot get out is itself what the deadman alerts on, so it
     must not change the job's own outcome."""
     worker("succeeded")
-    respx.post(f"{HEALTHCHECK}/start").mock(side_effect=httpx.ConnectError("no route"))
-    respx.post(HEALTHCHECK).mock(side_effect=httpx.ConnectError("no route"))
+    respx.get(HEALTHCHECK).mock(side_effect=httpx.ConnectError("no route"))
 
     assert (
         await catalog_update.run_catalog_daily(_settings(healthcheck_catalog_url=HEALTHCHECK))
         is True
     )
-    assert "healthcheck ping" in caplog.text
+    assert "deadman ping" in caplog.text
 
 
 def test_main_maps_the_outcome_to_an_exit_code(monkeypatch):
@@ -187,12 +182,12 @@ def test_main_maps_the_outcome_to_an_exit_code(monkeypatch):
 
 
 @respx.mock
-def test_main_pings_fail_when_the_job_crashes_outside_the_run(monkeypatch):
+def test_main_pings_down_when_the_job_crashes_outside_the_run(monkeypatch):
     """The guard query, the run insert and the status read all sit outside the
     delta itself, so a failure there leaves no `failed` row to speak for it."""
     monkeypatch.setenv("HEALTHCHECK_CATALOG_URL", HEALTHCHECK)
     get_settings.cache_clear()
-    fail = respx.post(f"{HEALTHCHECK}/fail").mock(return_value=httpx.Response(200))
+    down = respx.get(HEALTHCHECK, params={"status": "down"}).mock(return_value=httpx.Response(200))
 
     async def _boom(settings):
         raise RuntimeError("database is down")
@@ -200,6 +195,6 @@ def test_main_pings_fail_when_the_job_crashes_outside_the_run(monkeypatch):
     monkeypatch.setattr(catalog_update, "run_catalog_daily", _boom)
     try:
         assert catalog_update.main() == 1
-        assert fail.called
+        assert down.calls.last.request.url.params["msg"] == "RuntimeError: database is down"
     finally:
         get_settings.cache_clear()

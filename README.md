@@ -134,16 +134,47 @@ Guarded by `Authorization: Bearer $ADMIN_TOKEN` (default `dev-secret-change-me` 
 | `GET /admin/ingest/{run_id}` | status of a run of **any** kind — how a run with no status route of its own is polled |
 | `POST /admin/invites` | create an invite code |
 | `GET /admin/invites` | list every invite (consumed and unconsumed) |
+| `POST /admin/debug/raise-test-error` | raise a deliberate `TelemetryTestError` (500) to prove the error path — see [Errors and observability](#errors-and-observability) |
 
-Convenience wrappers: `task ingest:catalog`, `task ingest:catalog:status -- <uuid>`, `task update:catalog`, `task ingest:status -- <uuid>`.
+Convenience wrappers: `task ingest:catalog`, `task ingest:catalog:status -- <uuid>`, `task update:catalog`, `task ingest:status -- <uuid>`, `task debug:raise-test-error`.
 
 A full catalog pass is ~229k series and takes ~8.7 hours: the loop is sequential, so latency binds at ~7.6 req/s and the 20 req/s budget never does. It is **resumable** — `catalog.show.tmdb_synced_at` is its watermark, so re-triggering only fetches what a previous attempt did not finish. The startup lifespan hook cancels any `running` run whose `last_progress_at` exceeds `INGEST_STALE_RUN_MINUTES` (default 15).
 
-The daily delta runs as a Coolify scheduled task, `python -m tvbf.jobs.catalog_update`, whose exit code *is* the result; `HEALTHCHECK_CATALOG_URL` points at a healthchecks.io deadman for the case Coolify cannot see, which is the task never running at all.
+The daily delta runs as a Coolify scheduled task, `python -m tvbf.jobs.catalog_update`, whose exit code *is* the result; `HEALTHCHECK_CATALOG_URL` is an Uptime Kuma push URL — the deadman for the case Coolify cannot see, which is the task never running at all. Every scheduled job's `HEALTHCHECK_*_URL` is the same kind of push URL (NEU-1581): one `?status=up&msg=ok&ping=<ms>` on success, one `?status=down&msg=<reason>` on failure, no start ping, and silence when another run of the same job is already in flight.
 
-Push notifications go out from two more scheduled tasks (NEU-1540): `python -m tvbf.jobs.push_airs_today` (`task push:airs-today` by hand) sends today's airs-today pushes, and `python -m tvbf.jobs.push_events` (`task push:events`) sends the show-change pushes — premiere set or moved, ended, revived — then purges delivery rows and catalog events older than 90 days. Both retire dead subscriptions. **First deploy:** run `task vapid:generate -- --subject mailto:<ops address>` and set the three `VAPID_*` values in Coolify's env (generating a new set later is a rotation that invalidates every subscription); create two daily healthchecks.io checks and set `HEALTHCHECK_PUSH_AIRS_TODAY_URL` and `HEALTHCHECK_PUSH_EVENTS_URL` to their ping URLs; then add the Coolify scheduled tasks `python -m tvbf.jobs.push_airs_today` **daily at 13:00 UTC** and `python -m tvbf.jobs.push_events` **daily at 17:00 UTC**, both after the catalog delta and the airdate reconcile they read from — nothing enforces that order, and getting it wrong delivers a day late. Each task exits 1 without VAPID keys, and otherwise only when every send failed.
+Push notifications go out from two more scheduled tasks (NEU-1540): `python -m tvbf.jobs.push_airs_today` (`task push:airs-today` by hand) sends today's airs-today pushes, and `python -m tvbf.jobs.push_events` (`task push:events`) sends the show-change pushes — premiere set or moved, ended, revived — then purges delivery rows and catalog events older than 90 days. Both retire dead subscriptions. **First deploy:** run `task vapid:generate -- --subject mailto:<ops address>` and set the three `VAPID_*` values in Coolify's env (generating a new set later is a rotation that invalidates every subscription); create two Uptime Kuma push monitors and set `HEALTHCHECK_PUSH_AIRS_TODAY_URL` and `HEALTHCHECK_PUSH_EVENTS_URL` to their push URLs; then add the Coolify scheduled tasks `python -m tvbf.jobs.push_airs_today` **daily at 13:00 UTC** and `python -m tvbf.jobs.push_events` **daily at 17:00 UTC**, both after the catalog delta and the airdate reconcile they read from — nothing enforces that order, and getting it wrong delivers a day late. Each task exits 1 without VAPID keys, and otherwise only when every send failed.
 
 Invite codes never expire — they consume on first use. Revoke an unredeemed invite by deleting its row.
+
+## Errors and observability
+
+Two signals, one build identity (the ops repo's instrumentation contract):
+
+- **Errors** go to Bugsink through the Sentry SDK (`SENTRY_DSN` holds the Bugsink DSN; unset disables it). Bugsink alerts Discord `#alerts` on a new issue, a regression or an unmute.
+- **Traces, logs and metrics** go to SigNoz through `opentelemetry-instrument` (the Dockerfile's `CMD`).
+
+Sentry's `release` and `environment` are read back from OTel's own resource attributes in `src/tvbf/telemetry.py`, so the two always agree: `release == service.version == SOURCE_COMMIT` and `environment == deployment.environment`. When the resource attributes carry a value it is used verbatim, `unknown` included, so Sentry never reports a build SigNoz did not. Without them (local dev) the fallbacks are `SOURCE_COMMIT`, then `GIT_SHA`, then `unknown` for the release, and `ENVIRONMENT`, then `development` for the environment. Startup logs the resolved pair beside what OTel was given:
+
+```
+INFO     tvbf.telemetry: telemetry: release=<sha> environment=production otel service.version=<sha> deployment.environment=production sentry=on
+```
+
+The deployment must set:
+
+| Var | Where | Value |
+|---|---|---|
+| `OTEL_RESOURCE_ATTRIBUTES` | `docker-compose.prod.yml` | `service.name=tvbf-backend,deployment.environment=production,service.version=$SOURCE_COMMIT` |
+| `SOURCE_COMMIT` | Coolify ("Include SOURCE_COMMIT in build" on) | the deployed git SHA — without the setting it is the literal `unknown` |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Coolify | the SigNoz collector on the internal Docker network; never committed |
+| `SENTRY_DSN` | Coolify | the Bugsink project DSN |
+
+Startup warns when `OTEL_EXPORTER_OTLP_ENDPOINT` is set but `OTEL_RESOURCE_ATTRIBUTES` is missing `service.version` or `deployment.environment`.
+
+**Test error.** `POST /admin/debug/raise-test-error` (bearer `ADMIN_TOKEN`; `task debug:raise-test-error` locally) is the `tvbf.debug.raise-test-error` trigger: it raises `TelemetryTestError`, answers 500, and should appear in Bugsink as its own issue and then in Discord `#alerts`. Against production:
+
+```sh
+curl -s -X POST https://<api host>/admin/debug/raise-test-error -H "Authorization: Bearer $ADMIN_TOKEN"
+```
 
 ## Database
 
@@ -167,10 +198,10 @@ All config flows through environment variables (read by `src/tvbf/config.py`). F
 | `COOKIE_DOMAIN` | `.tvbf.localhost` | session-cookie scope |
 | `TMDB_READ_ACCESS_TOKEN` | unset | TMDB API Read Access Token (the long JWT), sent as `Authorization: Bearer` |
 | `TMDB_RATE_LIMIT_REQUESTS` / `TMDB_RATE_LIMIT_WINDOW_SECONDS` | `20` / `1` | token-bucket rate limit |
-| `HEALTHCHECK_CATALOG_URL` | unset | healthchecks.io deadman for the scheduled TMDB delta |
+| `HEALTHCHECK_CATALOG_URL` | unset | Uptime Kuma push URL, the deadman for the scheduled TMDB delta |
 | `VAPID_PRIVATE_KEY` / `VAPID_PUBLIC_KEY` / `VAPID_SUBJECT` | unset | Web Push signing keys (base64url raw) and the `mailto:` or app URL push services can reach; `task vapid:generate` prints a fresh set. All three or none — push endpoints answer 503 and the delivery job refuses to start otherwise. Regenerating is a rotation that invalidates every existing subscription. |
-| `HEALTHCHECK_PUSH_AIRS_TODAY_URL` | unset | healthchecks.io deadman for the scheduled airs-today push task |
-| `HEALTHCHECK_PUSH_EVENTS_URL` | unset | healthchecks.io deadman for the scheduled show-change push task |
+| `HEALTHCHECK_PUSH_AIRS_TODAY_URL` | unset | Uptime Kuma push URL, the deadman for the scheduled airs-today push task |
+| `HEALTHCHECK_PUSH_EVENTS_URL` | unset | Uptime Kuma push URL, the deadman for the scheduled show-change push task |
 | `PUSH_AIRS_TODAY_DAILY_CAP` | `0` | airs-today pushes per user per run before the rest collapse into one summary; `0` is no cap |
 | `PUSH_EVENTS_DAILY_CAP` | `0` | show-change pushes per user per run before the rest collapse into one summary; `0` is no cap |
 | `PUSH_EVENT_WINDOW_HOURS` | `48` | how long a detected show change stays deliverable |
