@@ -208,9 +208,9 @@ def scheduled_main(
     guard query, the run insert, the status read), and none of those leave a
     `failed` row to speak for them.
 
-    `job` is the module's own name (`catalog_update`), the `job` tag on its
-    error-tracker events. It is spelled out rather than read off `__name__`,
-    which is `__main__` under `python -m`.
+    `job` is the module's own name (`catalog_update`), the `pipeline_mode` tag
+    on its error-tracker events. It is spelled out rather than read off
+    `__name__`, which is `__main__` under `python -m`.
     """
     settings = get_settings()
     configure_logging(settings.log_level)

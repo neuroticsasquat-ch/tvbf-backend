@@ -1,8 +1,8 @@
 """Scheduled jobs report their own failure to the error tracker, and nothing else (NEU-1622).
 
 The SDK is real and only its transport is fake, so these pin what Bugsink would
-actually receive: the integrations `init_sentry(job=…)` chooses, the `job` tag,
-and the flush before `main()` returns.
+actually receive: the integrations `init_sentry(job=…)` chooses, the
+`pipeline_mode` tag, and the flush before `main()` returns.
 """
 
 import logging
@@ -59,7 +59,7 @@ def transport(monkeypatch):
     get_settings.cache_clear()
     yield captured
     get_settings.cache_clear()
-    sentry_sdk.get_isolation_scope().remove_tag("job")
+    sentry_sdk.get_isolation_scope().remove_tag("pipeline_mode")
     # Not `init()` again: that reads `SENTRY_DSN` back out of the environment.
     sentry_sdk.get_client().close()
     sentry_sdk.get_global_scope().set_client(None)
@@ -72,7 +72,9 @@ def test_a_job_crash_is_one_event_tagged_with_the_job_and_the_build(transport):
     [event] = transport.events
     [exc] = event["exception"]["values"]
     assert exc["type"] == "JobTestError"
-    assert event["tags"]["job"] == "raise_test_error"
+    assert event["tags"]["pipeline_mode"] == "raise_test_error"
+    # The tag every backend's scheduled jobs use (NEU-1634), and only that one.
+    assert "job" not in event["tags"]
     assert event["release"] == SHA
     assert event["environment"] == "production"
 
@@ -131,4 +133,4 @@ async def test_a_failed_run_without_an_exception_groups_on_its_stable_text(trans
     assert event["message"] == "catalog delta run ended failed"
     assert event["level"] == "error"
     assert event["extra"]["detail"] == "catalog delta run 42 ended failed"
-    assert event["tags"]["job"] == "catalog_update"
+    assert event["tags"]["pipeline_mode"] == "catalog_update"
