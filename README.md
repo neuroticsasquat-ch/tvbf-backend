@@ -176,6 +176,8 @@ Startup warns when `OTEL_EXPORTER_OTLP_ENDPOINT` is set but `OTEL_RESOURCE_ATTRI
 curl -s -X POST https://<api host>/admin/debug/raise-test-error -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
 
+**Scheduled jobs.** The Coolify-scheduled jobs (catalog delta, airdate reconcile, trending snapshot, the two push tasks, weekly recommendations) start the same SDK with the same `release` and `environment`, and report **one event per crashed run**, sent from the same place as its Kuma `status=down`. Each event carries the tag `job=<module name>` (`job=catalog_update`). A crash that escapes the job is the exception and its traceback; a run row finalized `failed` (the workers catch their own crash and record it there) is an error message with a stable text (`catalog delta run ended failed`), the run id in `extra.detail`, so repeat failures land on one issue — the traceback itself is in the job's log, not the event. Every other down only pings: a `cancelled` row, a missing setting, the weekly pass's per-user failures. **Log records never become events** in a job (`LoggingIntegration(event_level=None)`): jobs `log.exception` once per failed item and carry on, and turning those into events would flood `#alerts` on one bad upstream day. They ride along as breadcrumbs instead. The one-shot backfills and migration passes do not report. `python -m tvbf.jobs.raise_test_error` (`task debug:job-test-error` locally) is the jobs' test error: it raises `JobTestError` through the shared runner, exits 1, and should appear in Bugsink tagged `job=raise_test_error`. Run it as a one-off Coolify task to prove the path in production.
+
 ## Database
 
 One Postgres database, three schemas that matter here:

@@ -21,6 +21,7 @@ from urllib.parse import unquote
 
 import sentry_sdk
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 log = logging.getLogger(__name__)
@@ -72,9 +73,17 @@ def resolve_telemetry(env: Mapping[str, str]) -> Telemetry:
     )
 
 
-def init_sentry(env: Mapping[str, str] = os.environ) -> Telemetry:
+def init_sentry(env: Mapping[str, str] = os.environ, *, job: str | None = None) -> Telemetry:
     """Initialise the Sentry SDK (pointed at Bugsink) when `SENTRY_DSN` is set,
-    and log the resolved release and environment either way."""
+    and log the resolved release and environment either way.
+
+    `job` is a scheduled job's name (NEU-1622): it tags every event, and it
+    stops log records becoming events. Jobs `log.exception` once per failed
+    item and carry on, so the API's default of an event per error log would
+    turn one bad upstream day into dozens of `#alerts` posts; a job reports
+    only its own failure, explicitly (`tvbf.jobs.scheduled.report_down`).
+    Records still ride along on that event as breadcrumbs.
+    """
     telemetry = resolve_telemetry(env)
     dsn = env.get("SENTRY_DSN")
     log.info(
@@ -98,11 +107,13 @@ def init_sentry(env: Mapping[str, str] = os.environ) -> Telemetry:
         sentry_sdk.init(
             dsn=dsn,
             integrations=[
-                FastApiIntegration(),
+                FastApiIntegration() if job is None else LoggingIntegration(event_level=None),
                 SqlalchemyIntegration(),
             ],
             traces_sample_rate=0.1,  # 10% of requests get perf traces
             environment=telemetry.environment,
             release=telemetry.release,
         )
+        if job is not None:
+            sentry_sdk.set_tag("job", job)
     return telemetry
