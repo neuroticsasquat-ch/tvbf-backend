@@ -51,3 +51,8 @@ updates:
         update-types:
           - minor
           - patch
+    ignore:
+      # Held below 2.1 until opentelemetry-instrumentation-sqlalchemy supports it (see
+      # pyproject.toml); drop with the cap.
+      - dependency-name: sqlalchemy
+        versions: [">=2.1"]
