@@ -1,8 +1,13 @@
 """Release and environment resolution: the instrumentation contract (NEU-1589)."""
 
 import logging
+from importlib.metadata import version
 
 import pytest
+from opentelemetry.instrumentation.sqlalchemy import (
+    package as sqlalchemy_instrumentation,
+)
+from packaging.requirements import Requirement
 
 from tvbf import telemetry
 from tvbf.telemetry import init_sentry, parse_resource_attributes, resolve_telemetry
@@ -113,3 +118,29 @@ def test_otels_unknown_service_version_is_kept_rather_than_bettered():
     # Sentry reporting a SHA SigNoz never saw would break the contract's equality.
     t = resolve_telemetry({"OTEL_RESOURCE_ATTRIBUTES": "service.version=unknown", "GIT_SHA": SHA})
     assert t.release == t.otel_service_version == "unknown"
+
+
+# --- SQL spans need a SQLAlchemy the instrumentation supports ---------------------
+
+
+def _sqlalchemy_instrumentation_requirement() -> Requirement:
+    [requirement] = [Requirement(spec) for spec in sqlalchemy_instrumentation._instruments]
+    return requirement
+
+
+def test_the_installed_sqlalchemy_is_one_the_instrumentation_supports():
+    """The SQLAlchemy instrumentation skips itself, silently, on a version outside its
+    range, and every SQL span disappears from SigNoz with no error anywhere."""
+    requirement = _sqlalchemy_instrumentation_requirement()
+    assert requirement.specifier.contains(version("sqlalchemy"))
+
+
+@pytest.mark.xfail(
+    strict=True,
+    reason="opentelemetry-instrumentation-sqlalchemy 0.66b1 supports only sqlalchemy<2.1, "
+    "so pyproject.toml caps sqlalchemy below 2.1. Upstream contrib #5120 (merged "
+    "2026-10-14) lifts the cap to <2.2; once a release with it lands this passes, and CI "
+    "fails until the sqlalchemy cap, its Dependabot ignore and this test are removed.",
+)
+def test_the_sqlalchemy_instrumentation_supports_sqlalchemy_2_1():
+    assert _sqlalchemy_instrumentation_requirement().specifier.contains("2.1.0")
