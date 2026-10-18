@@ -23,6 +23,7 @@ from tvbf.app.repos import session_repo, user_repo
 from tvbf.app.services import auth_token_service
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_password_reset_email
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -75,8 +76,9 @@ async def request_reset(
     )
     try:
         await send_email(to=user.email, subject=subject, html=html_body, text=text_body)
-    except EmailSendError:
+    except EmailSendError as exc:
         log.warning("password_reset.send_failed user_id=%s", user.id, exc_info=True)
+        record_handled_exception(exc)
 
 
 async def reset(db: AsyncSession, *, raw_token: str, new_password: str) -> User:

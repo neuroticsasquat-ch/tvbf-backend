@@ -33,6 +33,7 @@ from tvbf.app.repos import user_repo
 from tvbf.app.services import auth_token_service
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_email_change_email
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -86,8 +87,9 @@ async def request_email_change(
     )
     try:
         await send_email(to=new_email, subject=subject, html=html_body, text=text_body)
-    except EmailSendError:
+    except EmailSendError as exc:
         log.warning("email_change.send_failed user_id=%s", user.id, exc_info=True)
+        record_handled_exception(exc)
 
 
 async def confirm_email_change(db: AsyncSession, *, raw_token: str) -> User:

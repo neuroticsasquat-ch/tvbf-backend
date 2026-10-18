@@ -141,7 +141,7 @@ from tvbf.recommendations.prompt import (
     parse_suggestions,
     quoted_candidate,
 )
-from tvbf.telemetry import init_sentry
+from tvbf.telemetry import init_sentry, record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -469,6 +469,7 @@ async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePaylo
         first = await _attempt(client, db, prompt, payload)
     except LLMResponseInvalid as exc:
         log.warning("the model's answer could not be believed (%s); asking once more", exc)
+        record_handled_exception(exc)
         return await _attempt(client, db, prompt, payload)
 
     if first.believable:
@@ -481,6 +482,7 @@ async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePaylo
         # Every `LLMError`, not just the invalid ones: the first answer is
         # already usable, so nothing the second call does may take it away.
         log.warning("the second answer did not arrive (%s); keeping the first", exc)
+        record_handled_exception(exc)
         return first
     if len(second.rows) > len(first.rows):
         return second
@@ -828,12 +830,14 @@ async def run_pass(settings: Settings, *, user_id: UUID | None = None) -> PassRe
                 # a `SQLAlchemyError` while resolving one account must not cost
                 # the other four their week (§10.1).
                 log.exception("user %s failed: %s", candidate, exc)
+                record_handled_exception(exc)
                 result.failed += 1
                 consecutive_failures += 1
                 try:
                     await _record_failure(candidate, model)
-                except Exception:
+                except Exception as record_exc:
                     log.exception("could not record the failed set for user %s", candidate)
+                    record_handled_exception(record_exc)
                 if consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
                     log.error(
                         "%d users failed in a row; abandoning the rest of the pass",
@@ -1028,6 +1032,7 @@ async def run(args: argparse.Namespace) -> int:
         # nothing in the database records it. Same reasoning as
         # `jobs/scheduled.scheduled_main`'s handler, and the same answer.
         log.exception("weekly recommendations pass crashed")
+        record_handled_exception(exc)
         await report_down(healthcheck, failure_message(exc), exc=exc)
         return 1
 

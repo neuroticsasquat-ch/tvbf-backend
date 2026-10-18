@@ -95,6 +95,7 @@ from tvbf.catalog.offsets import project_offsets, replace_season_offsets
 from tvbf.catalog.runs import finalize_run, record_progress
 from tvbf.config import Settings
 from tvbf.db import SessionLocal
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -573,8 +574,9 @@ async def run_airdate_reconcile(
                 # population stays in every night's work list forever.
                 await mark_reconciled(s, show.show_id)
                 await s.commit()
-        except Exception:
+        except Exception as exc:
             log.exception("show %d (%s): airdate reconciliation failed", show.show_id, show.name)
+            record_handled_exception(exc)
             result.shows_failed += 1
             consecutive_failures += 1
             # Recorded at the failure site, one at a time, exactly as
@@ -655,6 +657,7 @@ async def run_airdate_reconcile_job(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("airdate reconciliation crashed")
+        record_handled_exception(e)
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()

@@ -37,6 +37,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.human_queue import (
     QueueError,
@@ -146,8 +147,9 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(settings.log_level)
     try:
         return asyncio.run(run(args))
-    except Exception:
+    except Exception as exc:
         log.exception("human matching queue command failed")
+        record_handled_exception(exc)
         return 1
 
 

@@ -4,13 +4,23 @@ import logging
 from importlib.metadata import version
 
 import pytest
+from opentelemetry import trace
 from opentelemetry.instrumentation.sqlalchemy import (
     package as sqlalchemy_instrumentation,
 )
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+from opentelemetry.trace import StatusCode
 from packaging.requirements import Requirement
 
 from tvbf import telemetry
-from tvbf.telemetry import init_sentry, parse_resource_attributes, resolve_telemetry
+from tvbf.telemetry import (
+    init_sentry,
+    parse_resource_attributes,
+    record_handled_exception,
+    resolve_telemetry,
+)
 
 SHA = "0123456789abcdef0123456789abcdef01234567"
 PROD_ATTRS = f"service.name=tvbf-backend,deployment.environment=production,service.version={SHA}"
@@ -144,3 +154,44 @@ def test_the_installed_sqlalchemy_is_one_the_instrumentation_supports():
 )
 def test_the_sqlalchemy_instrumentation_supports_sqlalchemy_2_1():
     assert _sqlalchemy_instrumentation_requirement().specifier.contains("2.1.0")
+
+
+# --- handled errors on the current span (NEU-1626) ----------------------------
+
+
+def _tracer_and_exporter() -> tuple[trace.Tracer, InMemorySpanExporter]:
+    # A private provider rather than the global one, so the test leaves no tracer behind.
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    return provider.get_tracer(__name__), exporter
+
+
+def test_record_handled_exception_records_on_the_current_span_and_fails_it():
+    tracer, exporter = _tracer_and_exporter()
+    with tracer.start_as_current_span("catalog delta"):
+        record_handled_exception(ValueError("boom"))
+    [span] = exporter.get_finished_spans()
+    [event] = span.events
+    assert event.name == "exception"
+    assert event.attributes is not None
+    assert event.attributes["exception.type"] == "ValueError"
+    assert event.attributes["exception.message"] == "boom"
+    assert span.status.status_code is StatusCode.ERROR
+    assert span.status.description == "ValueError: boom"
+
+
+def test_record_handled_exception_is_a_no_op_without_a_recording_span():
+    record_handled_exception(ValueError("boom"))  # no current span: must not raise
+
+
+def test_record_handled_exception_leaves_an_ended_span_alone():
+    # An `/admin/catalog-ingest` request span closes before the task it spawned does.
+    tracer, exporter = _tracer_and_exporter()
+    span = tracer.start_span("request")
+    span.end()
+    with trace.use_span(span, end_on_exit=False):
+        record_handled_exception(ValueError("boom"))
+    [finished] = exporter.get_finished_spans()
+    assert finished.events == ()
+    assert finished.status.status_code is StatusCode.UNSET

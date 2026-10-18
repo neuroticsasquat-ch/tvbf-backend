@@ -14,6 +14,7 @@ from tvbf.app.services import feedback_service
 from tvbf.config import Settings, get_settings
 from tvbf.deps import get_current_user, get_linear_client, require_csrf
 from tvbf.integrations.linear import LinearClient, LinearError
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -48,5 +49,6 @@ async def submit_feedback_route(
         )
     except LinearError as exc:
         log.exception("linear feedback submission failed user_id=%s", user.id)
+        record_handled_exception(exc)
         raise HTTPException(status_code=502, detail="Could not submit feedback.") from exc
     return Response(status_code=204)

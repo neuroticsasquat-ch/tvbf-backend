@@ -41,6 +41,7 @@ from tvbf.config import Settings
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_report_notification
 from tvbf.integrations.linear import LinearClient, LinearError
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -143,13 +144,14 @@ async def _notify(
                 description=_description(reporter=reporter, reported=reported, reason=reason),
                 label_ids=label_ids,
             )
-        except LinearError:
+        except LinearError as exc:
             log.error(
                 "report.linear_issue_failed report_id=%s reported_user_id=%s",
                 report_id,
                 reported.id,
                 exc_info=True,
             )
+            record_handled_exception(exc)
         else:
             issue_url = issue["url"]
     else:
@@ -180,10 +182,11 @@ async def _notify(
             html=html_body,
             text=text_body,
         )
-    except EmailSendError:
+    except EmailSendError as exc:
         log.error(
             "report.notification_send_failed report_id=%s reported_user_id=%s",
             report_id,
             reported.id,
             exc_info=True,
         )
+        record_handled_exception(exc)

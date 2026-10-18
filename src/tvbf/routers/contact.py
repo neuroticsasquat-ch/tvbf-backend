@@ -26,6 +26,7 @@ from tvbf.deps import get_session
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_contact_notification
 from tvbf.integrations import turnstile
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -77,6 +78,7 @@ async def submit_contact(
             ) from err
         except turnstile.TurnstileUnavailable as err:
             log.warning("turnstile verification unavailable", exc_info=err)
+            record_handled_exception(err)
             raise HTTPException(
                 status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="captcha_unavailable"
             ) from err
@@ -94,12 +96,13 @@ async def submit_contact(
                 text=text,
                 reply_to=payload.email,
             )
-        except EmailSendError:
+        except EmailSendError as exc:
             log.warning(
                 "contact notification send failed name=%s email=%s",
                 payload.name,
                 payload.email,
                 exc_info=True,
             )
+            record_handled_exception(exc)
 
     return Response(status_code=status.HTTP_204_NO_CONTENT)

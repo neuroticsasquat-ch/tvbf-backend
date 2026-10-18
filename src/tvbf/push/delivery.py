@@ -46,6 +46,7 @@ from tvbf.push.candidates import (
     group_by_user,
 )
 from tvbf.push.payloads import build_payload
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -276,6 +277,7 @@ async def run_push_delivery_job(task: DeliveryTask, run_id: UUID, settings: Sett
         counts = await run_push_delivery(task, run_id, settings, now=datetime.now(UTC))
     except Exception as e:
         log.exception("%s crashed", task.name)
+        record_handled_exception(e)
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()

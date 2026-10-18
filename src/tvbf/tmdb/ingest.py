@@ -99,6 +99,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from tvbf.catalog import models as m
 from tvbf.catalog.runs import finalize_run, get_run_kind, record_progress, warn_if_all_gone
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.api_payloads import TMDBSeasonDetail, TMDBSeries
 from tvbf.tmdb.change_events import detect_transitions, record_transitions, snapshot_tracked_show
 from tvbf.tmdb.client import (
@@ -326,6 +327,7 @@ async def mirror_series(
                 log.info("series %d is gone upstream — skipping", series_id)
             else:
                 consecutive_failures += 1
+                record_handled_exception(exc)
                 if isinstance(exc, httpx.HTTPStatusError):
                     log.warning("skipping series %d after http error: %s", series_id, exc)
                 else:

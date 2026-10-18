@@ -291,7 +291,7 @@ src/tvbf/
   rate_budget.py       # per-upstream token buckets in Postgres + get_rate_limiter (ADR-0006)
   sql_fold.py          # the one accent/punctuation fold, evaluated in Postgres: folded() + folded_equal()
   client_ip.py         # the one client-address resolution: right-most X-Forwarded-For entry at N trusted hops, validated as an IP (NEU-1160)
-  telemetry.py         # Sentry init + the one release/environment resolution, read back from OTEL_RESOURCE_ATTRIBUTES so Bugsink and SigNoz name the same build (NEU-1589)
+  telemetry.py         # Sentry init + the one release/environment resolution, read back from OTEL_RESOURCE_ATTRIBUTES so Bugsink and SigNoz name the same build (NEU-1589); `record_handled_exception`, the contract's `span.record_exception()` for errors caught and carried past (NEU-1626)
   routers/
     health.py          # /healthz, /readyz
     auth.py            # /signup, /login, /logout, /password-change + NEU-1160's two gates: the IP throttle on the first two, Turnstile on signup

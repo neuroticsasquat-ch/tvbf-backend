@@ -20,6 +20,8 @@ from dataclasses import dataclass
 from urllib.parse import unquote
 
 import sentry_sdk
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from sentry_sdk.integrations.fastapi import FastApiIntegration
 from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
@@ -118,3 +120,26 @@ def init_sentry(env: Mapping[str, str] = os.environ, *, job: str | None = None) 
         if job is not None:
             sentry_sdk.set_tag("pipeline_mode", job)
     return telemetry
+
+
+def record_handled_exception(exc: BaseException) -> None:
+    """Record an exception we caught and carried on past on the current OTel
+    span, and mark the span failed: the contract's `span.record_exception()`
+    for handled errors (NEU-1626).
+
+    A handled error never reaches the instrumentation's own exception hooks, so
+    without this the trace of a request that swallowed a failed send, or of a
+    job that skipped a show, reads as a clean success in SigNoz. Call it where
+    the code catches and logs an exception instead of letting it escape: to carry
+    on, to fall back, to exit with a code, or to answer with an `HTTPException`,
+    which Starlette turns into a response inside the app so the instrumentation
+    sees only the status code. A site that re-raises the exception itself needs
+    nothing, because the instrumentation records what escapes. A no-op when nothing is
+    recording: no `opentelemetry-instrument` wrapper (tests, the scheduled jobs'
+    `python -m`), or a span that has already ended (an `/admin/catalog-ingest`
+    request span, which closes before the task it spawned finishes).
+    """
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, f"{type(exc).__name__}: {exc}"))

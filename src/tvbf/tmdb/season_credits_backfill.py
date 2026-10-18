@@ -50,6 +50,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import TMDBClient, is_gone_upstream
 from tvbf.tmdb.ingest import fetch_series_with_seasons
 from tvbf.tmdb.upsert import mark_season_credits_synced, write_season_credits
@@ -224,6 +225,7 @@ async def backfill_season_credits(
                     )
                     continue
                 consecutive_failures += 1
+                record_handled_exception(exc)
                 if isinstance(exc, MissingSeasonCredits):
                     seasons_without_credits += exc.seasons
                     log.warning("show %d (%s): %s", show.id, show.name, exc)
