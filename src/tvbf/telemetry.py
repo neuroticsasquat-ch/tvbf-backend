@@ -135,8 +135,8 @@ def record_handled_exception(exc: BaseException) -> None:
     which Starlette turns into a response inside the app so the instrumentation
     sees only the status code. A site that re-raises the exception itself needs
     nothing, because the instrumentation records what escapes. A no-op when nothing is
-    recording: no `opentelemetry-instrument` wrapper (tests, the scheduled jobs'
-    `python -m`), or a span that has already ended (an `/admin/catalog-ingest`
+    recording: no `opentelemetry-instrument` wrapper (tests, or a job run by
+    hand as a bare `python -m`), or a span that has already ended (an `/admin/catalog-ingest`
     request span, which closes before the task it spawned finishes).
     """
     span = trace.get_current_span()
