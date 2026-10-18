@@ -23,6 +23,7 @@ from tvbf.config import Settings, Throttle, get_settings
 from tvbf.cookies import clear_auth_cookies, set_auth_cookies
 from tvbf.deps import get_current_user, get_session, require_csrf
 from tvbf.integrations import turnstile
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,7 @@ async def _verify_turnstile(token: str | None, *, ip: str | None, settings: Sett
         ) from err
     except turnstile.TurnstileUnavailable as err:
         log.warning("turnstile verification unavailable", exc_info=err)
+        record_handled_exception(err)
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="captcha_unavailable"
         ) from err

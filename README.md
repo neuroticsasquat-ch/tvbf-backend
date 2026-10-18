@@ -170,6 +170,8 @@ The deployment must set:
 
 Startup warns when `OTEL_EXPORTER_OTLP_ENDPOINT` is set but `OTEL_RESOURCE_ATTRIBUTES` is missing `service.version` or `deployment.environment`.
 
+**Handled errors.** An exception that escapes a request is recorded on its span by the instrumentation. One the code catches, logs and carries on past (a failed notification email, a show a job skipped, a best-effort pass inside the catalog delta) never reaches it, so the trace would read as a clean success. Neither does one translated into an `HTTPException`, because Starlette turns that into a response inside the app, so the span shows only the 5xx and loses the cause. Those sites call `record_handled_exception(exc)` from `src/tvbf/telemetry.py`, which records the exception as an `exception` event on the current span and sets the span status to error. It does nothing when no span is recording: under tests, in the scheduled jobs (which run as plain `python -m`, without `opentelemetry-instrument`), and in a background task whose request span has already closed. A site that re-raises the exception itself needs no call. Handled errors are **not** sent to Bugsink: handled means "not an incident".
+
 **Test error.** `POST /admin/debug/raise-test-error` (bearer `ADMIN_TOKEN`; `task debug:raise-test-error` locally) is the `tvbf.debug.raise-test-error` trigger: it raises `TelemetryTestError`, answers 500, and should appear in Bugsink as its own issue and then in Discord `#alerts`. Against production:
 
 ```sh

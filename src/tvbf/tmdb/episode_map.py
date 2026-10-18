@@ -89,6 +89,7 @@ import httpx
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.api_payloads import TMDBSeasonDetail
 from tvbf.tmdb.client import TMDBClient, is_gone_upstream
 from tvbf.tmdb.ingest import fetch_series_with_seasons
@@ -424,6 +425,7 @@ async def map_episode_ids(
                     )
                     continue
                 consecutive_failures += 1
+                record_handled_exception(exc)
                 if isinstance(exc, httpx.HTTPStatusError):
                     # Retried to exhaustion by the client already, so this is a
                     # persistent upstream failure rather than a bug here — the

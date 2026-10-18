@@ -20,6 +20,7 @@ from tvbf.config import Settings, get_settings
 from tvbf.deps import get_session, require_admin_user, require_csrf
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_invite_email
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -57,8 +58,9 @@ async def create_invite_and_email(
     )
     try:
         await send_email(to=email, subject=subject, html=html_body, text=text_body)
-    except EmailSendError:
+    except EmailSendError as exc:
         log.warning("admin_invite.send_failed code=%s", invite.code, exc_info=True)
+        record_handled_exception(exc)
 
     return InviteOut(
         code=invite.code,

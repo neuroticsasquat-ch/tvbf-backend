@@ -53,7 +53,7 @@ from tvbf.catalog.runs import create_run, find_live_run
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
-from tvbf.telemetry import init_sentry
+from tvbf.telemetry import init_sentry, record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -80,8 +80,9 @@ async def _push(url: str | None, params: dict[str, str]) -> None:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.get(httpx.URL(url).copy_with(params=params))
-    except Exception:
+    except Exception as exc:
         log.warning("deadman ping to %s failed", url, exc_info=True)
+        record_handled_exception(exc)
 
 
 async def ping_up(url: str | None, *, duration_ms: int) -> None:
@@ -219,6 +220,7 @@ def scheduled_main(
         ok = asyncio.run(runner(settings))
     except Exception as exc:
         log.exception("%s job crashed", name)
+        record_handled_exception(exc)
         asyncio.run(report_down(healthcheck_url(settings), failure_message(exc), exc=exc))
         return 1
     finally:

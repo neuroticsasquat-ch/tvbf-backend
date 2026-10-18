@@ -16,6 +16,7 @@ from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.deps import get_session, require_admin
 from tvbf.jobs.weekly_recommendations import run_pass_if_free
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import run_catalog_ingest
 from tvbf.tmdb.update import run_catalog_update_job
@@ -96,6 +97,7 @@ async def _background_catalog_ingest(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("background catalog ingest crashed")
+        record_handled_exception(e)
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()
@@ -200,8 +202,9 @@ async def _background_weekly_recommendations(
     log.info("admin recommendations run %s starting over %s", run_id, scope)
     try:
         result = await run_pass_if_free(settings, user_id=user_id)
-    except Exception:
+    except Exception as exc:
         log.exception("admin recommendations run %s crashed", run_id)
+        record_handled_exception(exc)
         return
     if result is None:
         log.info("admin recommendations run %s: a pass was already running", run_id)

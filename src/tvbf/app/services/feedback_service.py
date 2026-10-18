@@ -21,6 +21,7 @@ from tvbf.config import Settings
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_feedback_notification
 from tvbf.integrations.linear import LinearClient
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -78,10 +79,11 @@ async def submit_feedback(
                 html=notify_html,
                 text=notify_text,
             )
-        except EmailSendError:
+        except EmailSendError as exc:
             log.warning(
                 "feedback.notification_send_failed user_id=%s issue=%s",
                 user.id,
                 issue["id"],
                 exc_info=True,
             )
+            record_handled_exception(exc)

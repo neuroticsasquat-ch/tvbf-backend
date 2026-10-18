@@ -58,6 +58,7 @@ from tvbf.catalog import models as m
 from tvbf.catalog.runs import finalize_run, record_progress
 from tvbf.config import Settings
 from tvbf.db import SessionLocal
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.ingest import SessionFactory, _owned_session
 
@@ -241,6 +242,7 @@ async def run_trending_snapshot_job(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("trending snapshot crashed")
+        record_handled_exception(e)
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()

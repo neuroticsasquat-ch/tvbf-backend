@@ -99,6 +99,7 @@ from tvbf.catalog.runs import (
 )
 from tvbf.config import Settings
 from tvbf.db import SessionLocal
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import (
     CHANGES_MAX_PAGE,
     CHANGES_MAX_WINDOW_DAYS,
@@ -278,8 +279,9 @@ async def _tombstone(session_factory: SessionFactory, entries: Sequence[ExportEn
             result.tombstoned,
             result.resurrected,
         )
-    except Exception:
+    except Exception as exc:
         log.exception("catalog tombstone pass failed — the delta itself is unaffected")
+        record_handled_exception(exc)
 
 
 async def _refresh_popularity(
@@ -289,8 +291,9 @@ async def _refresh_popularity(
         async with _owned_session(session_factory) as s:
             await refresh_popularity(s, entries=entries)
             await s.commit()
-    except Exception:
+    except Exception as exc:
         log.exception("catalog popularity refresh failed — the delta itself is unaffected")
+        record_handled_exception(exc)
 
 
 async def roll_forward_last_aired(session_factory: SessionFactory, *, today: date) -> None:
@@ -303,8 +306,9 @@ async def roll_forward_last_aired(session_factory: SessionFactory, *, today: dat
             changed = await recompute_last_aired(s, today=today)
             await s.commit()
         log.info("catalog last-aired roll-forward: %d show(s) moved", changed)
-    except Exception:
+    except Exception as exc:
         log.exception("catalog last-aired roll-forward failed — the delta itself is unaffected")
+        record_handled_exception(exc)
 
 
 async def reconcile_against_export(
@@ -330,8 +334,9 @@ async def reconcile_against_export(
         entries = (
             list(export_entries) if export_entries is not None else await fetch_series_export()
         )
-    except Exception:
+    except Exception as exc:
         log.exception("id export download failed — the delta itself is unaffected")
+        record_handled_exception(exc)
         return
     await _refresh_popularity(session_factory, entries)
     await _tombstone(session_factory, entries)
@@ -422,6 +427,7 @@ async def run_catalog_update_job(run_id: UUID, settings: Settings) -> None:
             )
     except Exception as e:
         log.exception("catalog delta crashed")
+        record_handled_exception(e)
         async with SessionLocal() as s:
             await finalize_run(s, run_id, status="failed", error=str(e))
             await s.commit()
