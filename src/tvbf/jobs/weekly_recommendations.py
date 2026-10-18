@@ -113,7 +113,14 @@ from tvbf.app.models import (
 from tvbf.app.repos import recommendation_repo, user_repo
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal, engine
-from tvbf.jobs.scheduled import elapsed_ms, failure_message, ping_down, ping_up, report_down
+from tvbf.jobs.scheduled import (
+    elapsed_ms,
+    failure_message,
+    job_span,
+    ping_down,
+    ping_up,
+    report_down,
+)
 from tvbf.llm.client import OpenAICompatClient
 from tvbf.llm.registry import DEEPINFRA
 from tvbf.llm.types import (
@@ -1094,11 +1101,12 @@ def main(argv: list[str] | None = None) -> int:
     settings = get_settings()
     configure_logging(settings.log_level)
     init_sentry(job="weekly_recommendations")
-    try:
-        return asyncio.run(run(args))
-    finally:
-        # As `jobs/scheduled.scheduled_main`: the process exits straight after.
-        sentry_sdk.flush()
+    with job_span("weekly_recommendations"):
+        try:
+            return asyncio.run(run(args))
+        finally:
+            # As `jobs/scheduled.scheduled_main`: the process exits straight after.
+            sentry_sdk.flush()
 
 
 if __name__ == "__main__":

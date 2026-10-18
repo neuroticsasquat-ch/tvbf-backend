@@ -308,7 +308,7 @@ src/tvbf/
     friend_engagement.py  # /shows/{id}/friends, /episodes/{id}/friends/watched
     push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484); /me/push/subscriptions (NEU-1485); POST /me/push/test (NEU-1486)
   jobs/
-    scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (Uptime Kuma push semantics, NEU-1581; the weekly pass takes `ping_up`/`report_down` and the rules only — it has no run row); `report_down` makes a crashed run's `status=down` one error-tracker event too, and `scheduled_main` starts the SDK with `init_sentry(job=…)` (NEU-1622)
+    scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (Uptime Kuma push semantics, NEU-1581; the weekly pass takes `ping_up`/`report_down` and the rules only — it has no run row); `report_down` makes a crashed run's `status=down` one error-tracker event too, and `scheduled_main` starts the SDK with `init_sentry(job=…)` (NEU-1622); `job_span` makes each run one root span, `job <name>`, so SigNoz shows a run as one trace (NEU-1625)
     raise_test_error.py # `python -m tvbf.jobs.raise_test_error` — a deliberate `JobTestError` through `scheduled_main`, the runbook's proof that a job crash reaches Bugsink (NEU-1622)
     catalog_update.py  # `python -m tvbf.jobs.catalog_update` — the NEU-1035 TMDB catalog delta; exit code IS the result
     watch_archive.py   # `python -m tvbf.jobs.watch_archive` — the NEU-1029 snapshot; exit code IS the result

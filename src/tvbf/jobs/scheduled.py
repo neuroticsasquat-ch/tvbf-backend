@@ -40,12 +40,14 @@ keeps log records out of it, because a job logs per failed item and carries on.
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
 import httpx
 import sentry_sdk
+from opentelemetry import trace
 from sqlalchemy import select
 
 from tvbf.catalog import models as m
@@ -194,6 +196,22 @@ async def run_scheduled_delta(
     return True
 
 
+@contextmanager
+def job_span(job: str) -> Iterator[None]:
+    """One root span per run, named for the job (NEU-1625).
+
+    Under `opentelemetry-instrument` a job's DB and HTTP calls would otherwise
+    each be a trace of their own, so a run could not be found or timed by job
+    name in SigNoz. Current before `asyncio.run`, so every span the run starts
+    nests under it, and a handled crash's `record_handled_exception` lands on it.
+    An exception that escapes is recorded by the span itself. A no-op without the
+    wrapper, like every span here.
+    """
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span(f"job {job}", attributes={"pipeline_mode": job}):
+        yield
+
+
 def scheduled_main(
     *,
     runner: Runner,
@@ -216,14 +234,15 @@ def scheduled_main(
     settings = get_settings()
     configure_logging(settings.log_level)
     init_sentry(job=job)
-    try:
-        ok = asyncio.run(runner(settings))
-    except Exception as exc:
-        log.exception("%s job crashed", name)
-        record_handled_exception(exc)
-        asyncio.run(report_down(healthcheck_url(settings), failure_message(exc), exc=exc))
-        return 1
-    finally:
-        # The process exits straight after; an event still queued would be lost.
-        sentry_sdk.flush()
+    with job_span(job):
+        try:
+            ok = asyncio.run(runner(settings))
+        except Exception as exc:
+            log.exception("%s job crashed", name)
+            record_handled_exception(exc)
+            asyncio.run(report_down(healthcheck_url(settings), failure_message(exc), exc=exc))
+            return 1
+        finally:
+            # The process exits straight after; an event still queued would be lost.
+            sentry_sdk.flush()
     return 0 if ok else 1
