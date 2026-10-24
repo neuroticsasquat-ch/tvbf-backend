@@ -1,32 +1,42 @@
 minimum_pre_commit_version: "3.5.0"
 
+# Every hook calls a Taskfile target, and the target runs inside the dev container
+# (~/projects/tbc-localdev-infra/CONVENTIONS.md). The Taskfile is the only place the
+# toolchain is invoked, so the hooks and `task <x>` can't drift apart. The container
+# must be up (`task up`) and rebuilt after a dependency change (`task build`).
+#
+# Hooks check and never fix: run `task format` before committing.
+#
+# Exception: the test hook runs `task test:unit`, not the whole suite. The
+# integration suite needs the test databases and is too slow for every commit; CI
+# runs all of it.
 repos:
   - repo: local
     hooks:
-      - id: ruff-check
-        name: ruff check
-        entry: docker compose exec -T tvbf-backend ruff check src tests
+      - id: lint
+        name: ruff check (container)
+        entry: task lint
         language: system
         pass_filenames: false
-        files: \.py$
+        files: \.py$|^pyproject\.toml$|^uv\.lock$
 
-      - id: ruff-format
-        name: ruff format --check
-        entry: docker compose exec -T tvbf-backend ruff format --check src tests
+      - id: format
+        name: ruff format --check (container)
+        entry: task format:check
         language: system
         pass_filenames: false
-        files: \.py$
+        files: \.py$|^pyproject\.toml$|^uv\.lock$
 
-      - id: pyright
-        name: pyright
-        entry: docker compose exec -T tvbf-backend pyright src tests
+      - id: typecheck
+        name: pyright (container)
+        entry: task typecheck
         language: system
         pass_filenames: false
-        files: \.py$
+        files: \.py$|^pyproject\.toml$|^uv\.lock$
 
-      - id: pytest
-        name: pytest
-        entry: docker compose exec -T tvbf-backend pytest tests/unit
+      - id: test
+        name: pytest unit (container)
+        entry: task test:unit
         language: system
         pass_filenames: false
-        files: \.py$
+        files: \.py$|^pyproject\.toml$|^uv\.lock$

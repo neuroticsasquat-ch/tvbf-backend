@@ -78,14 +78,18 @@ so it is `repo:tvbf-backend` here — the name above must match.
 - **Git is allowed here, within limits.** Branching, staging, committing and pushing are fine to do without asking, including from subagents. Follow the release workflow below: never commit directly to `main`, cut a branch first. Destructive operations — `reset --hard`, `push --force`, branch deletion, history rewriting — still need explicit confirmation every time. (This repo previously forbade all state-changing git; that rule was lifted 2026-08-01.)
 - **Run `task format` before committing.** Pre-commit runs `ruff format --check`, which reports bad formatting but does not fix it — so an unformatted file fails the commit *after* you have already staged. Chain it: `task format && git add -A && git commit`.
 - **There is no local Python toolchain.** Every `python`/`pytest`/`alembic`/`ruff`/`pyright`/`uv` invocation runs inside the container. Deps install into the container's system Python from `uv.lock` via `uv sync --locked` with `UV_PROJECT_ENVIRONMENT=/usr/local` (no `.venv`), so the image runs exactly the set CI tests; a `pyproject.toml` edit without `uv lock` fails the image build. `task` targets wrap `docker compose exec` — use them.
-- **The shared localdev infra at `../../tbc-localdev-infra/` must be running first.** That compose project owns `tbc_postgresql_db`, Traefik (TLS termination for `*.localhost`), Mailpit, and the external `proxy` Docker network this service joins. If Postgres or Traefik isn't up, nothing here works. Start it with `task infra:up` (namespace comes from an include in `Taskfile.yml`).
+- **The shared localdev infra at `~/projects/tbc-localdev-infra/` must be running.** That compose project owns `tbc_postgresql_db`, Traefik (TLS termination for `*.localhost`), Mailpit, and the external `proxy` Docker network this service joins. If Postgres or Traefik isn't up, nothing here works. `task up` starts it first (`task infra:up` on its own; the namespace comes from an include in `Taskfile.yml`).
+- **The Taskfile, compose file and pre-commit hooks follow the shared contract in `~/projects/tbc-localdev-infra/CONVENTIONS.md`.** Read it before changing any of them.
 
 ## Commands
 
 All `task` commands run from this repo's root.
 
 Container lifecycle:
-- `task up` / `task down` / `task build` — docker compose up/down/build
+- `task up` — start the shared infra, then the container; **does not rebuild**
+- `task down` / `task restart` / `task ps` — stop, restart, status
+- `task build` — rebuild the image and recreate the container; run it after any dependency or Dockerfile change
+- `task deps:add -- <pkg>` / `task deps:add-dev -- <pkg>` / `task deps:remove -- <pkg>` / `task deps:lock` — edit `pyproject.toml` and `uv.lock` (no install), then `task build`
 - `task logs` — follow (Ctrl+C to stop, container keeps running)
 - `task shell` — bash inside the container
 - `task infra:up` / `task infra:down` — wraps the shared localdev infra Taskfile
@@ -102,6 +106,7 @@ Quality gates:
 - `task test -- tests/test_browse_routes.py::test_name` — single test or file; `{{.CLI_ARGS}}` is forwarded verbatim
 - `task lint` — `ruff check src tests`
 - `task format` — `ruff format src tests` (in place)
+- `task format:check` — `ruff format --check src tests` (what pre-commit runs)
 - `task typecheck` — `pyright src tests`
 - `task coverage` — pytest with `--cov=src/tvbf --cov-report=term-missing --cov-report=html`; HTML report lands in `htmlcov/` (volume-mounted out of the container)
 
@@ -438,7 +443,7 @@ Pass `limiter=` explicitly only to opt a caller out; `tests/conftest.py` swaps `
 
 **`app.watch_archive` was dropped in NEU-1158.** The archive (NEU-1029) was the TMDB migration's backstop: it described what a user watched in human terms — show name, premiere year, season, episode number and title, airdate — so a mapping failure stayed recoverable by hand. Its pre-drop `pg_dump` is the recovery path now. The four blocks this section had about its append-only nature, its trigger, its writer and its verification have been removed with the table.
 
-**The reconciliation harness moves its artifact on stdin/stdout, never a path.** `docs/` is not mounted into the dev container and not copied into the prod image, and a Coolify container is replaced on every deploy — so a baseline file written *inside* a container is both unreachable and short-lived. Hence `reconcile capture` writes JSON to stdout and nothing else (logs go to stderr, and the Taskfile target is `silent:` so go-task's banner cannot corrupt the artifact), and `reconcile verify` takes `--baseline -` to read stdin. That is what lets the whole flow run over `ssh 'docker exec -i ...'` against prod. Two further things are load-bearing: the joins to `{spine}.episode` are **LEFT** joins, so a watch whose episode vanished lands in a null-show bucket instead of silently leaving the count — exactly the loss the harness exists to catch; and `--spine` is interpolated into SQL, so like `rate_budget`'s `Bucket.table` it may only ever come from the module-level `SPINES` registry. One baseline spans both spines only because the migration preserves TV Maze ids as `catalog.show.id`, making `(user_id, show_id)` the same key before and after.
+**The reconciliation harness moves its artifact on stdin/stdout, never a path.** `docs/` is not copied into the prod image and a Coolify container is replaced on every deploy (the dev container does mount the whole repo since NEU-1912, but the flow is built for prod) — so a baseline file written *inside* a container is both unreachable and short-lived. Hence `reconcile capture` writes JSON to stdout and nothing else (logs go to stderr, and the Taskfile target is `silent:` so go-task's banner cannot corrupt the artifact), and `reconcile verify` takes `--baseline -` to read stdin. That is what lets the whole flow run over `ssh 'docker exec -i ...'` against prod. Two further things are load-bearing: the joins to `{spine}.episode` are **LEFT** joins, so a watch whose episode vanished lands in a null-show bucket instead of silently leaving the count — exactly the loss the harness exists to catch; and `--spine` is interpolated into SQL, so like `rate_budget`'s `Bucket.table` it may only ever come from the module-level `SPINES` registry. One baseline spans both spines only because the migration preserves TV Maze ids as `catalog.show.id`, making `(user_id, show_id)` the same key before and after.
 
 **Episodes upsert in batches of 1000.** Postgres caps bind parameters at 32,767 per query. A `catalog` episode row binds 15 params, so the unbatched `INSERT … VALUES (...)` fails for any show past ~2,180 episodes (soaps, daily talk, news). `tmdb/upsert.py` chunks at `_BATCH_SIZE = 1000` to stay well under the cap — and under it for every other table in that module, none of which binds more. The retired TV Maze mirror had the same ceiling at 12 params and the same fix.
 
@@ -484,7 +489,7 @@ Pass `limiter=` explicitly only to opt a caller out; `tests/conftest.py` swaps `
 
 **Type-check escape hatches.** `# type: ignore[call-arg]` on every bare `Settings(...)` construction — `src/tvbf/config.py:get_settings` plus every test that builds one (`tests/unit/test_config.py`, `tests/unit/test_email.py`, and the two NEU-1157 throttle tests; `grep -rn 'type: ignore\[call-arg\]' src/ tests/` is authoritative, on the rowcount list's precedent — this one was pinned at "two sites" and had gone stale)  (Pydantic Settings' env-driven construction confuses pyright's `Field(...)` analysis) and `# type: ignore[attr-defined]` on `result.rowcount` across thirteen files (`src/tvbf/catalog/{runs,offsets}.py`, `src/tvbf/tmdb/{upsert,enrichment,season_dedupe,episode_repoint,orphan_retire,popularity}.py`, and five `src/tvbf/app/repos/*.py`; `grep -rln 'rowcount.*type: ignore' src/` is authoritative — this list has gone stale before, and had again by `show_prune`, which NEU-1051 then deleted) (SQLAlchemy's `Result` stub doesn't expose `rowcount`; only `CursorResult` does, and the runtime object is one). Preserve these when touching the files.
 
-**Logging**: the root logger is configured in `logging_config.py:configure_logging(settings.log_level)` with `force=True` — called by `create_app` and by every `tvbf.jobs` entrypoint's `main()`. It lives outside `main.py` so a cron process doesn't build a FastAPI app and initialise Sentry just to get log formatting. All app-level `log.info/warning/exception` calls land on stderr with timestamp + level + module name, captured by Docker's json-file log driver (readable via `task logs` or `docker logs tvbf_backend`). Do not add per-module logging config.
+**Logging**: the root logger is configured in `logging_config.py:configure_logging(settings.log_level)` with `force=True` — called by `create_app` and by every `tvbf.jobs` entrypoint's `main()`. It lives outside `main.py` so a cron process doesn't build a FastAPI app and initialise Sentry just to get log formatting. All app-level `log.info/warning/exception` calls land on stderr with timestamp + level + module name, captured by Docker's json-file log driver (readable via `task logs` or `docker compose logs tvbf-backend`). Do not add per-module logging config.
 
 ## Planning workflow
 
@@ -500,4 +505,4 @@ new feature. `docs/superpowers/{specs,plans}/` holds the retired layout — an a
 
 ## Pre-commit hooks
 
-Configured in `.pre-commit-config.yaml`: `ruff check`, `ruff format --check`, `pyright`, `pytest` — all via `docker compose exec -T tvbf-backend`. Requires the container to be running for commits to succeed. Install once (on the host) with `pipx install pre-commit && pre-commit install`. (The frontend repo has no pre-commit hooks; its gates run via `task lint` / `task typecheck` / `task test` and CI.)
+Configured in `.pre-commit-config.yaml`: `task lint`, `task format:check`, `task typecheck` and `task test:unit` (the unit suite only; CI runs everything), each of which execs into the `tvbf-backend` service. They run only when Python files or the dependency manifests change, and require the container to be running for commits to succeed. Install once (on the host) with `pipx install pre-commit && pre-commit install`. (The frontend repo has no pre-commit hooks; its gates run via `task lint` / `task typecheck` / `task test` and CI.)
