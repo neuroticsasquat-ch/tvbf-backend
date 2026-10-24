@@ -1,12 +1,13 @@
 version: '3'
 
-# The shared localdev infra (Traefik, Postgres, Mailpit, the `proxy` network)
-# lives in its own repo two levels up. Optional, so the quality-gate tasks still
-# load on a machine without it.
+# The shared localdev infra (Traefik, Postgres, Mailpit, the `proxy` network) is
+# the tbc-localdev-infra stack; `task infra:up` starts it. Optional, so the
+# quality-gate tasks still load on a machine without it. The core tasks follow
+# ~/projects/tbc-localdev-infra/CONVENTIONS.md.
 includes:
   infra:
-    taskfile: ../../tbc-localdev-infra/Taskfile.yml
-    dir: ../../tbc-localdev-infra
+    taskfile: ~/projects/tbc-localdev-infra/Taskfile.yml
+    dir: ~/projects/tbc-localdev-infra
     optional: true
 
 vars:
@@ -15,24 +16,34 @@ vars:
   # Through Traefik, whose dev certificate curl does not trust — hence `curl -sk`.
   API_URL: "https://api.tvbf.localhost"
   PG: "docker exec tbc_postgresql_db psql -U root"
+  # No TTY flag needed. Compose allocates a TTY only when stdin and stdout are
+  # both terminals, so pre-commit gets none, and neither does a task whose output
+  # is redirected (`> file`, `>> .env`, `| jq`): the artifact tasks below can't
+  # pick up a TTY's carriage returns (checked on Compose v5.5.0, NEU-1912).
   EXEC: "{{.COMPOSE}} exec {{.SVC}}"
-  EXEC_T: "{{.COMPOSE}} exec -T {{.SVC}}"
 
 tasks:
   up:
-    desc: Start the backend container (requires infra to be up)
+    desc: Start the shared infra, then the backend container (does not rebuild)
     cmds:
+      - task: infra:up
       - "{{.COMPOSE}} up -d"
 
   down:
-    desc: Stop the backend container
+    desc: Stop the backend container (leaves the shared infra running)
     cmds:
       - "{{.COMPOSE}} down"
 
+  restart:
+    desc: Restart the backend container
+    cmds:
+      - "{{.COMPOSE}} restart {{.SVC}}"
+
   build:
-    desc: Rebuild the backend image
+    desc: Rebuild the backend image and recreate the container (after a dependency or Dockerfile change)
     cmds:
       - "{{.COMPOSE}} build"
+      - "{{.COMPOSE}} up -d"
 
   logs:
     desc: Follow backend logs
@@ -118,6 +129,11 @@ tasks:
     cmds:
       - "{{.EXEC}} ruff format src tests"
 
+  format:check:
+    desc: 'Run ruff format --check (task format:check [-- <paths>])'
+    cmds:
+      - '{{.EXEC}} ruff format --check {{.CLI_ARGS | default "src tests"}}'
+
   typecheck:
     desc: Run pyright static type check
     cmds:
@@ -170,7 +186,7 @@ tasks:
   debug:job-test-error:
     desc: 'python -m tvbf.jobs.raise_test_error — a deliberate job crash to prove the jobs reach Bugsink (NEU-1622)'
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.raise_test_error"
+      - "{{.EXEC}} python -m tvbf.jobs.raise_test_error"
 
   reconcile:airdates:
     # The *manual* trigger. In prod this runs as a second Coolify scheduled
@@ -213,13 +229,12 @@ tasks:
 
   vapid:generate:
     desc: 'Print a fresh VAPID key set as env lines (task vapid:generate -- --subject mailto:you@example.com) (NEU-1484)'
-    # `silent` + `-T` for `queue:list`'s reasons: the env lines are the process
-    # stdout, so `task vapid:generate >> .env` must not pick up go-task's banner
-    # or docker's TTY carriage returns. A new set is a key rotation — every
+    # `silent` for `queue:list`'s reasons: the env lines are the process
+    # stdout, so `task vapid:generate >> .env` must not pick up go-task's banner. A new set is a key rotation — every
     # existing subscription stops working.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.push.keys {{.CLI_ARGS}}"
+      - "{{.EXEC}} python -m tvbf.push.keys {{.CLI_ARGS}}"
 
   enrich:tmdb-ids:
     desc: Attach tmdb_id to the copied catalog rows in three tiers (idempotent; NEU-1043)
@@ -229,13 +244,12 @@ tasks:
 
   queue:list:
     desc: 'Report every user-touched show awaiting a human verdict, as JSON (NEU-1044)'
-    # `silent` + `-T` for the same reasons `reconcile:capture` needs them: the
-    # report is the process stdout, so go-task's banner and docker's TTY
-    # carriage returns would both corrupt it. Pass `-- --no-candidates` to skip
+    # `silent` for the same reasons `reconcile:capture` needs them: the
+    # report is the process stdout, so go-task's banner would corrupt it. Pass `-- --no-candidates` to skip
     # the TMDB lookups (and the credential) when only the count is wanted.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.human_queue list {{.CLI_ARGS}}"
+      - "{{.EXEC}} python -m tvbf.jobs.human_queue list {{.CLI_ARGS}}"
 
   queue:confirm:
     desc: 'Record a human verdict: this show IS a TMDB series (task queue:confirm -- <show_id> <tmdb_id>)'
@@ -255,12 +269,11 @@ tasks:
 
   map:episodes:report:
     desc: 'Report every unmapped episode carrying watch or rating history, as JSON (NEU-1045)'
-    # `silent` + `-T` for the same reasons `queue:list` needs them: the report is
-    # the process stdout, so go-task's banner and docker's TTY carriage returns
-    # would both corrupt it.
+    # `silent` for the same reasons `queue:list` needs them: the report is
+    # the process stdout, so go-task's banner would corrupt it.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.episode_map report"
+      - "{{.EXEC}} python -m tvbf.jobs.episode_map report"
 
   dedupe:seasons:
     desc: Delete the copied season rows the TMDB ingest superseded (idempotent; NEU-1119)
@@ -270,12 +283,11 @@ tasks:
 
   dedupe:seasons:report:
     desc: 'Count the duplicate seasons and what the pass deliberately keeps, as JSON (NEU-1119)'
-    # `silent` + `-T` for the same reasons `map:episodes:report` needs them: the
-    # report is the process stdout, so go-task's banner and docker's TTY carriage
-    # returns would both corrupt it.
+    # `silent` for the same reasons `map:episodes:report` needs them: the
+    # report is the process stdout, so go-task's banner would corrupt it.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.season_dedupe report"
+      - "{{.EXEC}} python -m tvbf.jobs.season_dedupe report"
 
   repoint:episodes:
     desc: Move user history onto the ingested episode rows, then delete the copies (NEU-1126)
@@ -285,12 +297,11 @@ tasks:
 
   repoint:episodes:report:
     desc: 'Count what the episode re-point would move and what it keeps, as JSON (NEU-1126)'
-    # `silent` + `-T` for the same reasons `dedupe:seasons:report` needs them: the
-    # report is the process stdout, so go-task's banner and docker's TTY carriage
-    # returns would both corrupt it.
+    # `silent` for the same reasons `dedupe:seasons:report` needs them: the
+    # report is the process stdout, so go-task's banner would corrupt it.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.episode_repoint report"
+      - "{{.EXEC}} python -m tvbf.jobs.episode_repoint report"
 
   retire:orphans:
     desc: 'Re-point every TV Maze orphan onto its TMDB counterpart, delete the rest (NEU-1146)'
@@ -302,12 +313,11 @@ tasks:
 
   retire:orphans:report:
     desc: 'What the orphan retirement would move and delete, incl. the loss list, as JSON (NEU-1146)'
-    # `silent` + `-T` for the same reasons `repoint:episodes:report` needs them:
-    # the report is the process stdout, so go-task's banner and docker's TTY
-    # carriage returns would both corrupt it.
+    # `silent` for the same reasons `repoint:episodes:report` needs them:
+    # the report is the process stdout, so go-task's banner would corrupt it.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.orphan_retire report"
+      - "{{.EXEC}} python -m tvbf.jobs.orphan_retire report"
 
   backfill:credits:
     desc: 'TMDB credits for every mirrored catalog show that has none — ~8.7h, resumable (NEU-1127)'
@@ -317,12 +327,11 @@ tasks:
 
   backfill:credits:report:
     desc: 'What the credit tables hold and how many shows are left to fetch, as JSON (NEU-1127)'
-    # `silent` + `-T` for the same reasons `repoint:episodes:report` needs them:
-    # the report is the process stdout, so go-task's banner and docker's TTY
-    # carriage returns would both corrupt it.
+    # `silent` for the same reasons `repoint:episodes:report` needs them:
+    # the report is the process stdout, so go-task's banner would corrupt it.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.credits_backfill report"
+      - "{{.EXEC}} python -m tvbf.jobs.credits_backfill report"
 
   backfill:season-credits:
     desc: 'TMDB season regulars for every mirrored catalog show without them — ~231k requests, resumable (NEU-1512)'
@@ -332,10 +341,10 @@ tasks:
 
   backfill:season-credits:report:
     desc: 'What catalog.season_cast holds and how many shows are left to fetch, as JSON (NEU-1512)'
-    # `silent` + `-T` for the same reasons `backfill:credits:report` needs them.
+    # `silent` for the same reasons `backfill:credits:report` needs them.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.season_credits_backfill report"
+      - "{{.EXEC}} python -m tvbf.jobs.season_credits_backfill report"
 
   backfill:recommendations:
     desc: 'TMDB recommendations for every mirrored catalog show that has none, most popular first — ~8.8h, resumable, stoppable (NEU-1052)'
@@ -347,46 +356,44 @@ tasks:
 
   backfill:recommendations:report:
     desc: 'What catalog.show_recommendation holds and how many shows are left to fetch, as JSON (NEU-1052)'
-    # `silent` + `-T` for the same reasons `backfill:credits:report` needs them:
-    # the report is the process stdout, so go-task's banner and docker's TTY
-    # carriage returns would both corrupt it.
+    # `silent` for the same reasons `backfill:credits:report` needs them:
+    # the report is the process stdout, so go-task's banner would corrupt it.
     silent: true
     cmds:
-      - "{{.EXEC_T}} python -m tvbf.jobs.recommendations_backfill report"
+      - "{{.EXEC}} python -m tvbf.jobs.recommendations_backfill report"
 
   reconcile:capture:
     desc: 'Write a reconciliation snapshot to docs/migration/reconciliation-baseline.json'
     # Two things are deliberate. `silent` — go-task's own banner goes to stdout
-    # and would corrupt the artifact; `-T` — docker would otherwise add a TTY's
-    # carriage returns. And the write goes via a temp file: a bare
+    # and would corrupt the artifact. And the write goes via a temp file: a bare
     # `> baseline.json` truncates *before* the command runs, so a capture that
     # failed would leave the cutover's acceptance baseline empty.
     silent: true
     cmds:
       - >
-        {{.EXEC_T}} python -m tvbf.jobs.reconcile capture
+        {{.EXEC}} python -m tvbf.jobs.reconcile capture
         {{.CLI_ARGS}} > docs/migration/.reconciliation-baseline.tmp
       - mv docs/migration/.reconciliation-baseline.tmp docs/migration/reconciliation-baseline.json
 
   reconcile:verify:
     desc: 'Diff the database against docs/migration/reconciliation-baseline.json (exit 1 on any change)'
     cmds:
-      # The baseline rides stdin — `docs/` is not mounted into the container.
+      # The baseline rides stdin, so the same invocation works against prod over
+      # `ssh 'docker exec -i ...'`, where no repo path exists.
       - >
-        {{.EXEC_T}} python -m tvbf.jobs.reconcile verify --baseline -
+        {{.EXEC}} python -m tvbf.jobs.reconcile verify --baseline -
         {{.CLI_ARGS}} < docs/migration/reconciliation-baseline.json
 
   recommend:dry-run:
     desc: "Compile one user's taste payload and print it, calling no provider (task recommend:dry-run -- <user-uuid>)"
-    # `silent` + `-T` for the same reasons `reconcile:capture` needs them: the
-    # payload is the process stdout, so go-task's banner and docker's TTY
-    # carriage returns would both corrupt it. The counts and the token estimate
+    # `silent` for the same reasons `reconcile:capture` needs them: the
+    # payload is the process stdout, so go-task's banner would corrupt it. The counts and the token estimate
     # ride stderr, so `task recommend:dry-run -- <uuid> > payload.json` leaves a
     # file holding exactly what the model would be sent.
     silent: true
     cmds:
       - >
-        {{.EXEC_T}} python -m tvbf.jobs.weekly_recommendations
+        {{.EXEC}} python -m tvbf.jobs.weekly_recommendations
         --dry-run --user {{.CLI_ARGS}}
 
   recommend:weekly:
@@ -397,7 +404,7 @@ tasks:
     # copy running finds `pg_try_advisory_lock` held, logs, and exits 0.
     cmds:
       - >
-        {{.EXEC_T}} python -m tvbf.jobs.weekly_recommendations
+        {{.EXEC}} python -m tvbf.jobs.weekly_recommendations
         {{.CLI_ARGS}}
 
   recommend:trigger:
@@ -412,10 +419,29 @@ tasks:
         -H 'Content-Type: application/json'
         -d '{{if .CLI_ARGS}}{"user_id": "{{.CLI_ARGS}}"}{{else}}{}{{end}}'
 
+  # --no-sync: only pyproject.toml and uv.lock change (both bind-mounted, so they
+  # land on the host). A plain `uv add` would re-sync /usr/local exactly to the
+  # base dependencies, stripping the dev extra and pip/uv themselves; the image
+  # build installs the locked set instead.
   deps:add:
-    desc: 'Add a dependency and rebuild the image (task deps:add -- <package>)'
+    desc: 'Add a dependency (task deps:add -- <package>), then task build'
     cmds:
-      - echo "Edit pyproject.toml to add {{.CLI_ARGS}}, then run task build."
+      - "{{.EXEC}} uv add --no-sync {{.CLI_ARGS}}"
+
+  deps:add-dev:
+    desc: 'Add a dev-extra dependency (task deps:add-dev -- <package>), then task build'
+    cmds:
+      - "{{.EXEC}} uv add --no-sync --optional dev {{.CLI_ARGS}}"
+
+  deps:remove:
+    desc: 'Remove a dependency (task deps:remove -- <package>), then task build'
+    cmds:
+      - "{{.EXEC}} uv remove --no-sync {{.CLI_ARGS}}"
+
+  deps:lock:
+    desc: Re-resolve uv.lock after a pyproject.toml edit, then task build
+    cmds:
+      - "{{.EXEC}} uv lock"
 
   changelog:
     desc: 'Update CHANGELOG.md (task changelog -- --tag v2026.05). Runs git-cliff on the host.'

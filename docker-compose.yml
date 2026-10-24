@@ -3,17 +3,13 @@ services:
     build:
       context: .
       target: dev
-    container_name: tvbf_backend
+    # The whole repo, so `uv add` / `uv lock` write pyproject.toml and uv.lock back
+    # to the host, and scripts/, tests/ and htmlcov/ are live in the container.
     volumes:
-      - ./src:/app/src
-      - ./migrations:/app/migrations
-      - ./alembic.ini:/app/alembic.ini
-      - ./pyproject.toml:/app/pyproject.toml
-      - ./tests:/app/tests
-      # One-off probes and verification scripts run against the container's
-      # Python and its network access (scripts/probe_tmdb_append_limit.py).
-      - ./scripts:/app/scripts
-      - ./htmlcov:/app/htmlcov
+      - .:/app
+      # Hide any host .venv (an IDE's, built for macOS) from the container; deps
+      # live in the image's /usr/local (UV_PROJECT_ENVIRONMENT).
+      - /app/.venv
     # Every key in .env (gitignored; copy .env.example) reaches the container, so
     # a setting added to config.py needs no edit here. Optional, so a fresh clone
     # still boots on the defaults below.
