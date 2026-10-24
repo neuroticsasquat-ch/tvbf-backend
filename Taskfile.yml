@@ -1,32 +1,63 @@
 version: '3'
 
-# The workspace owns the compose file one level up; the repo owns nothing about
-# where it runs. Override any of these on the command line if the layout moves:
-#   task COMPOSE="docker compose" test
+# The shared localdev infra (Traefik, Postgres, Mailpit, the `proxy` network)
+# lives in its own repo two levels up. Optional, so the quality-gate tasks still
+# load on a machine without it.
+includes:
+  infra:
+    taskfile: ../../tbc-localdev-infra/Taskfile.yml
+    dir: ../../tbc-localdev-infra
+    optional: true
+
 vars:
-  COMPOSE: "docker compose -f ../docker-compose.yml"
-  SVC: api
-  API_URL: "http://localhost:8000"
+  COMPOSE: docker compose
+  SVC: tvbf-backend
+  # Through Traefik, whose dev certificate curl does not trust — hence `curl -sk`.
+  API_URL: "https://api.tvbf.localhost"
+  PG: "docker exec tbc_postgresql_db psql -U root"
   EXEC: "{{.COMPOSE}} exec {{.SVC}}"
   EXEC_T: "{{.COMPOSE}} exec -T {{.SVC}}"
 
 tasks:
-  db:init:
-    desc: Create the required schemas in the workspace database (idempotent)
-    # The workspace's compose creates the database itself via POSTGRES_DB, so
-    # this only has to make the schemas the first migration assumes exist.
+  up:
+    desc: Start the backend container (requires infra to be up)
     cmds:
-      - >
-        {{.COMPOSE}} exec -T db psql -U dev -d app
-        -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS catalog;"
+      - "{{.COMPOSE}} up -d"
 
-  db:create-test:
-    desc: Create the test database (idempotent)
+  down:
+    desc: Stop the backend container
     cmds:
-      - >
-        {{.COMPOSE}} exec -T db psql -U dev -d postgres -tAc
-        "SELECT 1 FROM pg_database WHERE datname='app_test'" | grep -q 1
-        || {{.COMPOSE}} exec -T db psql -U dev -d postgres -c "CREATE DATABASE app_test"
+      - "{{.COMPOSE}} down"
+
+  build:
+    desc: Rebuild the backend image
+    cmds:
+      - "{{.COMPOSE}} build"
+
+  logs:
+    desc: Follow backend logs
+    cmds:
+      - "{{.COMPOSE}} logs -f {{.SVC}}"
+
+  shell:
+    desc: Open a bash shell inside the backend container
+    cmds:
+      - "{{.EXEC}} bash"
+
+  ps:
+    desc: Show compose service status
+    cmds:
+      - "{{.COMPOSE}} ps"
+
+  db:init:
+    desc: Create the tvbf and tvbf_test databases and required schemas in the shared Postgres (idempotent)
+    cmds:
+      - |
+        for db in tvbf tvbf_test; do
+          {{.PG}} -d postgres -tAc "SELECT 1 FROM pg_database WHERE datname='$db'" | grep -q 1 \
+            || {{.PG}} -d postgres -c "CREATE DATABASE $db"
+          {{.PG}} -d $db -c "CREATE SCHEMA IF NOT EXISTS app; CREATE SCHEMA IF NOT EXISTS catalog;"
+        done
 
   migrate:
     desc: Run alembic migrations against the tvbf database
@@ -105,35 +136,35 @@ tasks:
     desc: 'GET /admin/ingest/<id> — status of any run — task ingest:status -- <uuid>'
     cmds:
       - >
-        curl -s {{.API_URL}}/admin/ingest/{{.CLI_ARGS}}
+        curl -sk {{.API_URL}}/admin/ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   ingest:catalog:
     desc: 'POST /admin/catalog-ingest — the full TMDB catalog pass, ~8.7h for 229k series (NEU-1034)'
     cmds:
       - >
-        curl -s -X POST {{.API_URL}}/admin/catalog-ingest
+        curl -sk -X POST {{.API_URL}}/admin/catalog-ingest
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   ingest:catalog:status:
     desc: 'GET /admin/catalog-ingest/<id> — task ingest:catalog:status -- <uuid>'
     cmds:
       - >
-        curl -s {{.API_URL}}/admin/catalog-ingest/{{.CLI_ARGS}}
+        curl -sk {{.API_URL}}/admin/catalog-ingest/{{.CLI_ARGS}}
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   update:catalog:
     desc: 'POST /admin/catalog-update — one TMDB catalog delta from /tv/changes (NEU-1035)'
     cmds:
       - >
-        curl -s -X POST {{.API_URL}}/admin/catalog-update
+        curl -sk -X POST {{.API_URL}}/admin/catalog-update
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   debug:raise-test-error:
     desc: 'POST /admin/debug/raise-test-error — a deliberate 500 to prove the Bugsink -> Discord path (NEU-1589)'
     cmds:
       - >
-        curl -s -X POST {{.API_URL}}/admin/debug/raise-test-error
+        curl -sk -X POST {{.API_URL}}/admin/debug/raise-test-error
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
   debug:job-test-error:
@@ -376,7 +407,7 @@ tasks:
     # the job leaves no run row — so `task logs` is where the run is watched.
     cmds:
       - >
-        curl -s -X POST {{.API_URL}}/admin/recommendations
+        curl -sk -X POST {{.API_URL}}/admin/recommendations
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
         -H 'Content-Type: application/json'
         -d '{{if .CLI_ARGS}}{"user_id": "{{.CLI_ARGS}}"}{{else}}{}{{end}}'

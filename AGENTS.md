@@ -12,13 +12,15 @@ episode/season/show watch tracking, Watch Next, Upcoming, recommendations).
 
 Its sibling is **[`tvbf-frontend`](https://github.com/neuroticsasquat-ch/tvbf-frontend)** — a React
 19 + Vite 6 + TypeScript + Tailwind v4 + shadcn/ui SPA, which carries its own `.claude/CLAUDE.md`.
-Both are cloned side by side under one parent directory, alongside `tbc-localdev-infra`:
+Both are cloned side by side under one parent directory, which sits beside `tbc-localdev-infra` (the path
+both Taskfiles include it from):
 
 ```
-<parent>/
-  tvbf-backend/     <- you are here
-  tvbf-frontend/
+<projects>/
   tbc-localdev-infra/
+  <parent>/
+    tvbf-backend/     <- you are here
+    tvbf-frontend/
 ```
 
 Nothing outside this repo is required to work in it. There is no umbrella-level `CLAUDE.md` or
@@ -76,7 +78,7 @@ so it is `repo:tvbf-backend` here — the name above must match.
 - **Git is allowed here, within limits.** Branching, staging, committing and pushing are fine to do without asking, including from subagents. Follow the release workflow below: never commit directly to `main`, cut a branch first. Destructive operations — `reset --hard`, `push --force`, branch deletion, history rewriting — still need explicit confirmation every time. (This repo previously forbade all state-changing git; that rule was lifted 2026-08-01.)
 - **Run `task format` before committing.** Pre-commit runs `ruff format --check`, which reports bad formatting but does not fix it — so an unformatted file fails the commit *after* you have already staged. Chain it: `task format && git add -A && git commit`.
 - **There is no local Python toolchain.** Every `python`/`pytest`/`alembic`/`ruff`/`pyright`/`uv` invocation runs inside the container. Deps install into the container's system Python from `uv.lock` via `uv sync --locked` with `UV_PROJECT_ENVIRONMENT=/usr/local` (no `.venv`), so the image runs exactly the set CI tests; a `pyproject.toml` edit without `uv lock` fails the image build. `task` targets wrap `docker compose exec` — use them.
-- **The shared localdev infra at `../tbc-localdev-infra/` must be running first.** That compose project owns `tbc_postgresql_db`, Traefik (TLS termination for `*.localhost`), Mailpit, and the external `proxy` Docker network this service joins. If Postgres or Traefik isn't up, nothing here works. Start it with `task infra:up` (namespace comes from an include in `Taskfile.yml`).
+- **The shared localdev infra at `../../tbc-localdev-infra/` must be running first.** That compose project owns `tbc_postgresql_db`, Traefik (TLS termination for `*.localhost`), Mailpit, and the external `proxy` Docker network this service joins. If Postgres or Traefik isn't up, nothing here works. Start it with `task infra:up` (namespace comes from an include in `Taskfile.yml`).
 
 ## Commands
 
