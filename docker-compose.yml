@@ -1,0 +1,57 @@
+services:
+  tvbf-backend:
+    build:
+      context: .
+      target: dev
+    container_name: tvbf_backend
+    volumes:
+      - ./src:/app/src
+      - ./migrations:/app/migrations
+      - ./alembic.ini:/app/alembic.ini
+      - ./pyproject.toml:/app/pyproject.toml
+      - ./tests:/app/tests
+      # One-off probes and verification scripts run against the container's
+      # Python and its network access (scripts/probe_tmdb_append_limit.py).
+      - ./scripts:/app/scripts
+      - ./htmlcov:/app/htmlcov
+    # Every key in .env (gitignored; copy .env.example) reaches the container, so
+    # a setting added to config.py needs no edit here. Optional, so a fresh clone
+    # still boots on the defaults below.
+    env_file:
+      - path: .env
+        required: false
+    # What local dev needs that config.py does not default to. `environment`
+    # wins over `env_file`, so each takes `${VAR:-default}` to stay overridable
+    # from .env.
+    environment:
+      DATABASE_URL: "${DATABASE_URL:-postgresql+asyncpg://root:root@tbc_postgresql_db:5432/tvbf}"
+      TEST_DATABASE_URL: "${TEST_DATABASE_URL:-postgresql+asyncpg://root:root@tbc_postgresql_db:5432/tvbf_test}"
+      ADMIN_TOKEN: "${ADMIN_TOKEN:-dev-secret-change-me}"
+      CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-https://app.tvbf.localhost}"
+      COOKIE_DOMAIN: "${COOKIE_DOMAIN:-.tvbf.localhost}"
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=proxy"
+      - "traefik.http.routers.tvbf-backend.rule=Host(`api.tvbf.localhost`)"
+      - "traefik.http.routers.tvbf-backend.tls=true"
+      - "traefik.http.routers.tvbf-backend.entrypoints=websecure"
+      - "traefik.http.services.tvbf-backend.loadbalancer.server.port=8000"
+    command: ["uvicorn", "tvbf.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - |
+          import sys, urllib.request
+          sys.exit(0 if urllib.request.urlopen('http://localhost:8000/healthz', timeout=2).status == 200 else 1)
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    external: true
