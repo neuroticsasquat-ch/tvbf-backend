@@ -37,6 +37,7 @@ def main() -> int:
         runner=run_catalog_daily,
         healthcheck_url=lambda s: s.healthcheck_catalog_url,
         name=NAME,
+        job="catalog_update",
     )
 
 

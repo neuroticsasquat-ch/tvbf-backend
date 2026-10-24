@@ -75,7 +75,7 @@ so it is `repo:tvbf-backend` here — the name above must match.
 
 - **Git is allowed here, within limits.** Branching, staging, committing and pushing are fine to do without asking, including from subagents. Follow the release workflow below: never commit directly to `main`, cut a branch first. Destructive operations — `reset --hard`, `push --force`, branch deletion, history rewriting — still need explicit confirmation every time. (This repo previously forbade all state-changing git; that rule was lifted 2026-08-01.)
 - **Run `task format` before committing.** Pre-commit runs `ruff format --check`, which reports bad formatting but does not fix it — so an unformatted file fails the commit *after* you have already staged. Chain it: `task format && git add -A && git commit`.
-- **There is no local Python toolchain.** Every `python`/`pytest`/`alembic`/`ruff`/`pyright`/`uv` invocation runs inside the container. Deps install into the container's system Python via `uv pip install --system .[dev]` (no `.venv`). `task` targets wrap `docker compose exec` — use them.
+- **There is no local Python toolchain.** Every `python`/`pytest`/`alembic`/`ruff`/`pyright`/`uv` invocation runs inside the container. Deps install into the container's system Python from `uv.lock` via `uv sync --locked` with `UV_PROJECT_ENVIRONMENT=/usr/local` (no `.venv`), so the image runs exactly the set CI tests; a `pyproject.toml` edit without `uv lock` fails the image build. `task` targets wrap `docker compose exec` — use them.
 - **The shared localdev infra at `../tbc-localdev-infra/` must be running first.** That compose project owns `tbc_postgresql_db`, Traefik (TLS termination for `*.localhost`), Mailpit, and the external `proxy` Docker network this service joins. If Postgres or Traefik isn't up, nothing here works. Start it with `task infra:up` (namespace comes from an include in `Taskfile.yml`).
 
 ## Commands
@@ -291,7 +291,7 @@ src/tvbf/
   rate_budget.py       # per-upstream token buckets in Postgres + get_rate_limiter (ADR-0006)
   sql_fold.py          # the one accent/punctuation fold, evaluated in Postgres: folded() + folded_equal()
   client_ip.py         # the one client-address resolution: right-most X-Forwarded-For entry at N trusted hops, validated as an IP (NEU-1160)
-  telemetry.py         # Sentry init + the one release/environment resolution, read back from OTEL_RESOURCE_ATTRIBUTES so Bugsink and SigNoz name the same build (NEU-1589)
+  telemetry.py         # Sentry init + the one release/environment resolution, read back from OTEL_RESOURCE_ATTRIBUTES so Bugsink and SigNoz name the same build (NEU-1589); `record_handled_exception`, the contract's `span.record_exception()` for errors caught and carried past (NEU-1626)
   routers/
     health.py          # /healthz, /readyz
     auth.py            # /signup, /login, /logout, /password-change + NEU-1160's two gates: the IP throttle on the first two, Turnstile on signup
@@ -308,7 +308,8 @@ src/tvbf/
     friend_engagement.py  # /shows/{id}/friends, /episodes/{id}/friends/watched
     push.py            # GET /push/vapid-public-key — unauthenticated, publicly cacheable (NEU-1484); /me/push/subscriptions (NEU-1485); POST /me/push/test (NEU-1486)
   jobs/
-    scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (Uptime Kuma push semantics, NEU-1581; the weekly pass takes `ping_up`/`ping_down` and the rules only — it has no run row)
+    scheduled.py       # the shape the run-row-backed Coolify jobs share: deadman pings, per-kind guard, await-never-spawn, exit code (Uptime Kuma push semantics, NEU-1581; the weekly pass takes `ping_up`/`report_down` and the rules only — it has no run row); `report_down` makes a crashed run's `status=down` one error-tracker event too, and `scheduled_main` starts the SDK with `init_sentry(job=…)` (NEU-1622); `job_span` makes each run one root span, `job <name>`, so SigNoz shows a run as one trace (NEU-1625)
+    raise_test_error.py # `python -m tvbf.jobs.raise_test_error` — a deliberate `JobTestError` through `scheduled_main`, the runbook's proof that a job crash reaches Bugsink (NEU-1622)
     catalog_update.py  # `python -m tvbf.jobs.catalog_update` — the NEU-1035 TMDB catalog delta; exit code IS the result
     watch_archive.py   # `python -m tvbf.jobs.watch_archive` — the NEU-1029 snapshot; exit code IS the result
     reconcile.py       # `python -m tvbf.jobs.reconcile capture|verify` — the NEU-1030 cutover gate; exit code IS the verdict
@@ -531,7 +532,7 @@ The run **verifies itself by anti-join**, counting source rows with no archive r
 
 **Type-check escape hatches.** `# type: ignore[call-arg]` on every bare `Settings(...)` construction — `src/tvbf/config.py:get_settings` plus every test that builds one (`tests/unit/test_config.py`, `tests/unit/test_email.py`, and the two NEU-1157 throttle tests; `grep -rn 'type: ignore\[call-arg\]' src/ tests/` is authoritative, on the rowcount list's precedent — this one was pinned at "two sites" and had gone stale)  (Pydantic Settings' env-driven construction confuses pyright's `Field(...)` analysis) and `# type: ignore[attr-defined]` on `result.rowcount` across fourteen files (`src/tvbf/catalog/{runs,offsets}.py`, `src/tvbf/tmdb/{upsert,enrichment,season_dedupe,episode_repoint,orphan_retire,popularity}.py`, `src/tvbf/app/services/watch_archive_service.py`, and five `src/tvbf/app/repos/*.py`; `grep -rln 'rowcount.*type: ignore' src/` is authoritative — this list has gone stale before, and had again by `show_prune`, which NEU-1051 then deleted) (SQLAlchemy's `Result` stub doesn't expose `rowcount`; only `CursorResult` does, and the runtime object is one). Preserve these when touching the files.
 
-**Logging**: the root logger is configured in `logging_config.py:configure_logging(settings.log_level)` with `force=True` — called by `create_app` and by every `tvbf.jobs` entrypoint's `main()`. It lives outside `main.py` so a cron process doesn't build a FastAPI app and initialise Sentry just to get log formatting. All app-level `log.info/warning/exception` calls land on stderr with timestamp + level + module name, captured by Docker's json-file log driver (readable via `task logs` or `docker logs tvbf_backend`). Do not add per-module logging config.
+**Logging**: the root logger is configured in `logging_config.py:configure_logging(settings.log_level)` with `force=True` — called by `create_app` and by every `tvbf.jobs` entrypoint's `main()`. It lives outside `main.py` so a cron process doesn't build a FastAPI app just to get log formatting. The scheduled jobs do start Sentry, but through `init_sentry(job=…)`, which keeps log records out of the error tracker — a job's per-item `log.exception` is a breadcrumb, never an event (NEU-1622). All app-level `log.info/warning/exception` calls land on stderr with timestamp + level + module name, captured by Docker's json-file log driver (readable via `task logs` or `docker logs tvbf_backend`). Do not add per-module logging config.
 
 ## Planning workflow
 

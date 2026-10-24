@@ -35,6 +35,7 @@ import sys
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.enrichment import (
     MATCH_IMDB_ID,
@@ -78,8 +79,9 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(settings.log_level)
     try:
         result = asyncio.run(run_enrichment(args.limit))
-    except Exception:
+    except Exception as exc:
         log.exception("TMDB id enrichment failed")
+        record_handled_exception(exc)
         return 1
 
     log.info(

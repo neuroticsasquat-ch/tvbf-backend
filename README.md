@@ -170,11 +170,15 @@ The deployment must set:
 
 Startup warns when `OTEL_EXPORTER_OTLP_ENDPOINT` is set but `OTEL_RESOURCE_ATTRIBUTES` is missing `service.version` or `deployment.environment`.
 
+**Handled errors.** An exception that escapes a request is recorded on its span by the instrumentation. One the code catches, logs and carries on past (a failed notification email, a show a job skipped, a best-effort pass inside the catalog delta) never reaches it, so the trace would read as a clean success. Neither does one translated into an `HTTPException`, because Starlette turns that into a response inside the app, so the span shows only the 5xx and loses the cause. Those sites call `record_handled_exception(exc)` from `src/tvbf/telemetry.py`, which records the exception as an `exception` event on the current span and sets the span status to error. It does nothing when no span is recording: under tests, in the scheduled jobs (which run as plain `python -m`, without `opentelemetry-instrument`), and in a background task whose request span has already closed. A site that re-raises the exception itself needs no call. Handled errors are **not** sent to Bugsink: handled means "not an incident".
+
 **Test error.** `POST /admin/debug/raise-test-error` (bearer `ADMIN_TOKEN`; `task debug:raise-test-error` locally) is the `tvbf.debug.raise-test-error` trigger: it raises `TelemetryTestError`, answers 500, and should appear in Bugsink as its own issue and then in Discord `#alerts`. Against production:
 
 ```sh
 curl -s -X POST https://<api host>/admin/debug/raise-test-error -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
+
+**Scheduled jobs.** The Coolify-scheduled jobs (catalog delta, airdate reconcile, trending snapshot, the two push tasks, weekly recommendations) start the same SDK with the same `release` and `environment`, and report **one event per crashed run**, sent from the same place as its Kuma `status=down`. Each event carries the tag `pipeline_mode=<module name>` (`pipeline_mode=catalog_update`), the tag every backend's scheduled jobs use (NEU-1634). A crash that escapes the job is the exception and its traceback; a run row finalized `failed` (the workers catch their own crash and record it there) is an error message with a stable text (`catalog delta run ended failed`), the run id in `extra.detail`, so repeat failures land on one issue — the traceback itself is in the job's log, not the event. Every other down only pings: a `cancelled` row, a missing setting, the weekly pass's per-user failures. **Log records never become events** in a job (`LoggingIntegration(event_level=None)`): jobs `log.exception` once per failed item and carry on, and turning those into events would flood `#alerts` on one bad upstream day. They ride along as breadcrumbs instead. The one-shot backfills and migration passes do not report. `python -m tvbf.jobs.raise_test_error` (`task debug:job-test-error` locally) is the jobs' test error: it raises `JobTestError` through the shared runner, exits 1, and should appear in Bugsink tagged `pipeline_mode=raise_test_error`. Run it as a one-off Coolify task to prove the path in production.
 
 ## Database
 

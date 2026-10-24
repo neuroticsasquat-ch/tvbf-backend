@@ -37,6 +37,7 @@ def main() -> int:
         runner=run_push_airs_today,
         healthcheck_url=AIRS_TODAY.healthcheck_url,
         name=AIRS_TODAY.name,
+        job="push_airs_today",
     )
 
 

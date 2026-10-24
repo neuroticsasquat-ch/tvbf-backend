@@ -6,11 +6,11 @@ daily trending snapshot (NEU-1055) and the two push delivery tasks (NEU-1540) �
 differing only in which run kind they take, which body they await and which
 deadman they feed; the TV Maze daily was
 the first and NEU-1050 retired it. The weekly recommendations pass (NEU-1109,
-NEU-1111) is the exception and calls `ping_up` / `ping_down` alone: it deliberately writes no
-run row (`user_recommendation_set` is already its per-user run record), so the
-guard, the row and the terminal-status read here have nothing to act on. What
-it does keep is the *rules* below, which is the reason they are written down
-rather than merely implemented:
+NEU-1111) is the exception and calls `ping_up` / `ping_down` / `report_down`
+alone: it deliberately writes no run row (`user_recommendation_set` is already
+its per-user run record), so the guard, the row and the terminal-status read
+here have nothing to act on. What it does keep is the *rules* below, which is
+the reason they are written down rather than merely implemented:
 
 - **The exit code is the result.** Coolify notifies on a task that fails, so 0
   must mean the delta actually ran and succeeded.
@@ -26,16 +26,28 @@ The deadman is an Uptime Kuma push monitor (NEU-1581): one `status=up` per
 success, one `status=down` with a message per failure, and **no start ping** —
 Kuma has none. A run that never reports anything is caught the same way a run
 that never starts is, by the monitor's interval expiring.
+
+A run that *crashes* is also one error-tracker event (NEU-1622), sent beside
+its `status=down` by `report_down` so the two signals cannot drift apart: an
+exception that escapes the runner, or a run row finalized `failed` — the
+workers catch their own body's crash and finalize the row, so that status is
+where most real crashes surface. Every other down only pings: a `cancelled`
+row (the startup sweep of a stalled run), a missing setting, failures the job
+tolerated. That is the only way a job reaches Bugsink: `init_sentry(job=…)`
+keeps log records out of it, because a job logs per failed item and carries on.
 """
 
 import asyncio
 import logging
 import time
-from collections.abc import Callable, Coroutine
+from collections.abc import Callable, Coroutine, Iterator
+from contextlib import contextmanager
 from typing import Any
 from uuid import UUID
 
 import httpx
+import sentry_sdk
+from opentelemetry import trace
 from sqlalchemy import select
 
 from tvbf.catalog import models as m
@@ -43,6 +55,7 @@ from tvbf.catalog.runs import create_run, find_live_run
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
+from tvbf.telemetry import init_sentry, record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -69,8 +82,9 @@ async def _push(url: str | None, params: dict[str, str]) -> None:
     try:
         async with httpx.AsyncClient(timeout=5.0) as client:
             await client.get(httpx.URL(url).copy_with(params=params))
-    except Exception:
+    except Exception as exc:
         log.warning("deadman ping to %s failed", url, exc_info=True)
+        record_handled_exception(exc)
 
 
 async def ping_up(url: str | None, *, duration_ms: int) -> None:
@@ -81,6 +95,29 @@ async def ping_up(url: str | None, *, duration_ms: int) -> None:
 async def ping_down(url: str | None, msg: str) -> None:
     """Report a failed run to the push monitor, with `msg` saying why."""
     await _push(url, {"status": "down", "msg": msg[:MAX_PING_MESSAGE]})
+
+
+async def report_down(
+    url: str | None,
+    msg: str,
+    *,
+    exc: BaseException | None = None,
+    event: str | None = None,
+) -> None:
+    """Report a crashed run on both channels: one error-tracker event, then `ping_down`.
+
+    With `exc` the event is that exception and its traceback. Without one it is
+    an error-level message, `event` when given: Kuma's `msg` carries run ids and
+    counts, and a Bugsink issue is grouped by its text, so a caller whose `msg`
+    varies run to run passes a stable `event` and every failure of that kind
+    lands on one issue rather than opening a new one each day. The full `msg`
+    rides along as `extra.detail`. A no-op on the tracker without `SENTRY_DSN`.
+    """
+    if exc is not None:
+        sentry_sdk.capture_exception(exc)
+    else:
+        sentry_sdk.capture_message(event or msg, level="error", extras={"detail": msg})
+    await ping_down(url, msg)
 
 
 def failure_message(exc: BaseException) -> str:
@@ -147,7 +184,11 @@ async def run_scheduled_delta(
     status = await _terminal_status(run_id)
     if status != "succeeded":
         log.error("%s run %s ended %s", name, run_id, status)
-        await ping_down(healthcheck_url, f"{name} run {run_id} ended {status}")
+        msg = f"{name} run {run_id} ended {status}"
+        if status == "failed":
+            await report_down(healthcheck_url, msg, event=f"{name} run ended failed")
+        else:
+            await ping_down(healthcheck_url, msg)
         return False
 
     log.info("%s run %s succeeded", name, run_id)
@@ -155,11 +196,28 @@ async def run_scheduled_delta(
     return True
 
 
+@contextmanager
+def job_span(job: str) -> Iterator[None]:
+    """One root span per run, named for the job (NEU-1625).
+
+    Under `opentelemetry-instrument` a job's DB and HTTP calls would otherwise
+    each be a trace of their own, so a run could not be found or timed by job
+    name in SigNoz. Current before `asyncio.run`, so every span the run starts
+    nests under it, and a handled crash's `record_handled_exception` lands on it.
+    An exception that escapes is recorded by the span itself. A no-op without the
+    wrapper, like every span here.
+    """
+    tracer = trace.get_tracer(__name__)
+    with tracer.start_as_current_span(f"job {job}", attributes={"pipeline_mode": job}):
+        yield
+
+
 def scheduled_main(
     *,
     runner: Runner,
     healthcheck_url: Callable[[Settings], str | None],
     name: str,
+    job: str,
 ) -> int:
     """The `main()` every scheduled entrypoint returns from. 0 = ran and succeeded.
 
@@ -168,13 +226,23 @@ def scheduled_main(
     own run, so reaching the handler means the failure was *outside* it (the
     guard query, the run insert, the status read), and none of those leave a
     `failed` row to speak for them.
+
+    `job` is the module's own name (`catalog_update`), the `pipeline_mode` tag
+    on its error-tracker events. It is spelled out rather than read off
+    `__name__`, which is `__main__` under `python -m`.
     """
     settings = get_settings()
     configure_logging(settings.log_level)
-    try:
-        ok = asyncio.run(runner(settings))
-    except Exception as exc:
-        log.exception("%s job crashed", name)
-        asyncio.run(ping_down(healthcheck_url(settings), failure_message(exc)))
-        return 1
+    init_sentry(job=job)
+    with job_span(job):
+        try:
+            ok = asyncio.run(runner(settings))
+        except Exception as exc:
+            log.exception("%s job crashed", name)
+            record_handled_exception(exc)
+            asyncio.run(report_down(healthcheck_url(settings), failure_message(exc), exc=exc))
+            return 1
+        finally:
+            # The process exits straight after; an event still queued would be lost.
+            sentry_sdk.flush()
     return 0 if ok else 1

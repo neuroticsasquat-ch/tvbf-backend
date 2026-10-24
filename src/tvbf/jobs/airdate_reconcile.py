@@ -44,6 +44,7 @@ def main() -> int:
         runner=run_airdate_daily,
         healthcheck_url=lambda s: s.healthcheck_airdate_url,
         name=NAME,
+        job="airdate_reconcile",
     )
 
 

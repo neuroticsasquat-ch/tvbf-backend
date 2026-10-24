@@ -63,6 +63,7 @@ from typing import Any
 from sqlalchemy import Row, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.client import TMDBClient
 from tvbf.tmdb.enrichment import MATCH_HUMAN, MATCH_TITLE_YEAR
 
@@ -334,6 +335,7 @@ async def annotate(client: TMDBClient | None, rows: list[QueueRow]) -> list[dict
                     entry["current_match"] = _candidate(series)
             except Exception as exc:  # noqa: BLE001 - reported, never fatal
                 log.warning("TMDB lookup failed for catalog show %d: %s", row.show_id, exc)
+                record_handled_exception(exc)
                 entry["tmdb_error"] = f"{type(exc).__name__}: {exc}"
         report.append(entry)
     return report

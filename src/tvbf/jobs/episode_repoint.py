@@ -54,6 +54,7 @@ import sys
 from tvbf.config import get_settings
 from tvbf.db import SessionLocal
 from tvbf.logging_config import configure_logging
+from tvbf.telemetry import record_handled_exception
 from tvbf.tmdb.episode_repoint import (
     MIN_INGESTED_SHOWS,
     IngestNotRun,
@@ -197,8 +198,9 @@ def main(argv: list[str] | None = None) -> int:
     configure_logging(settings.log_level)
     try:
         return asyncio.run(run(args))
-    except Exception:
+    except Exception as exc:
         log.exception("episode-grain re-point failed")
+        record_handled_exception(exc)
         return 1
 
 

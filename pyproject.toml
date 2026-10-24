@@ -6,7 +6,13 @@ requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.141.1",
     "uvicorn[standard]>=0.52.1",
-    "sqlalchemy[asyncio]>=2.0.52",
+    # Below 2.1 until opentelemetry-instrumentation-sqlalchemy supports it: the 0.66b1
+    # release caps sqlalchemy<2.1 and skips itself on 2.1, so no SQL spans reach SigNoz.
+    # The image now installs from uv.lock, so the cap is what holds `uv lock` upgrades
+    # back. tests/unit/test_telemetry.py fails CI once a release lifts the
+    # instrumentation's cap (contrib #5120) -- then drop this, that test and the
+    # Dependabot ignore.
+    "sqlalchemy[asyncio]>=2.0.52,<2.1",
     "asyncpg>=0.30",
     "alembic>=1.19.1",
     "pydantic>=2.13.4",

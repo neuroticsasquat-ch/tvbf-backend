@@ -15,7 +15,8 @@ the two nightly tasks: either one feeding a shared check keeps it alive while th
 other quietly stops. **The pings ride `run()` rather than
 `jobs/scheduled.run_scheduled_delta`**, because that helper's shape is built
 around a run row this job deliberately does not have — what is shared is
-`ping_up` / `ping_down` themselves and, more importantly, the rules the helper
+`ping_up` / `ping_down` themselves (and `report_down` for a crash, which is
+also one error-tracker event, NEU-1622) and, more importantly, the rules the helper
 encodes: `status=up` on success, `status=down` on every exit-1 path once
 settings have loaded, and *nothing at all* when the guard finds another pass
 already running. Once settings have loaded, because a crash before that has no
@@ -99,6 +100,7 @@ from dataclasses import dataclass
 from typing import Any
 from uuid import UUID
 
+import sentry_sdk
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -111,7 +113,14 @@ from tvbf.app.models import (
 from tvbf.app.repos import recommendation_repo, user_repo
 from tvbf.config import Settings, get_settings
 from tvbf.db import SessionLocal, engine
-from tvbf.jobs.scheduled import elapsed_ms, failure_message, ping_down, ping_up
+from tvbf.jobs.scheduled import (
+    elapsed_ms,
+    failure_message,
+    job_span,
+    ping_down,
+    ping_up,
+    report_down,
+)
 from tvbf.llm.client import OpenAICompatClient
 from tvbf.llm.registry import DEEPINFRA
 from tvbf.llm.types import (
@@ -139,6 +148,7 @@ from tvbf.recommendations.prompt import (
     parse_suggestions,
     quoted_candidate,
 )
+from tvbf.telemetry import init_sentry, record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -466,6 +476,7 @@ async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePaylo
         first = await _attempt(client, db, prompt, payload)
     except LLMResponseInvalid as exc:
         log.warning("the model's answer could not be believed (%s); asking once more", exc)
+        record_handled_exception(exc)
         return await _attempt(client, db, prompt, payload)
 
     if first.believable:
@@ -478,6 +489,7 @@ async def _ask(client: OpenAICompatClient, db: AsyncSession, payload: TastePaylo
         # Every `LLMError`, not just the invalid ones: the first answer is
         # already usable, so nothing the second call does may take it away.
         log.warning("the second answer did not arrive (%s); keeping the first", exc)
+        record_handled_exception(exc)
         return first
     if len(second.rows) > len(first.rows):
         return second
@@ -825,12 +837,14 @@ async def run_pass(settings: Settings, *, user_id: UUID | None = None) -> PassRe
                 # a `SQLAlchemyError` while resolving one account must not cost
                 # the other four their week (§10.1).
                 log.exception("user %s failed: %s", candidate, exc)
+                record_handled_exception(exc)
                 result.failed += 1
                 consecutive_failures += 1
                 try:
                     await _record_failure(candidate, model)
-                except Exception:
+                except Exception as record_exc:
                     log.exception("could not record the failed set for user %s", candidate)
+                    record_handled_exception(record_exc)
                 if consecutive_failures >= CONSECUTIVE_FAILURE_LIMIT:
                     log.error(
                         "%d users failed in a row; abandoning the rest of the pass",
@@ -1025,7 +1039,8 @@ async def run(args: argparse.Namespace) -> int:
         # nothing in the database records it. Same reasoning as
         # `jobs/scheduled.scheduled_main`'s handler, and the same answer.
         log.exception("weekly recommendations pass crashed")
-        await ping_down(healthcheck, failure_message(exc))
+        record_handled_exception(exc)
+        await report_down(healthcheck, failure_message(exc), exc=exc)
         return 1
 
     if result is None:
@@ -1038,6 +1053,8 @@ async def run(args: argparse.Namespace) -> int:
         return 0
 
     if not result.ok:
+        # Deliberately not an error-tracker event: users failing is per-item
+        # failure the pass tolerated, and the deadman already reports it.
         await ping_down(
             healthcheck,
             f"weekly recommendations pass: {result.failed} failed, aborted={result.aborted}",
@@ -1083,7 +1100,13 @@ def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     settings = get_settings()
     configure_logging(settings.log_level)
-    return asyncio.run(run(args))
+    init_sentry(job="weekly_recommendations")
+    with job_span("weekly_recommendations"):
+        try:
+            return asyncio.run(run(args))
+        finally:
+            # As `jobs/scheduled.scheduled_main`: the process exits straight after.
+            sentry_sdk.flush()
 
 
 if __name__ == "__main__":

@@ -20,7 +20,10 @@ from dataclasses import dataclass
 from urllib.parse import unquote
 
 import sentry_sdk
+from opentelemetry import trace
+from opentelemetry.trace import Status, StatusCode
 from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
 from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
 
 log = logging.getLogger(__name__)
@@ -72,9 +75,18 @@ def resolve_telemetry(env: Mapping[str, str]) -> Telemetry:
     )
 
 
-def init_sentry(env: Mapping[str, str] = os.environ) -> Telemetry:
+def init_sentry(env: Mapping[str, str] = os.environ, *, job: str | None = None) -> Telemetry:
     """Initialise the Sentry SDK (pointed at Bugsink) when `SENTRY_DSN` is set,
-    and log the resolved release and environment either way."""
+    and log the resolved release and environment either way.
+
+    `job` is a scheduled job's name (NEU-1622): it tags every event as
+    `pipeline_mode`, the tag every backend's scheduled jobs use (NEU-1634), and
+    it stops log records becoming events. Jobs `log.exception` once per failed
+    item and carry on, so the API's default of an event per error log would
+    turn one bad upstream day into dozens of `#alerts` posts; a job reports
+    only its own failure, explicitly (`tvbf.jobs.scheduled.report_down`).
+    Records still ride along on that event as breadcrumbs.
+    """
     telemetry = resolve_telemetry(env)
     dsn = env.get("SENTRY_DSN")
     log.info(
@@ -98,11 +110,36 @@ def init_sentry(env: Mapping[str, str] = os.environ) -> Telemetry:
         sentry_sdk.init(
             dsn=dsn,
             integrations=[
-                FastApiIntegration(),
+                FastApiIntegration() if job is None else LoggingIntegration(event_level=None),
                 SqlalchemyIntegration(),
             ],
             traces_sample_rate=0.1,  # 10% of requests get perf traces
             environment=telemetry.environment,
             release=telemetry.release,
         )
+        if job is not None:
+            sentry_sdk.set_tag("pipeline_mode", job)
     return telemetry
+
+
+def record_handled_exception(exc: BaseException) -> None:
+    """Record an exception we caught and carried on past on the current OTel
+    span, and mark the span failed: the contract's `span.record_exception()`
+    for handled errors (NEU-1626).
+
+    A handled error never reaches the instrumentation's own exception hooks, so
+    without this the trace of a request that swallowed a failed send, or of a
+    job that skipped a show, reads as a clean success in SigNoz. Call it where
+    the code catches and logs an exception instead of letting it escape: to carry
+    on, to fall back, to exit with a code, or to answer with an `HTTPException`,
+    which Starlette turns into a response inside the app so the instrumentation
+    sees only the status code. A site that re-raises the exception itself needs
+    nothing, because the instrumentation records what escapes. A no-op when nothing is
+    recording: no `opentelemetry-instrument` wrapper (tests, or a job run by
+    hand as a bare `python -m`), or a span that has already ended (an `/admin/catalog-ingest`
+    request span, which closes before the task it spawned finishes).
+    """
+    span = trace.get_current_span()
+    if span.is_recording():
+        span.record_exception(exc)
+        span.set_status(Status(StatusCode.ERROR, f"{type(exc).__name__}: {exc}"))

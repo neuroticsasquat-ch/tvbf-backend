@@ -136,6 +136,11 @@ tasks:
         curl -s -X POST {{.API_URL}}/admin/debug/raise-test-error
         -H "Authorization: Bearer ${ADMIN_TOKEN:-dev-secret-change-me}"
 
+  debug:job-test-error:
+    desc: 'python -m tvbf.jobs.raise_test_error — a deliberate job crash to prove the jobs reach Bugsink (NEU-1622)'
+    cmds:
+      - "{{.EXEC_T}} python -m tvbf.jobs.raise_test_error"
+
   reconcile:airdates:
     # The *manual* trigger. In prod this runs as a second Coolify scheduled
     # task on the same shape as the catalog delta, with its own

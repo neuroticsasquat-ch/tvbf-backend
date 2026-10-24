@@ -18,6 +18,7 @@ from tvbf.app.models import User
 from tvbf.app.services import auth_token_service
 from tvbf.email import EmailSendError, send_email
 from tvbf.email.templates import render_verification_email
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -58,8 +59,9 @@ async def send_verification_email(
 
     try:
         await send_email(to=user.email, subject=subject, html=html_body, text=text_body)
-    except EmailSendError:
+    except EmailSendError as exc:
         log.warning("email_verification.send_failed user_id=%s", user.id, exc_info=True)
+        record_handled_exception(exc)
 
 
 async def send_verification_email_best_effort(
@@ -76,8 +78,9 @@ async def send_verification_email_best_effort(
         await send_verification_email(db, user=user, frontend_base_url=frontend_base_url)
     except AuthTokenRateLimited:
         log.info("email_verification.signup_rate_limited user_id=%s", user.id)
-    except Exception:  # pragma: no cover - defensive; covered indirectly
+    except Exception as exc:  # pragma: no cover - defensive; covered indirectly
         log.exception("email_verification.signup_unexpected_error user_id=%s", user.id)
+        record_handled_exception(exc)
 
 
 async def verify(db: AsyncSession, *, raw_token: str) -> User:

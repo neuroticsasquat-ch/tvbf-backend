@@ -25,6 +25,7 @@ from pywebpush import WebPushException, webpush
 from requests import Response
 
 from tvbf.config import get_settings
+from tvbf.telemetry import record_handled_exception
 
 log = logging.getLogger(__name__)
 
@@ -120,6 +121,7 @@ async def send(
         # and the job counts this towards retirement like any other failure.
         # The host only: the full endpoint is a capability URL.
         log.warning("push send raised host=%s", urlsplit(subscription.endpoint).hostname)
+        record_handled_exception(exc)
         return Failed(status=None, error=f"{type(exc).__name__}: {exc}")
     # `webpush` returns a curl command string only when `curl=True`.
     return Sent(status=cast(Response, response).status_code)
