@@ -4,7 +4,7 @@
 -- re-run that followed deleted the two shows and exited 0. Kept for the record and
 -- for the reversal below. It was run as:
 --
---   ssh tom@ssh.neuroticsasquat.ch \
+--   ssh tom@hetzner-01 \
 --     "docker exec -i $BE psql ..." < docs/migration/neu-1146-import-ne-remediation.sql
 --
 -- followed by a re-run of the pass, which deleted both shows and exited 0:
