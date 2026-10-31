@@ -31,7 +31,7 @@ answer is compared with, because it is the endpoint TMDB documents for this.
 
 Run inside the container, with `TMDB_READ_ACCESS_TOKEN` set:
 
-    docker compose exec api python scripts/probe_tmdb_season_credits.py
+    docker compose exec tvbf-backend python scripts/probe_tmdb_season_credits.py
 
 Costs 3 requests per probed season.
 """

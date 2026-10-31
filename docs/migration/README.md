@@ -205,7 +205,7 @@ The artifact travels on stdout, because `docs/` is not in the production image
 and a Coolify container is replaced on every deploy:
 
 ```bash
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.reconcile capture' \
   > docs/migration/reconciliation-baseline.json
 ```
@@ -221,7 +221,7 @@ the production baseline.
 task reconcile:verify
 
 # production, baseline on stdin
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline -' \
   < docs/migration/reconciliation-baseline.json
 ```
@@ -284,7 +284,7 @@ task queue:list
 task queue:list -- --no-candidates
 
 # production
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.human_queue list'
 ```
 
@@ -341,7 +341,7 @@ task map:episodes
 task map:episodes -- --limit 100     # smoke run first
 
 # production
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.episode_map map'
 ```
 
@@ -398,7 +398,7 @@ mapping window `uq_season_tmdb_id` guards.
 task dedupe:seasons:report
 
 # production
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.season_dedupe report'
 ```
 
@@ -485,7 +485,7 @@ decision that permits it.
 task retire:orphans:report
 
 # production — writes nothing, needs no TMDB credential, safe to run any time
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.orphan_retire report' \
   > docs/migration/neu-1146-pre-run-report.json
 ```
@@ -501,7 +501,7 @@ Coolify names the container with a random suffix that **changes on every
 deploy**, so resolve it rather than hardcoding it:
 
 ```bash
-ssh tom@ssh.neuroticsasquat.ch "docker ps --format '{{.Names}}' | grep '^tvbf-backend'"
+ssh tom@hetzner-01 "docker ps --format '{{.Names}}' | grep '^tvbf-backend'"
 ```
 
 Check the image tag is the commit you expect while you are there — the tag *is*
@@ -509,7 +509,7 @@ the SHA, which is the only proof the deploy carrying your fix has actually
 landed:
 
 ```bash
-ssh tom@ssh.neuroticsasquat.ch "docker ps --format '{{.Image}}\t{{.Status}}' | grep tvbf-backend"
+ssh tom@hetzner-01 "docker ps --format '{{.Image}}\t{{.Status}}' | grep tvbf-backend"
 ```
 
 Three things in it decide whether to proceed:
@@ -539,18 +539,18 @@ Then capture a fresh reconciliation baseline, run a smoke pass, and run it:
 
 ```bash
 # production, and there is no useful local equivalent for any of this
-BE=$(ssh tom@ssh.neuroticsasquat.ch "docker ps --format '{{.Names}}' | grep '^tvbf-backend'")
+BE=$(ssh tom@hetzner-01 "docker ps --format '{{.Names}}' | grep '^tvbf-backend'")
 
 # the baseline, immediately before — read-only
-ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.reconcile capture" \
+ssh tom@hetzner-01 "docker exec -i $BE python -m tvbf.jobs.reconcile capture" \
   > docs/migration/neu-1146-pre-run-baseline.json
 
 # smoke run, then the pass
-ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire --limit 100"
-ssh tom@ssh.neuroticsasquat.ch "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire"
+ssh tom@hetzner-01 "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire --limit 100"
+ssh tom@hetzner-01 "docker exec -i $BE python -m tvbf.jobs.orphan_retire retire"
 
 # the verdict, baseline back in on stdin
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   "docker exec -i $BE python -m tvbf.jobs.reconcile verify --baseline -" \
   < docs/migration/neu-1146-pre-run-baseline.json
 ```
@@ -1059,7 +1059,7 @@ them under its original id while `tvmaze` stands.
 task prune:shows:report          # writes nothing; run this first
 
 # production
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.show_prune report'
 
 task prune:shows -- --limit 100  # smoke run
@@ -1212,7 +1212,7 @@ loss, which is the right direction for a safety check.
 task gate:coverage > /tmp/gate.json      # go/no-go on stderr, the artifact on stdout
 
 # production — the run that actually matters
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.coverage_gate' \
   > /tmp/gate.json; echo "verdict exit: $?"
 ```
@@ -1577,7 +1577,7 @@ deleted on the strength of a check that ran before the thing being verified had
 happened.
 
 ```bash
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline - --spine catalog' \
   < docs/migration/reconciliation-baseline.json
 ```
@@ -1690,7 +1690,7 @@ The close-of-window state, captured on `--spine catalog` immediately after the r
 above:
 
 ```bash
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec <tvbf-backend-container> python -m tvbf.jobs.reconcile capture --spine catalog' \
   > docs/migration/neu-1125-post-repoint-snapshot.json
 ```
@@ -1711,7 +1711,7 @@ NEU-1050 and NEU-1051 verify against**, and using it is what makes their gate
 machine-checkable again:
 
 ```bash
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.reconcile verify --baseline - --spine catalog' \
   < docs/migration/neu-1125-post-repoint-snapshot.json
 ```
@@ -1757,7 +1757,7 @@ the baseline kept indefinitely. It just had to be taken first.
 
 ```bash
 # production, immediately before the first `airdate_reconcile` run — read-only
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.airdate_verify capture' \
   > docs/migration/neu-1145-airdate-baseline.json
 
@@ -1773,7 +1773,7 @@ captures of an unchanged database, so `git diff` over it is itself the check.
 
 ```bash
 # production, baseline back in on stdin
-ssh tom@ssh.neuroticsasquat.ch \
+ssh tom@hetzner-01 \
   'docker exec -i <tvbf-backend-container> python -m tvbf.jobs.airdate_verify verify --baseline -' \
   < docs/migration/neu-1145-airdate-baseline.json
 
